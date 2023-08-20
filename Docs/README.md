@@ -1,0 +1,78 @@
+<img
+	src="https://www.taskproxy.com/ms-icon-310x310.png"
+	alt="Stoic Dreams Task Proxy Logo"
+	title="Stoic Dreams Task Proxy Logo"
+	style="float:right"
+	/>
+
+# Task Proxy
+
+This project is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and local configurations.
+
+A key feature of Task Proxy is the ability to allow teams and developers to create and share reports, scripts, automation, and onboarding workflows to help new team members get setup quickly, and help assure developers stays in sync as project configurations are changed.
+
+## Expected launch features include
+
+- Reporting components generated from script results or API endpoint results.
+- Scoped variables for storing common, dev-specific, or secret data values.
+- Script templating allowing variables editable in UI
+- Easily update local environment variables as well as Azure App Config services that your local projects connect to.
+- Event driven triggers to run specified scripts on specified events (file updates, button in UI, git commit, etc).
+- Support for Windows 10/11, Mac, Linux
+
+## Expected Use-Cases
+
+- Onboarding workflow with step-by-step guidance for developers to setup their local environment for deploying projects locally (websites, fabric cluster, etc).
+- Managing / Sharing scripts (Powershell, command prompt, SQL).
+- Sharing team & project documentation (Architecture, features, coding standards, etc) organized using a tag-based system inspired by mind-map applications.
+- Health report that will verify required SDKs/configurations are installed/setup as expected for Team/project.
+
+## Planned Cloud Services
+
+- Option to store variable data in cloud.
+
+## Planned Website Services
+
+- Paste exported project, page, and unit templates to share.
+- View templates shared by others.
+- Vote on templates <i class="fa-duotone fa-thumbs-up"></i>.
+
+## Expected Workflows
+
+### Opening Task Proxy for the first time
+
+When opening the application for the first time, the user should be presented with a startup guide giving them a quick overview of the application and the ability to create their first project. Any Project specific menu items should be disabled / hidden.
+
+### Cloud Services
+
+To enable Cloud Services:
+
+1. Create an account at StoicDreams.com and sign-up for paid subscription service.
+1. Sign-in to Task Proxy app with same credentials used for paid subscription service.
+1. App will automatically detect service availability and enable Cloud settings in App settings.
+1. In Cloud Settings, user can toggle cloud features to enable or disable.
+
+### Manage Variables
+
+Variables are data objects that can be used to fill in values. It is recommended to use variables for any dynamic values used for any scripts or processes. But you absolutely need to use variables where any secrets might be used to assure secrets are not getting saved in any shared files or scripts.
+
+#### Variable Scopes
+
+Variables can be scoped as Project or Page scopes. Page scoped variables are only available to the page they are defined in. And project scoped variables are available anywhere within the project.
+
+### Create a new Report
+
+Reports are pages that can use an API endpoint or script to generate report data that can then be displayed in the page.
+
+## Software Expectations
+
+- Task Proxy uses the naming convention of `Project` to represent a collection of configurations, documentation, scripts, and solutions.
+- Task Proxy can track multiple projects to be loaded and saved as desired.
+- Only 1 project can be loaded at a time.
+- Users will have the option of storing projects locally when using the standard (free) version of Task Proxy.
+- Users will have the option of storing projects in the Cloud with a paid subscription. Cloud projects will store both pages and variables in the cloud.
+- Projects cannot have their storage location changed between being stored locally or in the Cloud.
+- Projects, pages, and components can be exported and imported into other projects.
+- Encryption keys are never passed to or stored in the Cloud. Projects are never decrypted in the Cloud.
+- Projects are never saved to disk unencrypted.
+- Task Proxy will include app insights logging to log anonymous usage patterns and bugs. These will be disabled by default, only enabling when the user opts-in for them, and will never send Project details, user information, or any other information that could be deemed sensitive information. The sole purpose of logging is to help gauge what features of the app are used most and least, and track bugs so the software can be fixed and improved.
