@@ -76,3 +76,23 @@ Reports are pages that can use an API endpoint or script to generate report data
 - Encryption keys are never passed to or stored in the Cloud. Projects are never decrypted in the Cloud.
 - Projects are never saved to disk unencrypted.
 - Task Proxy will include app insights logging to log anonymous usage patterns and bugs. These will be disabled by default, only enabling when the user opts-in for them, and will never send Project details, user information, or any other information that could be deemed sensitive information. The sole purpose of logging is to help gauge what features of the app are used most and least, and track bugs so the software can be fixed and improved.
+
+## Dev
+
+### Notes
+
+> Tauri-cli fails to install on ARM Windows.
+
+### Solution Setup & Configure
+
+```terminal
+cargo install tauri-cli
+cargo install trunk
+```
+
+### Run Project
+
+```terminal
+cd task-proxy
+cargo tauri dev
+```
