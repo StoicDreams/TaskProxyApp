@@ -1,15 +1,17 @@
-<img
-	src="https://www.taskproxy.com/ms-icon-310x310.png"
-	alt="Stoic Dreams Task Proxy Logo"
-	title="Stoic Dreams Task Proxy Logo"
-	style="float:right"
-	/>
-
 # Task Proxy
 
-This project is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and local configurations.
+<img
+ src="https://www.taskproxy.com/ms-icon-310x310.png"
+ alt="Stoic Dreams Task Proxy Logo"
+ title="Stoic Dreams Task Proxy Logo"
+ style="float:right;margin-top:-60px"
+ />
+
+This project is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and project configurations.
 
 A key feature of Task Proxy is the ability to allow teams and developers to create and share reports, scripts, automation, and onboarding workflows to help new team members get setup quickly, and help assure developers stays in sync as project configurations are changed.
+
+<div style="clear:both" />
 
 ## Expected launch features include
 
@@ -81,18 +83,21 @@ Reports are pages that can use an API endpoint or script to generate report data
 
 ### Notes
 
-> Tauri-cli fails to install on ARM Windows.
+> All terminal commands examples are written as if starting from the root folder of this solution.
 
 ### Solution Setup & Configure
 
 ```terminal
-cargo install tauri-cli
-cargo install trunk
+```
+
+### Build Project
+
+```terminal
+cargo build
 ```
 
 ### Run Project
 
 ```terminal
-cd task-proxy
-cargo tauri dev
+cargo run
 ```

@@ -1,0 +1,16 @@
+import { Button, VerticalBox } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    title: "Task Proxy - Stoic Dreams";
+    icon: @image-url("../img/Logo-32.png");
+    min-width: 400px;
+    min-height: 400px;
+    VerticalBox {
+        padding: 20px;
+        Text {
+            width: 100%;
+            font-size: 16px;
+            text: "Task Proxy";
+        }
+    }
+}

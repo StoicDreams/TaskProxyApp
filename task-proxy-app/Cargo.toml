@@ -1,0 +1,18 @@
+[package]
+name = "task-proxy-app"
+version = "0.1.0"
+authors = ["Erik Gassler <erik@stoicdreams.com>", "Stoic Dreams <support@stoicdreams.com>"]
+edition = "2021"
+build = "build.rs"
+
+[package.metadata]
+slint = { terminal = false }
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+slint = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6.3"
+
+[build-dependencies]
+slint-build = "1.0"
