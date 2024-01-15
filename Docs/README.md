@@ -47,10 +47,10 @@ When opening the application for the first time, the user should be presented wi
 
 ### Cloud Services
 
-To enable Cloud Services:
+Planned workflow to enable Cloud Services:
 
-1. Create an account at StoicDreams.com and sign-up for paid subscription service.
-1. Sign-in to Task Proxy app with same credentials used for paid subscription service.
+1. Create an account at StoicDreams.com and sign-up for desired subscription service option.
+1. Sign-in to Task Proxy app with your Stoic Dreams account credentials.
 1. App will automatically detect service availability and enable Cloud settings in App settings.
 1. In Cloud Settings, user can toggle cloud features to enable or disable.
 
@@ -60,24 +60,35 @@ Variables are data objects that can be used to fill in values. It is recommended
 
 #### Variable Scopes
 
-Variables can be scoped as Project or Page scopes. Page scoped variables are only available to the page they are defined in. And project scoped variables are available anywhere within the project.
+Variables can be scoped as Page, Project, and Global scopes. Page scoped variables are only available to the page they are defined in. And project scoped variables are available anywhere within the project. While Global scopes can be accessed across any project.
+
+When scripts or components are accessing variable values with keys duplicated across scopes, they will only use the value that is from the highest priority available. Page scoped variables have the highest priority, then Project, then Global.
 
 ### Create a new Report
 
-Reports are pages that can use an API endpoint or script to generate report data that can then be displayed in the page.
+Reports are components that can use an API endpoint or script to generate report data that can then be displayed in the page.
 
-## Software Expectations
+## Software Expectations / Goals
 
 - Task Proxy uses the naming convention of `Project` to represent a collection of configurations, documentation, scripts, and solutions.
 - Task Proxy can track multiple projects to be loaded and saved as desired.
 - Only 1 project can be loaded at a time.
 - Users will have the option of storing projects locally when using the standard (free) version of Task Proxy.
+  - The common expected usecase is to setup the root of a repository as a Task Proxy project. This way all associated project data is always syned with its respective repository and anyone who clones the repository will have access to the associated Task Proxy project.
 - Users will have the option of storing projects in the Cloud with a paid subscription. Cloud projects will store both pages and variables in the cloud.
 - Projects cannot have their storage location changed between being stored locally or in the Cloud.
 - Projects, pages, and components can be exported and imported into other projects.
 - Encryption keys are never passed to or stored in the Cloud. Projects are never decrypted in the Cloud.
-- Projects are never saved to disk unencrypted.
-- Task Proxy will include app insights logging to log anonymous usage patterns and bugs. These will be disabled by default, only enabling when the user opts-in for them, and will never send Project details, user information, or any other information that could be deemed sensitive information. The sole purpose of logging is to help gauge what features of the app are used most and least, and track bugs so the software can be fixed and improved.
+- Task Proxy will include logging to log anonymous usage patterns and bugs. These will be disabled by default, only enabling when the user opts-in for them, and will never send Project details, user information, or any other information that could be deemed sensitive information. The sole purpose of logging is to help gauge what features need priority based on usage, and track bugs so the software can be fixed and improved.
+
+## Changes from Legacy
+
+The original Task Proxy application was written using C#/.NET Blazor Maui. The current version is being rebuilt from the ground up to be built in Rust. Aside from the language changes there are a number of other key differences planned for how the application will function.
+
+Feature | Legacy - C# | Current - Rust | Reason for Change
+--- | --- | --- | ---
+Local Storage Folder | ./TaskProxyData | ./.taskproxy | More appropriate to match commonly used industry standard naming convention for folders that store app specific data associated with a project/solution.
+Local Storage Files | Encrypted data | SurrealDB data | Task Proxy will now include an internal SurrealDB database for storing all project pages/data and user variables. This will enable easy implementation of powerfull new features along with considerable performance improvements.
 
 ## Dev
 
