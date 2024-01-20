@@ -10,11 +10,10 @@ slint = { terminal = false }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-slint = "1.0"
+slint = { version = "1.0", features = ['serde'] }
 serde = { version = "1.0", features = ["derive"] }
 surrealdb = "1.1.0"
-task-proxy-core = { path = "../task-proxy-core" }
-markdown = { path = "../markdown" }
+markdown-parser = { path = "../markdown-parser" }
 
 [build-dependencies]
 slint-build = "1.0"
