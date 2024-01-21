@@ -1,5 +1,7 @@
 #![windows_subsystem = "windows"]
+use bevy::core::TaskPoolThreadAssignmentPolicy;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::tasks::available_parallelism;
 use bevy::{prelude::*, window::WindowResized};
 
 mod data_types;
@@ -15,7 +17,27 @@ fn main() {
             medium: Vec2::new(800.0, 600.0),
             small: Vec2::new(640.0, 360.0),
         })
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(TaskPoolPlugin {
+            task_pool_options: TaskPoolOptions {
+                min_total_threads: 1,
+                max_total_threads: std::usize::MAX, // unlimited threads
+                io: TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 2,
+                    percent: 0.1,
+                },
+                async_compute: TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 2,
+                    percent: 0.1,
+                },
+                compute: TaskPoolThreadAssignmentPolicy {
+                    min_threads: available_parallelism() / 2,
+                    max_threads: std::usize::MAX,
+                    percent: 1.0,
+                },
+            },
+        }))
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_systems(Startup, (setup_camera, setup_ui, setup_fps_counter))
         .add_systems(
