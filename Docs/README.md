@@ -7,6 +7,11 @@
  style="float:right;margin-top:-60px"
  />
 
+[![Task Proxy GitHub Actions][gh-image]][gh-checks]
+
+[gh-image]: https://github.com/stoicdreams/taskproxyapp/actions/workflows/deploy.yml/badge.svg
+[gh-checks]: https://github.com/stoicdreams/taskproxyapp/actions?query=branch%3Amain
+
 This project is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and project configurations.
 
 A key feature of Task Proxy is the ability to allow teams and developers to create and share reports, scripts, automation, and onboarding workflows to help new team members get setup quickly, and help assure developers stays in sync as project configurations are changed.
