@@ -1,7 +1,9 @@
 #![windows_subsystem = "windows"]
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::{prelude::*, window::WindowResized};
 
 mod data_types;
+mod dev_info;
 mod prelude;
 
 use crate::prelude::*;
@@ -14,8 +16,17 @@ fn main() {
             small: Vec2::new(640.0, 360.0),
         })
         .add_plugins(DefaultPlugins)
-        .add_systems(Startup, (setup_camera, setup_ui))
-        .add_systems(Update, (on_resize_system, toggle_resolution))
+        .add_plugins(FrameTimeDiagnosticsPlugin::default())
+        .add_systems(Startup, (setup_camera, setup_ui, setup_fps_counter))
+        .add_systems(
+            Update,
+            (
+                on_resize_system,
+                toggle_resolution,
+                fps_text_update_system,
+                fps_counter_showhide,
+            ),
+        )
         .run();
 }
 
