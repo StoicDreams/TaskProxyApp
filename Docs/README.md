@@ -104,8 +104,7 @@ When Task Proxy is available for early access release it will be made available 
 
 ### Solution Setup & Configure
 
-```terminal
-```
+Visit the [Bevy Book - Getting Started](https://bevyengine.org/learn/book/getting-started/setup/) for instructions on how to setup your local machine for developing Bevy applications, including configurations for reducing compile times during development.
 
 ### Build Project
 
