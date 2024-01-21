@@ -1,5 +1,5 @@
 import { Button, VerticalBox , HorizontalBox} from "std-widgets.slint";
-import { DynItem, DynamicContent } from "./dynamic_content.slint";
+import { MarkdownItem, MarkdownContent } from "./markdown_content.slint";
 
 @rust-attr(derive(serde::Serialize, serde::Deserialize))
 export enum Position {
@@ -58,7 +58,7 @@ component VerticalMenu inherits VerticalBox {
 }
 
 export component AppWindow inherits Window {
-    in property<[DynItem]> page_content <=> dc.content;
+    in property<[MarkdownItem]> page_content <=> dc.content;
     title: "Task Proxy - Stoic Dreams";
     icon: @image-url("../img/Logo-32.png");
     background: @linear-gradient(10deg, #270027 0, #860086 100);
@@ -75,7 +75,7 @@ export component AppWindow inherits Window {
             spacing: UserSettings.spacing * 1px;
             horizontal-stretch: 1;
             if UserSettings.menu == Position.Top : HorizontalMenu {}
-            dc := DynamicContent {}
+            dc := MarkdownContent {}
             if UserSettings.menu == Position.Bottom : HorizontalMenu {}
         }
         if UserSettings.menu == Position.Right : VerticalMenu {}

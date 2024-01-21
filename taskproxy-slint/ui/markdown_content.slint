@@ -1,19 +1,19 @@
 
 import { VerticalBox , ScrollView} from "std-widgets.slint";
 @rust-attr(derive(serde::Serialize, serde::Deserialize))
-export enum DynType {
+export enum MarkdownType {
     Empty,
     Text,
     Component
 }
 
 @rust-attr(derive(serde::Serialize, serde::Deserialize))
-export struct DynItem {
-    dtype: DynType,
-    value-text: string
+export struct MarkdownItem {
+    mdtype: MarkdownType,
+    value: string
 }
 
-component DCTextLine inherits TextInput {
+component MarkdownText inherits TextInput {
     horizontal-alignment: left;
     vertical-alignment: top;
     min-height: 18px;
@@ -26,9 +26,13 @@ component DCTextLine inherits TextInput {
     x: 0;
 }
 
-export component DynamicContent inherits Rectangle {
-    in property<string> name;
-    in property<[DynItem]> content;
+component MarkdownRender {
+    in property<MarkdownItem> item;
+    if item.mdtype == MarkdownType.Text : MarkdownText { text : item.value; }
+}
+
+export component MarkdownContent inherits Rectangle {
+    in property<[MarkdownItem]> content;
     padding: 0;
     vertical-stretch: 1;
     horizontal-stretch: 1;
@@ -50,8 +54,8 @@ export component DynamicContent inherits Rectangle {
             width: root.width;
             min-height: root.height;
             vertical-stretch: 0;
-            for item in content : DCTextLine {
-                text: item.value-text;
+            for item in content : MarkdownRender {
+                item: item;
             }
             Rectangle { vertical-stretch: 1; }
         }

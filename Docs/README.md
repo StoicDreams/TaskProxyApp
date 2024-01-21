@@ -90,6 +90,12 @@ Feature | Legacy - C# | Current - Rust | Reason for Change
 Local Storage Folder | ./TaskProxyData | ./.taskproxy | More appropriate to match commonly used industry standard naming convention for folders that store app specific data associated with a project/solution.
 Local Storage Files | Encrypted data | SurrealDB data | Task Proxy will now include an internal SurrealDB database for storing all project pages/data and user variables. This will enable easy implementation of powerfull new features along with considerable performance improvements.
 
+## Installation
+
+Task Proxy is currently in very early development and is not ready for installation and usage by users outside of the development team.
+
+When Task Proxy is available for early access release it will be made available as a downloadable application for Windows, iOS, and Linux through [TaskProxy.com](https://www.taskproxy.com).
+
 ## Dev
 
 ### Notes

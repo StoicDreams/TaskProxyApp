@@ -1,5 +1,5 @@
 [package]
-name = "task-proxy-app"
+name = "taskproxy-slint"
 version = "0.1.0"
 authors = ["Erik Gassler <erik@stoicdreams.com>", "Stoic Dreams <support@stoicdreams.com>"]
 edition = "2021"
@@ -10,10 +10,11 @@ slint = { terminal = false }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-slint = { version = "1.0", features = ['serde'] }
+slint = { version = "1.3", features = ['serde'] }
+slint-interpreter = { version = "1.3" }
 serde = { version = "1.0", features = ["derive"] }
 surrealdb = "1.1.0"
-markdown-parser = { path = "../markdown-parser" }
+markdown = { git = "https://github.com/wooorm/markdown-rs" }
 
 [build-dependencies]
 slint-build = "1.0"
