@@ -6,9 +6,12 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-bevy = { version = "0.12" }
+bevy = { version = "0.12" } # Stable
+winit = "0.28"
+image = "0.24"
+#bevy = { git = "https://github.com/bevyengine/bevy" } # Bleeding edge
 serde = { version = "1.0", features = ["derive"] }
-surrealdb = "1.1.0"
+surrealdb = "1.1"
 markdown = { git = "https://github.com/wooorm/markdown-rs" }
 
 [build-dependencies]
@@ -20,3 +23,6 @@ opt-level = 1
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.release]
+lto = "thin"
