@@ -1,4 +1,5 @@
 #![windows_subsystem = "windows"]
+#![allow(unused)] // TODO: Remove me when needing to check for dead code / unused methods/variables.
 use crate::prelude::*;
 use bevy::{
     core::TaskPoolThreadAssignmentPolicy,
@@ -10,11 +11,15 @@ use bevy::{
 
 mod data_types;
 mod prelude;
+mod resources;
 mod startup;
 mod update;
 
 fn main() {
     App::new()
+        .insert_resource(MenuLayout(QuadPosition::Top))
+        .insert_resource(Colors::default())
+        .insert_resource(CurrentTheme(WindowTheme::Dark))
         .add_plugins(
             DefaultPlugins
                 .set(TaskPoolPlugin {
@@ -64,7 +69,13 @@ fn main() {
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_systems(
             Startup,
-            (set_window_icon, setup_camera, setup_ui, setup_fps_counter),
+            (
+                set_window_icon,
+                setup_camera,
+                setup_settings,
+                setup_ui,
+                setup_fps_counter,
+            ),
         )
         .add_systems(
             Update,

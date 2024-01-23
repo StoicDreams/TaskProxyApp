@@ -5,9 +5,12 @@ use bevy::{
 };
 
 /// This system is the top level handler for rendering page content to the app window.
-pub(crate) fn render_main_content(mut q: Query<&mut Text, With<MainContentText>>) {
-    let mut text = q.single_mut();
-    text.sections[0].value = "Hello world".to_string();
+pub(crate) fn render_main_content(
+    mut commands: Commands,
+    //mut q: Query<&mut NodeBundle, With<MainContent>>,
+) {
+    //let mut node = q.single_mut();
+    //node.sections[0].value = "Hello world".to_string();
 }
 
 /// This system is used to make the window visible after the app has finished loading.
@@ -62,17 +65,28 @@ fn time_segment_display(segment: f64) -> String {
 }
 
 // This system watches for CTRL+T to toggle the color theme used by the window.
-pub(crate) fn toggle_theme(mut windows: Query<&mut Window>, input: Res<Input<KeyCode>>) {
+pub(crate) fn toggle_theme(
+    mut windows: Query<&mut Window>,
+    input: Res<Input<KeyCode>>,
+    mut theme: ResMut<CurrentTheme>,
+    mut colors: ResMut<Colors>,
+) {
     if (input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight))
         && input.just_pressed(KeyCode::T)
     {
         let mut window = windows.single_mut();
-
-        if let Some(current_theme) = window.window_theme {
-            window.window_theme = match current_theme {
-                WindowTheme::Light => Some(WindowTheme::Dark),
-                WindowTheme::Dark => Some(WindowTheme::Light),
-            };
-        }
+        theme.0 = match theme.0 {
+            WindowTheme::Light => WindowTheme::Dark,
+            WindowTheme::Dark => WindowTheme::Light,
+        };
+        colors.background = match theme.0 {
+            WindowTheme::Dark => colors.dark,
+            WindowTheme::Light => colors.light,
+        };
+        colors.background_offset = match theme.0 {
+            WindowTheme::Dark => colors.dark_offset,
+            WindowTheme::Light => colors.light_offset,
+        };
+        window.window_theme = Some(theme.0);
     }
 }
