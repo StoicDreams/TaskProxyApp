@@ -7,10 +7,30 @@ use bevy::{
 /// This system is the top level handler for rendering page content to the app window.
 pub(crate) fn render_main_content(
     mut commands: Commands,
-    //mut q: Query<&mut NodeBundle, With<MainContent>>,
+    //mut q: Query<&mut Node, With<MainContent>>,
+    mut query: Query<(Entity, &Children), With<MainContent>>,
+    colors: Res<Colors>,
+    time: Res<Time>,
 ) {
-    //let mut node = q.single_mut();
-    //node.sections[0].value = "Hello world".to_string();
+    if (time.elapsed().as_secs() % 3 == 0) && (time.elapsed().as_millis() % 1000 < 100) {
+        query.for_each(|(entity, children)| {
+            commands.entity(entity).clear_children(); //.remove_children(children);
+            let content = commands
+                .spawn(TextBundle {
+                    text: Text::from_sections([TextSection {
+                        value: "Hello world".to_string(),
+                        style: TextStyle {
+                            font_size: 16.0,
+                            color: colors.secondary_offset,
+                            ..default()
+                        },
+                    }]),
+                    ..default()
+                })
+                .id();
+            commands.entity(entity).add_child(content);
+        });
+    }
 }
 
 /// This system is used to make the window visible after the app has finished loading.

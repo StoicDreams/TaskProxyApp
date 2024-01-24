@@ -46,24 +46,24 @@ pub(crate) fn setup_settings(
     mut colors: ResMut<Colors>,
     theme: Res<CurrentTheme>,
 ) {
-    colors.primary = Color::hex("DD00DD").unwrap();
-    colors.primary_offset = Color::hex("FFFFFF").unwrap();
-    colors.secondary = Color::hex("00DD00").unwrap();
-    colors.secondary_offset = Color::hex("FFFFFF").unwrap();
-    colors.tertiary = Color::hex("DDDD00").unwrap();
-    colors.tertiary_offset = Color::hex("FFFFFF").unwrap();
-    colors.success = Color::hex("00CC00").unwrap();
-    colors.success_offset = Color::hex("FFFFFF").unwrap();
-    colors.info = Color::hex("0088DD").unwrap();
-    colors.info_offset = Color::hex("FFFFFF").unwrap();
-    colors.warning = Color::hex("DD8800").unwrap();
-    colors.warning_offset = Color::hex("FFFFFF").unwrap();
-    colors.error = Color::hex("DD0000").unwrap();
-    colors.error_offset = Color::hex("FFFFFF").unwrap();
-    colors.dark = Color::hex("333333").unwrap();
-    colors.dark_offset = Color::hex("FFFFFF").unwrap();
-    colors.light = Color::hex("DDDDCC").unwrap();
-    colors.light_offset = Color::hex("333333").unwrap();
+    colors.primary = Color::hex("#380238").unwrap();
+    colors.primary_offset = Color::hex("#FFFFFF").unwrap();
+    colors.secondary = Color::hex("#003800").unwrap();
+    colors.secondary_offset = Color::hex("#FFFFFF").unwrap();
+    colors.tertiary = Color::hex("#8f6d00").unwrap();
+    colors.tertiary_offset = Color::hex("#FFFFFF").unwrap();
+    colors.success = Color::hex("#00CC00").unwrap();
+    colors.success_offset = Color::hex("#FFFFFF").unwrap();
+    colors.info = Color::hex("#0081d1").unwrap();
+    colors.info_offset = Color::hex("#FFFFFF").unwrap();
+    colors.warning = Color::hex("#b67000").unwrap();
+    colors.warning_offset = Color::hex("#FFFFFF").unwrap();
+    colors.error = Color::hex("#c70000").unwrap();
+    colors.error_offset = Color::hex("#FFFFFF").unwrap();
+    colors.dark = Color::hex("#333333").unwrap();
+    colors.dark_offset = Color::hex("#FFFFFF").unwrap();
+    colors.light = Color::hex("#DDDDCC").unwrap();
+    colors.light_offset = Color::hex("#333333").unwrap();
     colors.background = match theme.0 {
         WindowTheme::Dark => colors.dark,
         WindowTheme::Light => colors.light,
