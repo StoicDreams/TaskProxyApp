@@ -42,7 +42,7 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "taskproxy",
+        "title": "Task Proxy",
         "width": 800,
         "height": 600
       }
