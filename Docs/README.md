@@ -109,18 +109,18 @@ When Task Proxy is available for early access release it will be made available 
 
 ### Solution Setup & Configure
 
-Visit the [Bevy Book - Getting Started](https://bevyengine.org/learn/book/getting-started/setup/) for instructions on how to setup your local machine for developing Bevy applications, including configurations for reducing compile times during development.
+Visit the [Tauri Website](https://tauri.app/v1/guides/getting-started/setup/) for instructions on how to setup your local machine for developing Tauri applications.
 
 ### Build Project
 
 ```terminal
-cargo build
+cargo tarui build
 ```
 
 ### Run Project
 
 ```terminal
-cargo run
+cargo tauri dev
 ```
 
 ### Run Poject and Watch for Changes
