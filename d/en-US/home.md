@@ -25,7 +25,6 @@ Command flows that allow running specified scripts and apis in a specified seque
 
 ````section
 ```list
-Convert project to Rust.
 Terminal module that will allow running scripts that need to run continuously and not be restricted to only running when the hosting page is open.
 Schedule times and events to trigger running specfic scripts or command flows.
 ```
