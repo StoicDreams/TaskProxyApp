@@ -28,14 +28,14 @@ pub(crate) fn get_nav_routing() -> Vec<NavRoute> {
             "/terms",
             "fa-duotone fa-handshake",
             roles::PUBLIC,
-            starter_page_terms,
+            page_terms,
         ),
         NavLinkInfo::link(
             "Privacy",
             "/privacy",
             "fa-duotone fa-shield-exclamation",
             roles::PUBLIC,
-            starter_page_privacy,
+            page_privacy,
         ),
     ];
     nav_routes.to_owned()
