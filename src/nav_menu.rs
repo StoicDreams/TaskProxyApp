@@ -45,7 +45,7 @@ fn nav_menu_render(_contexts: Contexts) -> Html {
     html! {
         <>
             <Paper class="d-flex pa-1 justify-center">
-                <img src="icon.png" title="Task Proxy Logo" />
+                <img src="icon.png" title="Task Proxy Logo" width="64px" />
             </Paper>
             <NavDisplay routes={get_nav_routing()} class="d-flex flex-column pa-1" />
         </>
