@@ -1,3 +1,4 @@
+
 (function webuiSetup() {
     "use strict"
     function getEl(sel, mswait) {
@@ -12,7 +13,7 @@
                 }
                 const c = Date.now();
                 if (c - start > mswait) {
-                    reject(`Element ${sel} not found.`);
+                    resolve(null);
                     return;
                 }
                 setTimeout(check, 10);
@@ -90,14 +91,6 @@
                 ev.stopPropagation();
                 return false;
             }
-
-            if (ev.target.href) {
-                ev.preventDefault();
-                ev.stopPropagation();
-                console.log(ev.target.href);
-                return false;
-            }
-
             return true;
         });
         setupWatchers();

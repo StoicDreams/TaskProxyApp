@@ -115,6 +115,10 @@ body,
     letter-spacing: var(--typography-letterspacing);
 }
 
+#app {
+    padding-top: var(--header-height);
+}
+
 main,
 header,
 footer,
@@ -141,7 +145,7 @@ main>.paper {
     display: flex;
     flex-direction: column;
     margin: 0;
-    padding: var(--padding);
+    padding: 0;
     padding-bottom: calc(var(--padding) + var(--footer-height));
     height: 100%;
     max-height: 100%;
@@ -3157,4 +3161,33 @@ body.w-4k .hide-at-4k {
     100% {
         background-position: 100rem 0;
     }
+}
+
+header.titlebar {
+    height: auto;
+    background: var(--color-dark);
+    color: var(--color-dark-offset);
+    user-select: none;
+    display: flex;
+    justify-content: flex-end;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+}
+
+.titlebar-button {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+}
+
+.titlebar-button:hover {
+    background: #5bbec3;
+    background: var(--color-background-offset);
+    color: var(--color-background);
 }
