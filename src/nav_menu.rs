@@ -21,7 +21,7 @@ pub(crate) fn get_nav_routing() -> Vec<NavRoute> {
             "/about",
             "fa-duotone fa-circle-info",
             roles::PUBLIC,
-            page_about_stoic_dreams,
+            page_about,
         ),
         NavLinkInfo::link(
             "Terms",

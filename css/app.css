@@ -1,0 +1,21 @@
+#app {
+    padding-top: var(--header-height);
+}
+
+main>.paper {
+    padding: 0;
+}
+
+header.titlebar {
+    height: auto;
+    background: var(--color-dark);
+    color: var(--color-dark-offset);
+    user-select: none;
+    display: flex;
+    justify-content: flex-end;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+}
