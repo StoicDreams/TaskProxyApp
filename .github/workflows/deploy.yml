@@ -64,7 +64,7 @@ jobs:
             az storage copy -s 'target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
 
       - name: Copy Mac Files to Azure Blob Storage
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'macos-latest'
         uses: azure/CLI@v1
         with:
           inlineScript: |
@@ -72,7 +72,7 @@ jobs:
             az storage copy -s 'target/release/bundle/macos/Task Proxy.app' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
 
       - name: Copy Ubuntu Files to Azure Blob Storage
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'ubuntu-20.04'
         uses: azure/CLI@v1
         with:
           inlineScript: |
