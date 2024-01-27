@@ -7,7 +7,7 @@ pub fn page_privacy(_contexts: Contexts) -> Html {
     html! {
         <>
             <MarkdownContent href="/d/en-US/privacy.md" {tags} />
-            <NextPageButton url="/terms" />
+            <NextPageButton url="/" />
         </>
     }
 }

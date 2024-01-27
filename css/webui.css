@@ -542,12 +542,12 @@ main.page.hidden+#loading {
 }
 
 main.page.transition.out {
-    transform: scale(0.3) translateY(-10%);
+    transform: scale(0.3) translateY(-3%);
     opacity: 0;
 }
 
 main.page.transition.in {
-    transform: scale(1.03) translateY(1%);
+    transform: scale(1.006) translateY(0);
     opacity: 1;
 }
 

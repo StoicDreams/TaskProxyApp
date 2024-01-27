@@ -17,22 +17,30 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
-
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-20.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
-
+      - name: import windows certificate
+        if: matrix.platform == 'windows-latest'
+        run: |
+          # TODO
+      - name: import mac certificate
+        if: matrix.platform == 'macos-latest'
+        run: |
+          # TODO
+      - name: import ubuntu certificate
+        if: matrix.platform == 'ubuntu-20.04'
+        run: |
+          # TODO
       - name: install frontend dependencies
         run: |
           cargo install trunk
           rustup target add wasm32-unknown-unknown
           cargo build
-
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -41,4 +49,36 @@ jobs:
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
-          prerelease: true
+          prerelease: false
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Copy Windows Files to Azure Blob Storage
+        if: matrix.platform == 'windows-latest'
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            az storage copy -s 'target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+
+      - name: Copy Mac Files to Azure Blob Storage
+        if: matrix.platform == 'windows-latest'
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            az storage copy -s 'target/release/bundle/dmg/Task Proxy_0.1.0_x64.dmg' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target/release/bundle/macos/Task Proxy.app' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+
+      - name: Copy Ubuntu Files to Azure Blob Storage
+        if: matrix.platform == 'windows-latest'
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            az storage copy -s 'target/release/bundle/deb/task-proxy_0.1.0_amd64.deb' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target/release/bundle/appimage/task-proxy_0.1.0_amd64.AppImage' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+      - name: logout
+        run: |
+          az logout
+        if: always()

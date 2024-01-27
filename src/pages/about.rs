@@ -16,14 +16,14 @@ pub fn page_about(contexts: Contexts) -> Html {
                     <strong>
                         {format!("{} {}", app_config.company_name, app_config.app_name)}
                     </strong>
-                    <p>{"Version 0.1.0"}</p>
+                    <p>{"Version 0.1.0 Development Build"}</p>
                 </Paper>
             </Paper>
             <MarkdownContent href="/d/en-US/about.md" {tags} />
             <Paper class={CLASSES_FLEX_READABLE_CENTERED}>
                 {stoic_header_strip_bar(contexts)}
             </Paper>
-            <NextPageButton url="/home" />
+            <NextPageButton url="/terms" />
         </>
     }
 }

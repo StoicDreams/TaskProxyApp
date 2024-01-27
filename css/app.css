@@ -8,8 +8,8 @@ main>.paper {
 
 header.titlebar {
     height: auto;
-    background: var(--color-dark);
-    color: var(--color-dark-offset);
+    background: var(--site-background-color);
+    color: var(--site-background-offset);
     user-select: none;
     display: flex;
     justify-content: flex-end;
@@ -18,4 +18,5 @@ header.titlebar {
     left: 0;
     right: 0;
     width: 100%;
+    z-index: 100;
 }
