@@ -2,11 +2,7 @@
     padding-top: var(--header-height);
 }
 
-main>.paper {
-    padding: 0;
-}
-
-header.titlebar {
+#app>header.titlebar {
     height: auto;
     background: var(--site-background-color);
     color: var(--site-background-offset);
