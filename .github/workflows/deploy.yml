@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  publish-tauri:
+  build-tauri:
     permissions:
       contents: write
     strategy:
@@ -51,33 +51,48 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      - name: Save Windows files to artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: taskproxyartifacts
+          path: |
+            target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi
+            target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe
+      - name: Save Mac files to artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: taskproxyartifacts
+          path: |
+            target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi
+            target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe
+      - name: Save Ubuntu files to artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: taskproxyartifacts
+          path: |
+            target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi
+            target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe
+  publish-tauri:
+    needs: build-tauri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v2
+        with:
+          name: taskproxyartifacts
       - name: Azure Login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - name: Copy Windows Files to Azure Blob Storage
-        if: matrix.platform == 'windows-latest'
+      - name: Copy Binary Files to Azure Blob Storage
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az storage copy -s 'target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-
-      - name: Copy Mac Files to Azure Blob Storage
-        if: matrix.platform == 'macos-latest'
-        uses: azure/CLI@v1
-        with:
-          inlineScript: |
-            az storage copy -s 'target/release/bundle/dmg/Task Proxy_0.1.0_x64.dmg' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'target/release/bundle/macos/Task Proxy.app' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-
-      - name: Copy Ubuntu Files to Azure Blob Storage
-        if: matrix.platform == 'ubuntu-20.04'
-        uses: azure/CLI@v1
-        with:
-          inlineScript: |
-            az storage copy -s 'target/release/bundle/deb/task-proxy_0.1.0_amd64.deb' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'target/release/bundle/appimage/task-proxy_0.1.0_amd64.AppImage' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'Task Proxy_0.1.0_x64_en-US.msi' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'Task Proxy_0.1.0_x64-setup.exe' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'task-proxy_0.1.0_amd64.deb' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'task-proxy_0.1.0_amd64.AppImage' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'Task Proxy_0.1.0_x64.dmg' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'Task Proxy.app' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
       - name: logout
         run: |
           az logout
