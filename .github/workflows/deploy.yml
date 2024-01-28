@@ -89,19 +89,23 @@ jobs:
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - name: Check scripts
+      - name: Rename files before copy
         run: |
           ls
+          mv 'msi/Task Proxy_${{ env.VERSION }}_x64_en-US.msi' 'msi/task-proxy_${{ env.VERSION }}_x64_en-US.msi'
+          mv 'nsis/Task Proxy_${{ env.VERSION }}_x64-setup.exe' 'nsis/task-proxy_${{ env.VERSION }}_x64-setup.exe'
+          mv 'dmg/Task Proxy_${{ env.VERSION }}_x64.dmg' 'dmg/task-proxy_${{ env.VERSION }}_x64.dmg'
+          mv 'macos/Task Proxy.app' 'task-proxy_${{ env.VERSION }}.app'
       - name: Copy Binary Files to Azure Blob Storage
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az storage copy -s 'msi/Task Proxy_${{ env.VERSION }}_x64_en-US.msi' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --new-name task-proxy_${{ env.VERSION }}_x64_en-US.msi
-            az storage copy -s 'nsis/Task Proxy_${{ env.VERSION }}_x64-setup.exe' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --new-name task-proxy_${{ env.VERSION }}_x64-setup.exe
-            az storage copy -s 'deb/task-proxy_${{ env.VERSION }}_amd64.deb' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --new-name task-proxy_${{ env.VERSION }}_amd64.deb
-            az storage copy -s 'appimage/task-proxy_${{ env.VERSION }}_amd64.AppImage' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --new-name task-proxy_${{ env.VERSION }}_amd64.AppImage
-            az storage copy -s 'dmg/Task Proxy_${{ env.VERSION }}_x64.dmg' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --new-name task-proxy_${{ env.VERSION }}_x64.dmg
-            az storage copy -s 'macos/Task Proxy.app' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --new-name task-proxy_${{ env.VERSION }}.app --recursive
+            az storage copy -s 'msi/task-proxy_${{ env.VERSION }}_x64_en-US.msi' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
+            az storage copy -s 'nsis/task-proxy_${{ env.VERSION }}_x64-setup.exe' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
+            az storage copy -s 'deb/task-proxy_${{ env.VERSION }}_amd64.deb' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
+            az storage copy -s 'appimage/task-proxy_${{ env.VERSION }}_amd64.AppImage' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
+            az storage copy -s 'dmg/task-proxy_${{ env.VERSION }}_x64.dmg' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
+            az storage copy -s 'task-proxy_${{ env.VERSION }}.app' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
       - name: logout
         run: |
           az logout
