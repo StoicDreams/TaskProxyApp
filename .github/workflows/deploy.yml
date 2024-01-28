@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+env:
+  VERSION: 0.1.0
+
 jobs:
   build-tauri:
     permissions:
@@ -56,22 +59,22 @@ jobs:
         with:
           name: taskproxyartifacts
           path: |
-            target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi
-            target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe
+            target\release\bundle\msi\Task Proxy_${{ env.VERSION }}_x64_en-US.msi
+            target\release\bundle\nsis\Task Proxy_${{ env.VERSION }}_x64-setup.exe
       - name: Save Mac files to artifact
         uses: actions/upload-artifact@v2
         with:
           name: taskproxyartifacts
           path: |
-            target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi
-            target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe
+            target/release/bundle/macos/Task Proxy.app
+            target/release/bundle/dmg/Task Proxy_${{ env.VERSION }}_x64.dmg
       - name: Save Ubuntu files to artifact
         uses: actions/upload-artifact@v2
         with:
           name: taskproxyartifacts
           path: |
-            target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi
-            target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe
+            target/release/bundle/deb/task-proxy_${{ env.VERSION }}_amd64.deb
+            target/release/bundle/appimage/task-proxy_${{ env.VERSION }}_amd64.AppImage
   publish-tauri:
     needs: build-tauri
     runs-on: ubuntu-latest
@@ -90,12 +93,12 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az storage copy -s 'taskproxyartifacts/Task Proxy_0.1.0_x64_en-US.msi' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'taskproxyartifacts/Task Proxy_0.1.0_x64-setup.exe' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'taskproxyartifacts/task-proxy_0.1.0_amd64.deb' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'taskproxyartifacts/task-proxy_0.1.0_amd64.AppImage' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'taskproxyartifacts/Task Proxy_0.1.0_x64.dmg' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'taskproxyartifacts/Task Proxy.app' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'msi/Task Proxy_${{ env.VERSION }}_x64_en-US.msi' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'nsis/Task Proxy_${{ env.VERSION }}_x64-setup.exe' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'deb/task-proxy_${{ env.VERSION }}_amd64.deb' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'appimage/task-proxy_${{ env.VERSION }}_amd64.AppImage' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'dmg/Task Proxy_${{ env.VERSION }}_x64.dmg' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'macos/Task Proxy.app' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
       - name: logout
         run: |
           az logout
