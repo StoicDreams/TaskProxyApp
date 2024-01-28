@@ -83,16 +83,19 @@ jobs:
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Check scripts
+        run: |
+          ls
       - name: Copy Binary Files to Azure Blob Storage
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az storage copy -s 'Task Proxy_0.1.0_x64_en-US.msi' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'Task Proxy_0.1.0_x64-setup.exe' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'task-proxy_0.1.0_amd64.deb' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'task-proxy_0.1.0_amd64.AppImage' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'Task Proxy_0.1.0_x64.dmg' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'Task Proxy.app' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'taskproxyartifacts/Task Proxy_0.1.0_x64_en-US.msi' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'taskproxyartifacts/Task Proxy_0.1.0_x64-setup.exe' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'taskproxyartifacts/task-proxy_0.1.0_amd64.deb' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'taskproxyartifacts/task-proxy_0.1.0_amd64.AppImage' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'taskproxyartifacts/Task Proxy_0.1.0_x64.dmg' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'taskproxyartifacts/Task Proxy.app' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
       - name: logout
         run: |
           az logout
