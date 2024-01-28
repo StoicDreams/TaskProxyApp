@@ -44,8 +44,8 @@ pub(crate) fn get_nav_routing() -> Vec<NavRoute> {
 fn nav_menu_render(_contexts: Contexts) -> Html {
     html! {
         <>
-            <Paper class="d-flex pa-1 justify-center">
-                <img src="icon.webp" title="Task Proxy Logo" width="64px" />
+            <Paper class="d-flex pa-1 justify-center" style="height:64px;">
+                <img src="icon.webp" title="Task Proxy Logo" height="64px" />
             </Paper>
             <NavDisplay routes={get_nav_routing()} class="d-flex flex-column pa-1" />
         </>

@@ -1,7 +1,7 @@
 [package]
 name = "taskproxy"
 version = "0.1.0"
-description = "Organizational tool for software developers to document projects, scripts, and workflows."
+description = "Stoic Dreams Task Proxy"
 authors = ["Erik Gassler <erik@stoicdreams.com>", "Stoic Dreams <support@stoicdreams.com>"]
 license = "MIT"
 repository = "https://www.github.com/StoicDreams/TaskProxyApp"
