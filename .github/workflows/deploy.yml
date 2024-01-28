@@ -60,24 +60,24 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az storage copy -s 'target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target\release\bundle\msi\Task Proxy_0.1.0_x64_en-US.msi' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target\release\bundle\nsis\Task Proxy_0.1.0_x64-setup.exe' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
 
       - name: Copy Mac Files to Azure Blob Storage
         if: matrix.platform == 'macos-latest'
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az storage copy -s 'target/release/bundle/dmg/Task Proxy_0.1.0_x64.dmg' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'target/release/bundle/macos/Task Proxy.app' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target/release/bundle/dmg/Task Proxy_0.1.0_x64.dmg' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target/release/bundle/macos/Task Proxy.app' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
 
       - name: Copy Ubuntu Files to Azure Blob Storage
         if: matrix.platform == 'ubuntu-20.04'
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az storage copy -s 'target/release/bundle/deb/task-proxy_0.1.0_amd64.deb' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-            az storage copy -s 'target/release/bundle/appimage/task-proxy_0.1.0_amd64.AppImage' --destination-account-name ${{ env.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target/release/bundle/deb/task-proxy_0.1.0_amd64.deb' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
+            az storage copy -s 'target/release/bundle/appimage/task-proxy_0.1.0_amd64.AppImage' --destination-account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
       - name: logout
         run: |
           az logout
