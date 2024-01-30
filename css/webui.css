@@ -221,11 +221,17 @@ p {
     margin: 0;
 }
 
-p>img:not(:only-child) {
+img,
+svg {
+    vertical-align: middle;
+}
+
+img:not(:only-child) {
     height: 1em;
 }
 
-.paper>p:not(:first-child) {
+.paper>p:not(:first-child),
+.paper>div:not(:first-child) {
     margin-top: calc(1.5 * var(--padding));
 }
 
@@ -782,6 +788,10 @@ aside.app-drawer.left {
 
 .app-drawer.left.open>.drawer-placement>.drawer-content {
     left: 100%;
+}
+
+.drawer-content img {
+    max-width: 100%;
 }
 
 .paper {

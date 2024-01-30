@@ -20,7 +20,7 @@ pub fn page_about(contexts: Contexts) -> Html {
                 </Paper>
             </Paper>
             <MarkdownContent href="/d/en-US/about.md" {tags} />
-            <Paper class={CLASSES_FLEX_READABLE_CENTERED}>
+            <Paper class={format!("{} {}", CLASSES_FLEX_READABLE_CENTERED, "f10")}>
                 {stoic_header_strip_bar(contexts)}
             </Paper>
             <NextPageButton url="/terms" />

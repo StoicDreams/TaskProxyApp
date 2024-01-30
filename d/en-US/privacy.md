@@ -15,7 +15,7 @@ How you can correct any inaccuracies in the information.
 
 ````
 
-!<MyFiStorageConsent>
+<MyFiStorageConsent>
 
 ## Information Collection, Use, and Sharing
 
