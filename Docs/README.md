@@ -111,6 +111,14 @@ When Task Proxy is available for early access release it will be made available 
 
 Visit the [Tauri Website](https://tauri.app/v1/guides/getting-started/setup/) for instructions on how to setup your local machine for developing Tauri applications.
 
+```terminal
+# Install trunk to serve web components for app
+cargo intall trunk
+
+# Install tauri cli to run developer build
+cargo install tauri-cli
+```
+
 ### Build Project
 
 ```terminal
@@ -118,6 +126,10 @@ cargo tarui build
 ```
 
 ### Run Project
+
+Open 2 separate terminals to run `trunk serve` and `cargo tauri dev` seperately.
+
+With both running, any changes to files should automatically update the running build.
 
 ```terminal
 cargo tauri dev
