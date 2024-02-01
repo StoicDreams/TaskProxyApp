@@ -4,7 +4,6 @@
     "rust-lang.rust-analyzer",
     "serayuzgur.crates",
     "vadimcn.vscode-lldb",
-    "Slint.slint",
     "davidanson.vscode-markdownlint"
   ]
 }
