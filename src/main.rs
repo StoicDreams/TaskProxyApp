@@ -11,6 +11,7 @@ fn main() {
 }
 
 fn setup_app_config() -> AppConfig {
+    set_myfi_app_key("https://www.taskproxy.com");
     AppConfig::builder(
         "Task Proxy".to_string(),
         "Stoic Dreams".to_string(),

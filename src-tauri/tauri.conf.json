@@ -11,8 +11,43 @@
     "version": "0.1.0"
   },
   "tauri": {
+    "pattern": {
+      "use": "brownfield"
+    },
     "allowlist": {
-      "all": false,
+      "app": {
+        "all": true
+      },
+      "clipboard": {
+        "all": true
+      },
+      "protocol": {
+        "all": true
+      },
+      "dialog": {
+        "all": true
+      },
+      "fs": {
+        "all": true
+      },
+      "http": {
+        "all": true,
+        "scope": [
+          "https://*"
+        ]
+      },
+      "notification": {
+        "all": true
+      },
+      "os": {
+        "all": true
+      },
+      "path": {
+        "all": true
+      },
+      "process": {
+        "all": true
+      },
       "shell": {
         "all": true,
         "open": true
@@ -40,6 +75,9 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
+      "macOS": {
+        "exceptionDomain": "taskproxy"
+      },
       "windows": {
         "webviewInstallMode": {
           "type": "offlineInstaller"
@@ -55,12 +93,17 @@
     },
     "windows": [
       {
+        "label": "taskproxy",
+        "url": "/",
         "fullscreen": false,
         "resizable": true,
         "title": "Task Proxy",
         "width": 800,
         "height": 600,
-        "decorations": false
+        "decorations": false,
+        "minWidth": 500,
+        "minHeight": 500,
+        "userAgent": "taskproxy"
       }
     ]
   }

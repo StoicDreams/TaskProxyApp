@@ -8,7 +8,7 @@ Welcome to Task Proxy! Your development tool for managing your documentation and
 The primary concept for Task Proxy is to provide users with a tool where they can easily create and manage project documentation, scripts, and configurations.
 ```
 
-## Latest features
+## Latest Features / Progress
 
 ```section
 
