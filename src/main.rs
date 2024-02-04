@@ -6,6 +6,8 @@ mod prelude;
 
 use prelude::*;
 
+pub const VERSION: &str = "0.1.0";
+
 fn main() {
     webui::start_app(setup_app_config());
 }

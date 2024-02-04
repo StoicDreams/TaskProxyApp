@@ -11,9 +11,6 @@
     "version": "0.1.0"
   },
   "tauri": {
-    "pattern": {
-      "use": "brownfield"
-    },
     "allowlist": {
       "app": {
         "all": true
@@ -33,7 +30,8 @@
       "http": {
         "all": true,
         "scope": [
-          "https://*"
+          "https://*",
+          "wss://*"
         ]
       },
       "notification": {
@@ -98,8 +96,8 @@
         "fullscreen": false,
         "resizable": true,
         "title": "Task Proxy",
-        "width": 800,
-        "height": 600,
+        "width": 1600,
+        "height": 900,
         "decorations": false,
         "minWidth": 500,
         "minHeight": 500,

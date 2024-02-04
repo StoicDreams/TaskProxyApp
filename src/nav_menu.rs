@@ -41,11 +41,12 @@ pub(crate) fn get_nav_routing() -> Vec<NavRoute> {
     nav_routes.to_owned()
 }
 
-fn nav_menu_render(_contexts: Contexts) -> Html {
+fn nav_menu_render(contexts: Contexts) -> Html {
+    let config = &contexts.config;
     html! {
         <>
             <Paper class="d-flex pa-1 justify-center" style="height:64px;">
-                <img src="icon.webp" title="Task Proxy Logo" height="64px" />
+                <img src="icon.webp" title={format!("Task Proxy Version {} (WebUI Version {})", crate::VERSION, webui::VERSION)} height="64px" />
             </Paper>
             <NavDisplay routes={get_nav_routing()} class="d-flex flex-column pa-1" />
         </>

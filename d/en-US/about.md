@@ -1,7 +1,7 @@
 
 ```section
 
-Powered by [WebUI](https://webui.stoicdreams.com)   [![WebUI GitHub Actions][wui-gh-image]][wui-gh-checks]  [![Timestamp on crates.io][wui-cratesio-image]][wui-cratesio]  [![Timestamp on docs.rs][wui-docsrs-image]][wui-docsrs]
+Powered by [WebUI {WEBUI_VERSION}](https://webui.stoicdreams.com)   [![WebUI GitHub Actions][wui-gh-image]][wui-gh-checks]  [![Timestamp on crates.io][wui-cratesio-image]][wui-cratesio]  [![Timestamp on docs.rs][wui-docsrs-image]][wui-docsrs]
 
 [wui-gh-image]: https://github.com/stoicdreams/RustWebUI/actions/workflows/deploy.yml/badge.svg
 [wui-gh-checks]: https://github.com/stoicdreams/RustWebUI/actions?query=branch%3Amain

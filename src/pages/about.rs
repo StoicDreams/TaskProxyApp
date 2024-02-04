@@ -3,7 +3,8 @@ use crate::prelude::*;
 /// Page for app/company information.
 pub fn page_about(contexts: Contexts) -> Html {
     set_title("About");
-    let tags = get_markdown_tags();
+    let mut tags = get_markdown_tags();
+    tags.insert(String::from("WEBUI_VERSION"), webui::VERSION.to_string());
     let app_config = contexts.clone().config;
     html! {
         <>
@@ -16,7 +17,7 @@ pub fn page_about(contexts: Contexts) -> Html {
                     <strong>
                         {format!("{} {}", app_config.company_name, app_config.app_name)}
                     </strong>
-                    <p>{"Version 0.1.0 Development Build"}</p>
+                    <p>{format!("Version {} Development Build", crate::VERSION)}</p>
                 </Paper>
             </Paper>
             <MarkdownContent href="/d/en-US/about.md" {tags} />
