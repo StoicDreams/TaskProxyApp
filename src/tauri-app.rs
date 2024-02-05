@@ -63,10 +63,10 @@ pub fn app() -> Html {
         <main class="container">
             <div class="row">
                 <a href="https://tauri.app" target="_blank">
-                    <img src="public/tauri.svg" class="logo tauri" alt="Tauri logo"/>
+                    <Image src="public/tauri.svg" class="logo tauri" alt="Tauri logo"/>
                 </a>
                 <a href="https://yew.rs" target="_blank">
-                    <img src="public/yew.png" class="logo yew" alt="Yew logo"/>
+                    <Image src="public/yew.png" class="logo yew" alt="Yew logo"/>
                 </a>
             </div>
 

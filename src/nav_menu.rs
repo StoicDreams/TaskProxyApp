@@ -46,7 +46,7 @@ fn nav_menu_render(contexts: Contexts) -> Html {
     html! {
         <>
             <Paper class="d-flex pa-1 justify-center" style="height:64px;">
-                <img src="icon.webp" title={format!("Task Proxy Version {} (WebUI Version {})", crate::VERSION, webui::VERSION)} height="64px" />
+                <AppLogo text="Task" second="Proxy" title={format!("Task Proxy Version {} (WebUI Version {})", crate::VERSION, webui::VERSION)} />
             </Paper>
             <NavDisplay routes={get_nav_routing()} class="d-flex flex-column pa-1" />
         </>
