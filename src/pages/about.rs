@@ -1,11 +1,11 @@
 use crate::prelude::*;
 
 /// Page for app/company information.
-pub fn page_about(contexts: Contexts) -> Html {
+pub fn page_about(contexts: &Contexts) -> Html {
     set_title("About");
     let mut tags = get_markdown_tags();
     tags.insert(String::from("WEBUI_VERSION"), webui::VERSION.to_string());
-    let app_config = contexts.clone().config;
+    let app_config = contexts.config.clone();
     html! {
         <>
             {title_primary!("About")}

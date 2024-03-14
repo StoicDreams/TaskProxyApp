@@ -1,8 +1,11 @@
 #![allow(unused)] // TODO: Remove me when needing to check for dead code / unused methods/variables.
+
+mod constants;
 mod layout;
 mod nav_menu;
 mod pages;
 mod prelude;
+mod projects;
 
 use prelude::*;
 
@@ -23,7 +26,7 @@ fn setup_app_config() -> AppConfig {
     .set_header(layout::header::app_header)
     .set_no_footer()
     .set_header_logo_src("Logo.png".to_owned())
-    .set_nav_routing(nav_menu::get_nav_routing())
+    .set_nav_routing(NavRoutingCallback::new(nav_menu::get_nav_routing))
     .set_drawer_toggle_header_left(nav_menu::nav_menu_info())
     .set_drawer_toggle_header_middle(myfi_feedback_button_info())
     //.set_header_strip_bar(stoic_header_strip_bar)

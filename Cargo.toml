@@ -21,7 +21,7 @@ web-sys = "0.3"
 js-sys = "0.3"
 
 [workspace]
-resolver = "2" # Important! wgpu/Bevy needs this!
+resolver = "2"
 members = ["src-tauri"]
 
 [profile.release.package.webui]

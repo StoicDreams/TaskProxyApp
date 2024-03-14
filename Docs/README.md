@@ -127,7 +127,7 @@ cargo tarui build
 
 ### Run Project
 
-Open 2 separate terminals to run `trunk serve` and `cargo tauri dev` seperately.
+Open 2 separate terminals in the solution root to run `trunk serve` and `cargo tauri dev` seperately.
 
 With both running, any changes to files should automatically update the running build.
 
