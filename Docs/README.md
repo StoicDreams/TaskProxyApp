@@ -12,7 +12,7 @@
 [gh-image]: https://github.com/stoicdreams/taskproxyapp/actions/workflows/deploy.yml/badge.svg
 [gh-checks]: https://github.com/stoicdreams/taskproxyapp/actions?query=branch%3Amain
 
-This project is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and project configurations.
+This project is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and project documentation and configurations.
 
 A key feature of Task Proxy is the ability to allow teams and developers to create and share reports, scripts, automation, and onboarding workflows to help new team members get setup quickly, and help assure developers stays in sync as project configurations are changed.
 
@@ -107,6 +107,13 @@ When Task Proxy is available for early access release it will be made available 
 
 > All terminal commands examples are written as if starting from the root folder of this solution.
 
+### Tools
+
+Name | Description
+--- | ---
+Visual Studio Code (VSC) | Our choice of IDE for Rust / HTML / JavaScript development.
+Better Minify | VSC extension used to minify .css and .js files.
+
 ### Solution Setup & Configure
 
 Visit the [Tauri Website](https://tauri.app/v1/guides/getting-started/setup/) for instructions on how to setup your local machine for developing Tauri applications.
@@ -122,14 +129,12 @@ cargo install tauri-cli
 ### Build Project
 
 ```terminal
-cargo tarui build
+cargo tauri build
 ```
 
 ### Run Project
 
-Open 2 separate terminals in the solution root to run `trunk serve` and `cargo tauri dev` seperately.
-
-With both running, any changes to files should automatically update the running build.
+Use `cargo tauri dev` to build and run the Tauri app being developed.
 
 ```terminal
 cargo tauri dev

@@ -1,0 +1,1 @@
+#app{padding-top:var(--header-height)}#app>header.titlebar{height:auto;background:var(--site-background-color);color:var(--site-background-offset);user-select:none;display:flex;justify-content:flex-end;position:fixed;top:0;left:0;right:0;width:100%;z-index:100}

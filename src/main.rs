@@ -1,20 +1,14 @@
 #![allow(unused)] // TODO: Remove me when needing to check for dead code / unused methods/variables.
-
-mod constants;
-mod layout;
-mod nav_menu;
-mod pages;
 mod prelude;
-mod projects;
-
 use prelude::*;
 
 pub const VERSION: &str = "0.1.0";
 
 fn main() {
-    webui::start_app(setup_app_config());
+    //webui::start_app(setup_app_config());
 }
 
+/*
 fn setup_app_config() -> AppConfig {
     set_myfi_app_key("https://www.taskproxy.com");
     AppConfig::builder(
@@ -33,5 +27,8 @@ fn setup_app_config() -> AppConfig {
     .set_user_info_panel(myfi_info_panel)
     .set_copyright_start(2016)
     .external_links_open_new_tab_only()
+    .register_component("NewProject", new_project)
     .build()
 }
+
+ */

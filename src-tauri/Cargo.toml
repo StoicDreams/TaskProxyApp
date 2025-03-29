@@ -2,22 +2,28 @@
 name = "taskproxy"
 version = "0.1.0"
 description = "Stoic Dreams Task Proxy"
-authors = ["Erik Gassler <erik@stoicdreams.com>", "Stoic Dreams <support@stoicdreams.com>"]
+authors = [
+    "Erik Gassler <erik@stoicdreams.com>",
+    "Stoic Dreams <support@stoicdreams.com>",
+]
 license = "MIT"
 repository = "https://www.github.com/StoicDreams/TaskProxyApp"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "task_proxy_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "1.5", features = [ "protocol-all", "app-all", "clipboard-all", "custom-protocol", "path-all", "process-all", "os-all", "dialog-all", "fs-all", "notification-all", "window-all", "http-all", "shell-all", "system-tray"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-[features]
-# this feature is used for production builds or when `devPath` points to the filesystem
-# DO NOT REMOVE!!
-custom-protocol = ["tauri/custom-protocol"]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -37,18 +37,6 @@ pub(crate) fn get_nav_routing(contexts: &Contexts) -> Vec<NavRoute> {
             roles::PUBLIC,
             page_privacy,
         ),
-        NavGroupInfo::link(
-            "Projects",
-            "fa-duotone fa-folder",
-            roles::INVALID,
-            vec![NavLinkInfo::link(
-                "New Project",
-                "/new-project",
-                "fa-duotone fa-plus",
-                roles::PUBLIC,
-                page_new_project,
-            )],
-        ),
     ];
     nav_routes.to_owned()
 }

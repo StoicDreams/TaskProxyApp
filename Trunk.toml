@@ -2,9 +2,7 @@
 target = "./index.html"
 
 [watch]
-ignore = ["./src-tauri","./Docs","./font-awesome"]
+ignore = ["./src-tauri", "./Docs"]
 
 [serve]
-address = "127.0.0.1"
-port = 1426
-open = false
+ws_protocol = "ws"

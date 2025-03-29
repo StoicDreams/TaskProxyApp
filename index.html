@@ -5,27 +5,77 @@
     <title>Task Proxy</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <base href="/" />
-    <link data-trunk href="Logo.svg" rel="copy-file" />
-    <link data-trunk href="icon.webp" rel="copy-file" />
-    <link href="icon.webp" rel="prefetch" />
-    <link data-trunk href="Square310x310Logo.png" rel="copy-file" />
-    <link href="Logo.svg" rel="icon" type="image/svg+xml" sizes="any" />
-    <link href="https://cdn.myfi.ws/css/webui.css" rel="stylesheet" />
-    <link data-trunk href="css/app.css" rel="css" />
-    <link data-trunk href="d" rel="copy-dir" data-target-path="d" />
-    <link data-trunk href="app.webmanifest" rel="copy-file" />
-    <link data-trunk href="tauri.svg" rel="copy-file" />
     <meta name="theme-color" content="#FF2E46" />
     <meta name="author" content="Erik Gassler">
-    <meta name="description"
-        content="Organizational tool for software developers to document projects, scripts, and workflows.">
-    <script src="https://cdn.myfi.ws/fa/js/all.js"></script>
-    <script src="https://cdn.myfi.ws/highlight/highlight.min.js"></script>
-    <script src="https://cdn.myfi.ws/i/tooltips.js"></script>
+    <meta name="description" content="Organizational tool for software developers to document projects, scripts, and workflows.">
+
+    <base href="/" />
+    <script type="text/javascript">
+        navigator.serviceWorker.register('service-worker.min.js');
+    </script>
+
+    <link data-trunk href="root_files" rel="copy-dir" data-target-path="" />
+    <link data-trunk href="d" rel="copy-dir" data-target-path="d" />
+    <link data-trunk href="wc" rel="copy-dir" data-target-path="wc" />
+
+    <link href="icon.webp" rel="prefetch" />
+    <link href="Logo.svg" rel="icon" type="image/svg+xml" sizes="any" />
+
+    <link href="https://cdn.myfi.ws/css/webui.min.css" rel="stylesheet" />
+    <link data-trunk href="css/app.min.css" rel="css" />
+    <script src="https://cdn.myfi.ws/webui/loader.min.js"></script>
 </head>
 
 <body>
+    <webui-app-config src="appConfig.json"></webui-app-config>
+    <webui-app data-removeclass=".nav|open;.shared|open">
+        <webui-drawer slot="left" class="nav elevation-20" docked="true" data-state="slot|docked" data-moveable data-dockable>
+            <webui-flex justify="center" slot="header">
+                <webui-stoic-dreams-logo title="Task Proxy Logo" text="Task" text2="Proxy"></webui-stoic-dreams-logo>
+            </webui-flex>
+            <webui-nav routes="/nav.json" data-subscribe="app-nav-routes:setNavRoutes"></webui-nav>
+        </webui-drawer>
+        <webui-drawer slot="right" class="shared elevation-20" data-stopclick data-moveable data-state="slot">
+        </webui-drawer>
+        <header slot="header">
+            <button aria-label="open navigation menu" data-toggleclass=".nav|open" class="elevation-10 pa-1 mx-1">
+                <webui-icon icon="hamburger"></webui-icon>
+            </button>
+            <h1 data-subscribe="page-title:innerHTML">Task Proxy</h1>
+            <h2 data-subscribe="page-subtitle:innerHTML"></h2>
+            <webui-flex grow></webui-flex>
+            <webui-feedback title="Provide us your feedback" data-post="https://api.myfi.ws/feedback/new" data-json-name="message">
+                <p>You can also come <a href="https://discord.com/channels/972856291909332993/1025781071608037466">chat with us on the Stoic Dreams discord server.</a></p>
+            </webui-feedback>
+            <webui-alerts title="View your notifications" data-title="My Alerts" data-toggleclass=".shared|open"></webui-alerts>
+            <webui-myfi-info></webui-myfi-info>
+        </header>
+        <noscript>Javascript is required to view this site</noscript>
+        <webui-page-footer copyright="2016" company="Stoic Dreams">
+            <webui-next-page theme="tertiary" data-subscribe="page-next-page"></webui-next-page>
+            <webui-flex class="my-3" justify="center">
+                <webui-link href="/about" icon="exclamation|shape:circle|backing|bordered">About {APP_NAME}</webui-link>
+                <webui-link href="/contact" icon="messages|fill|shade:tri">Contact {COMPANY_SINGULAR}</webui-link>
+                <webui-link href="/privacy" icon="exclamation|shape:shield|backing|bordered">Privacy</webui-link>
+                <webui-link href="/terms" icon="handshake|fill|shade|tri">Terms & Conditions</webui-link>
+            </webui-flex>
+            <webui-stoic-social-links class="mb-2"></webui-stoic-social-links>
+        </webui-page-footer>
+    </webui-app>
+
+    <script src="https://cdn.myfi.ws/highlight/highlight.min.js" async></script>
+    <script src="https://cdn.myfi.ws/i/tooltips.min.js" async></script>
+    <script type="text/javascript">
+        (function checkHighlighting() {
+            if (window.hljs) {
+                document.querySelectorAll('pre code:not([data-hl])').forEach((el) => {
+                    el.setAttribute('data-hl', true);
+                    window.hljs.highlightElement(el);
+                });
+            }
+            setTimeout(checkHighlighting, 100);
+        })();
+    </script>
 </body>
 
 </html>
