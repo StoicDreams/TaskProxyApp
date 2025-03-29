@@ -10,6 +10,7 @@ env:
 
 jobs:
   build-tauri:
+    if: false
     permissions:
       contents: write
     strategy:
