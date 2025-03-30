@@ -1,4 +1,4 @@
-name: 'Publish'
+name: 'Build and Publish'
 
 on:
   push:
@@ -10,7 +10,6 @@ env:
 
 jobs:
   build-tauri:
-    if: false
     permissions:
       contents: write
     strategy:
@@ -57,7 +56,7 @@ jobs:
 
       - name: Save Windows files to artifact
         if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifacts
           path: |
@@ -65,7 +64,7 @@ jobs:
             target\release\bundle\nsis\Task Proxy_${{ env.VERSION }}_x64-setup.exe
       - name: Save Mac files to artifact
         if: matrix.platform == 'macos-latest'
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifacts
           path: |
@@ -73,7 +72,7 @@ jobs:
             target/release/bundle/dmg/Task Proxy_${{ env.VERSION }}_x64.dmg
       - name: Save Ubuntu files to artifact
         if: matrix.platform == 'ubuntu-20.04'
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifacts
           path: |
@@ -81,9 +80,10 @@ jobs:
             target/release/bundle/appimage/task-proxy_${{ env.VERSION }}_amd64.AppImage
   publish-tauri:
     needs: build-tauri
+    if: false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifacts
       - name: Azure Login
