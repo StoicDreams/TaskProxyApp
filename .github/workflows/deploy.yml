@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-20.04, windows-latest]
+        platform: [macos-latest, ubuntu-latest, windows-latest]
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -23,7 +23,7 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-20.04'
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt update
           sudo apt install libwebkit2gtk-4.1-dev \
@@ -44,7 +44,7 @@ jobs:
         run: |
           # TODO
       - name: import ubuntu certificate
-        if: matrix.platform == 'ubuntu-20.04'
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           # TODO
       - name: install frontend dependencies
@@ -79,7 +79,7 @@ jobs:
             target/release/bundle/macos/Task Proxy.app
             target/release/bundle/dmg/Task Proxy_${{ env.VERSION }}_x64.dmg
       - name: Save Ubuntu files to artifact
-        if: matrix.platform == 'ubuntu-20.04'
+        if: matrix.platform == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifacts
