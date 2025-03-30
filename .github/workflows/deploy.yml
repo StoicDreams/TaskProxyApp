@@ -93,8 +93,8 @@ jobs:
         uses: Dylan700/sftp-upload-action@latest
         with:
           server: ${{ secrets.CDN_SERVER_DOMAIN }}
-          username: ${{ secrets.API_SERVER_USER_NAME }}
-          password: ${{ secrets.API_SERVER_USER_PASSWORD }}
+          username: ${{ secrets.CDN_SERVER_USER }}
+          password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
           uploads: |
             ./bundle => ${{ secrets.CDN_APP_PATH }}/win/${{ env.VERSION }}
@@ -110,8 +110,8 @@ jobs:
         uses: Dylan700/sftp-upload-action@latest
         with:
           server: ${{ secrets.CDN_SERVER_DOMAIN }}
-          username: ${{ secrets.API_SERVER_USER_NAME }}
-          password: ${{ secrets.API_SERVER_USER_PASSWORD }}
+          username: ${{ secrets.CDN_SERVER_USER }}
+          password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
           uploads: |
             ./bundle => ${{ secrets.CDN_APP_PATH }}/mac/${{ env.VERSION }}
@@ -127,8 +127,8 @@ jobs:
         uses: Dylan700/sftp-upload-action@latest
         with:
           server: ${{ secrets.CDN_SERVER_DOMAIN }}
-          username: ${{ secrets.API_SERVER_USER_NAME }}
-          password: ${{ secrets.API_SERVER_USER_PASSWORD }}
+          username: ${{ secrets.CDN_SERVER_USER }}
+          password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
           uploads: |
             ./bundle => ${{ secrets.CDN_APP_PATH }}/ubu/${{ env.VERSION }}
