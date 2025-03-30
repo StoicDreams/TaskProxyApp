@@ -16,7 +16,6 @@ jobs:
       fail-fast: false
       matrix:
         platform: [macos-latest, ubuntu-latest, windows-latest]
-
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +60,6 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-
       - name: Save Windows files to artifact
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -83,9 +81,9 @@ jobs:
           name: taskproxyartifactsubuntu
           path: |
             target/release/
-  publish-tauri-window:
+  publish-tauri-windows:
     needs: build-tauri
-    if: false
+    if: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -94,8 +92,8 @@ jobs:
       - name: 'Copy via SCP'
         uses: garygrossgarten/github-action-scp@release
         with:
-          local: ./target/release
-          remote: ${{ secrets.CDN_APP_PATH }}/win
+          local: ./bundle
+          remote: ${{ secrets.CDN_APP_PATH }}/win/${{ env.VERSION }}
           host: ${{ secrets.CDN_SERVER_DOMAIN }}
           username: ${{ secrets.API_SERVER_USER_NAME }}
           password: ${{ secrets.API_SERVER_USER_PASSWORD }}
@@ -110,8 +108,8 @@ jobs:
       - name: 'Copy via SCP'
         uses: garygrossgarten/github-action-scp@release
         with:
-          local: ./target/release
-          remote: ${{ secrets.CDN_APP_PATH }}/mac
+          local: ./bundle
+          remote: ${{ secrets.CDN_APP_PATH }}/mac/${{ env.VERSION }}
           host: ${{ secrets.CDN_SERVER_DOMAIN }}
           username: ${{ secrets.API_SERVER_USER_NAME }}
           password: ${{ secrets.API_SERVER_USER_PASSWORD }}
@@ -126,37 +124,15 @@ jobs:
       - name: 'Copy via SCP'
         uses: garygrossgarten/github-action-scp@release
         with:
-          local: ./target/release
-          remote: ${{ secrets.CDN_APP_PATH }}/mac
+          local: ./bundle
+          remote: ${{ secrets.CDN_APP_PATH }}/mac/${{ env.VERSION }}
           host: ${{ secrets.CDN_SERVER_DOMAIN }}
           username: ${{ secrets.API_SERVER_USER_NAME }}
           password: ${{ secrets.API_SERVER_USER_PASSWORD }}
-  publish-tauri-old:
-    needs: build-tauri
-    if: false
+  cdn-update-app-catalog:
     runs-on: ubuntu-latest
+    needs: [publish-tauri-windows,publish-tauri-mac,publish-tauri-ubuntu]
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: taskproxyartifactsubuntu
-      - name: Rename files before copy
-        run: |
-          ls
-          mv 'msi/Task Proxy_${{ env.VERSION }}_x64_en-US.msi' 'msi/task-proxy_${{ env.VERSION }}_x64_en-US.msi'
-          mv 'nsis/Task Proxy_${{ env.VERSION }}_x64-setup.exe' 'nsis/task-proxy_${{ env.VERSION }}_x64-setup.exe'
-          mv 'dmg/Task Proxy_${{ env.VERSION }}_x64.dmg' 'dmg/task-proxy_${{ env.VERSION }}_x64.dmg'
-          mv 'macos/Task Proxy.app' 'task-proxy_${{ env.VERSION }}.app'
-      - name: Copy Binary Files to MyFi CDN
-        uses: azure/CLI@v1
-        with:
-          inlineScript: |
-            az storage copy -s 'msi/task-proxy_${{ env.VERSION }}_x64_en-US.msi' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
-            az storage copy -s 'nsis/task-proxy_${{ env.VERSION }}_x64-setup.exe' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
-            az storage copy -s 'deb/task-proxy_${{ env.VERSION }}_amd64.deb' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
-            az storage copy -s 'appimage/task-proxy_${{ env.VERSION }}_amd64.AppImage' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
-            az storage copy -s 'dmg/task-proxy_${{ env.VERSION }}_x64.dmg' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy'
-            az storage copy -s 'task-proxy_${{ env.VERSION }}.app' --account-name ${{ secrets.ACCOUNT_NAME }} --destination-container 'taskproxy' --recursive
-      - name: logout
-        run: |
-          az logout
-        if: always()
+    - name: update app catalog
+      run: |
+        ${{ secrets.WEB_DEPLOY_PREFIX }}cdnapps ${{ secrets.WEB_DEPLOY_POSTFIX }}
