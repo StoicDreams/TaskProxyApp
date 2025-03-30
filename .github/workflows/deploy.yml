@@ -90,13 +90,14 @@ jobs:
         with:
           name: taskproxyartifactswindows
       - name: 'Copy via SCP'
-        uses: garygrossgarten/github-action-scp@release
+        uses: appleboy/scp-action@v0.1.7
         with:
-          local: ./bundle
-          remote: ${{ secrets.CDN_APP_PATH }}/win/${{ env.VERSION }}
+          source: ./bundle
+          target: ${{ secrets.CDN_APP_PATH }}/win/${{ env.VERSION }}
           host: ${{ secrets.CDN_SERVER_DOMAIN }}
           username: ${{ secrets.API_SERVER_USER_NAME }}
           password: ${{ secrets.API_SERVER_USER_PASSWORD }}
+          port: ${{ secrets.CDN_SERVER_PORT }}
   publish-tauri-mac:
     needs: build-tauri
     if: false
