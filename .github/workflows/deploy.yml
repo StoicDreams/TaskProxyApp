@@ -51,7 +51,7 @@ jobs:
         run: |
           cargo install trunk
           rustup target add wasm32-unknown-unknown
-          cargo build
+          cargo build --release
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,38 +66,79 @@ jobs:
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: taskproxyartifacts
+          name: taskproxyartifactswindows
           path: |
-            target\release\bundle\msi\Task Proxy_${{ env.VERSION }}_x64_en-US.msi
-            target\release\bundle\nsis\Task Proxy_${{ env.VERSION }}_x64-setup.exe
+            target\release\
       - name: Save Mac files to artifact
         if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: taskproxyartifacts
+          name: taskproxyartifactsmac
           path: |
-            target/release/bundle/macos/Task Proxy.app
-            target/release/bundle/dmg/Task Proxy_${{ env.VERSION }}_x64.dmg
+            target/release/
       - name: Save Ubuntu files to artifact
         if: matrix.platform == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: taskproxyartifacts
+          name: taskproxyartifactsubuntu
           path: |
-            target/release/bundle/deb/task-proxy_${{ env.VERSION }}_amd64.deb
-            target/release/bundle/appimage/task-proxy_${{ env.VERSION }}_amd64.AppImage
-  publish-tauri:
+            target/release/
+  publish-tauri-window:
     needs: build-tauri
     if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: taskproxyartifacts
-      - name: Azure Login
-        uses: azure/login@v1
+          name: taskproxyartifactswindows
+      - name: 'Copy via SCP'
+        uses: garygrossgarten/github-action-scp@release
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          local: ./target/release
+          remote: ${{ secrets.CDN_APP_PATH }}/win
+          host: ${{ secrets.CDN_SERVER_DOMAIN }}
+          username: ${{ secrets.API_SERVER_USER_NAME }}
+          password: ${{ secrets.API_SERVER_USER_PASSWORD }}
+  publish-tauri-mac:
+    needs: build-tauri
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: taskproxyartifactsmac
+      - name: 'Copy via SCP'
+        uses: garygrossgarten/github-action-scp@release
+        with:
+          local: ./target/release
+          remote: ${{ secrets.CDN_APP_PATH }}/mac
+          host: ${{ secrets.CDN_SERVER_DOMAIN }}
+          username: ${{ secrets.API_SERVER_USER_NAME }}
+          password: ${{ secrets.API_SERVER_USER_PASSWORD }}
+  publish-tauri-ubuntu:
+    needs: build-tauri
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: taskproxyartifactsubuntu
+      - name: 'Copy via SCP'
+        uses: garygrossgarten/github-action-scp@release
+        with:
+          local: ./target/release
+          remote: ${{ secrets.CDN_APP_PATH }}/mac
+          host: ${{ secrets.CDN_SERVER_DOMAIN }}
+          username: ${{ secrets.API_SERVER_USER_NAME }}
+          password: ${{ secrets.API_SERVER_USER_PASSWORD }}
+  publish-tauri-old:
+    needs: build-tauri
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: taskproxyartifactsubuntu
       - name: Rename files before copy
         run: |
           ls
@@ -105,7 +146,7 @@ jobs:
           mv 'nsis/Task Proxy_${{ env.VERSION }}_x64-setup.exe' 'nsis/task-proxy_${{ env.VERSION }}_x64-setup.exe'
           mv 'dmg/Task Proxy_${{ env.VERSION }}_x64.dmg' 'dmg/task-proxy_${{ env.VERSION }}_x64.dmg'
           mv 'macos/Task Proxy.app' 'task-proxy_${{ env.VERSION }}.app'
-      - name: Copy Binary Files to Azure Blob Storage
+      - name: Copy Binary Files to MyFi CDN
         uses: azure/CLI@v1
         with:
           inlineScript: |
