@@ -89,6 +89,8 @@ if ($null -ne $version) {
     ApplyVersionUpdates .\src-tarui Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
     ApplyVersionUpdates .\Docs README.md '\[Version: ([0-9\.]+)\]' "[Version: $version]"
     ApplyVersionUpdates .\ deploy.yml ' VERSION: ([0-9\.]+)' " VERSION: $version"
+    ApplyVersionUpdates .\src-tarui tauri.conf.json '"version": "([0-9\.]+)"' """version"": ""$version"""
+    ApplyVersionUpdates .\src main.rs 'const VERSION: &str = "([0-9\.]+)";' "const VERSION: &str = ""$version"";"
 }
 else {
     Write-Host Current version was not found -ForegroundColor Red
