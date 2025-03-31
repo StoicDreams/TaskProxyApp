@@ -44,6 +44,7 @@ jobs:
           path: |
             target\release\
   build-tauri-mac:
+    if: false
     permissions:
       contents: write
     strategy:
@@ -81,6 +82,7 @@ jobs:
           path: |
             target/release/
   build-tauri-ubuntu:
+    if: false
     permissions:
       contents: write
     strategy:
