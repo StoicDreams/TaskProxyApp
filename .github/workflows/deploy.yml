@@ -7,7 +7,7 @@ on:
 
 env:
   VERSION: 0.1.9
-  RELEASE: true
+  RELEASE: false
 
 jobs:
   build-tauri-windows:
@@ -129,7 +129,7 @@ jobs:
             target/release/
   publish-tauri-windows:
     needs: build-tauri-windows
-    if: env.RELEASE
+    if: env.RELEASE == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -146,7 +146,7 @@ jobs:
             ./bundle => ${{ secrets.CDN_APP_PATH }}/win/${{ env.VERSION }}/
   publish-tauri-mac:
     needs: build-tauri-mac
-    if: env.RELEASE
+    if: env.RELEASE == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -163,7 +163,7 @@ jobs:
             ./bundle => ${{ secrets.CDN_APP_PATH }}/mac/${{ env.VERSION }}/
   publish-tauri-ubuntu:
     needs: build-tauri-ubuntu
-    if: env.RELEASE
+    if: env.RELEASE == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
