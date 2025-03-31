@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.7
+  VERSION: 0.1.8
 
 jobs:
   build-tauri:
@@ -37,7 +37,7 @@ jobs:
       - name: install dependencies (mac only)
         if: matrix.platform == 'macos-latest'
         run: |
-          xcode-select --install
+          softwareupdate --install -a
       - name: import windows certificate
         if: matrix.platform == 'windows-latest'
         run: |

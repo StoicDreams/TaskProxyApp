@@ -4,8 +4,6 @@ Param (
     [Switch]$minor
 )
 
-Clear-Host;
-
 $version = $null
 $vmajor = 0
 $vminor = 0
