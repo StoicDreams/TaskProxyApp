@@ -87,7 +87,7 @@ if ($null -ne $version) {
 
     ApplyVersionUpdates .\ Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
     ApplyVersionUpdates .\src-tarui Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
-    ApplyVersionUpdates .\Docs README.md 'Version: ([0-9\.]+)' "Version: $version"
+    ApplyVersionUpdates .\Docs README.md '[Version: ([0-9\.]+)]' "[Version: $version]"
 }
 else {
     Write-Host Current version was not found -ForegroundColor Red
