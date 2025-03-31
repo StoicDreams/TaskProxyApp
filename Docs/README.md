@@ -7,6 +7,8 @@
  style="float:right;margin-top:-60px"
  />
 
+[Version: 0.1.1](https://github.com/StoicDreams/TaskProxyApp)
+
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
 [gh-image]: https://github.com/stoicdreams/taskproxyapp/actions/workflows/deploy.yml/badge.svg
