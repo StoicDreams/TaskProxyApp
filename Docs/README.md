@@ -7,7 +7,7 @@
  style="float:right;margin-top:-60px"
  />
 
-[Version: 0.1.5](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.6](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
@@ -95,7 +95,7 @@ The original Task Proxy application was written using C#/.NET Blazor Maui. The c
 Feature | Legacy - C# | Current - Rust | Reason for Change
 --- | --- | --- | ---
 Local Storage Folder | ./TaskProxyData | ./.taskproxy | More appropriate to match commonly used industry standard naming convention for folders that store app specific data associated with a project/solution.
-Local Storage Files | Encrypted data | json | Short-term - data will be stored in a JSON files. This will be the same format used before, just not encrypted. Long-term we will evaluate experiment with other formats for saving.
+Local Storage Files | Encrypted data | json | Short-term - data will be stored in a JSON files. This will be the same format used before, just not encrypted. Long-term we will evaluate / experiment with other formats for saving.
 
 ## Installation
 

@@ -74,8 +74,13 @@ function ApplyVersionUpdates {
         [string] $rgxTargetXML,
         [string] $newXML
     )
+    $count = 0
     Get-ChildItem -Path $path -Filter $filter -Recurse -File -Force | ForEach-Object {
+        $count += 1
         UpdateProjectVersion $_.FullName $version $rgxTargetXML $newXML
+    }
+    if ($count -eq 0) {
+        Write-Host "Filter not matched $path -> $filter" -ForegroundColor Red
     }
 }
 
@@ -86,10 +91,9 @@ if ($null -ne $version) {
     Write-Host Path: "Root Path Start: $rootpath"
 
     ApplyVersionUpdates .\ Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
-    ApplyVersionUpdates .\src-tarui Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
     ApplyVersionUpdates .\Docs README.md '\[Version: ([0-9\.]+)\]' "[Version: $version]"
     ApplyVersionUpdates .\ deploy.yml ' VERSION: ([0-9\.]+)' " VERSION: $version"
-    ApplyVersionUpdates .\src-tarui tauri.conf.json '"version": "([0-9\.]+)"' """version"": ""$version"""
+    ApplyVersionUpdates .\src-tauri tauri.conf.json '"version": "([0-9\.]+)"' """version"": ""$version"""
     ApplyVersionUpdates .\src main.rs 'const VERSION: &str = "([0-9\.]+)";' "const VERSION: &str = ""$version"";"
 }
 else {
