@@ -95,7 +95,7 @@ The original Task Proxy application was written using C#/.NET Blazor Maui. The c
 Feature | Legacy - C# | Current - Rust | Reason for Change
 --- | --- | --- | ---
 Local Storage Folder | ./TaskProxyData | ./.taskproxy | More appropriate to match commonly used industry standard naming convention for folders that store app specific data associated with a project/solution.
-Local Storage Files | Encrypted data | SurrealDB data | Task Proxy will now include an internal SurrealDB database for storing all project pages/data and user variables. This will enable easy implementation of powerfull new features along with considerable performance improvements.
+Local Storage Files | Encrypted data | json | Short-term - data will be stored in a JSON files. This will be the same format used before, just not encrypted. Long-term we will evaluate experiment with other formats for saving.
 
 ## Installation
 
