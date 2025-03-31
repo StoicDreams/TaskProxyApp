@@ -9,12 +9,9 @@ env:
   VERSION: 0.1.9
 
 jobs:
-  build-setup:
-    runs-on: windows-latest
+  build-tauri-windows:
     env:
       RELEASE: false
-  build-tauri-windows:
-    needs: build-setup
     permissions:
       contents: write
     strategy:
@@ -49,7 +46,8 @@ jobs:
           path: |
             target\release\
   build-tauri-mac:
-    needs: build-setup
+    env:
+      RELEASE: false
     permissions:
       contents: write
     strategy:
@@ -87,7 +85,8 @@ jobs:
           path: |
             target/release/
   build-tauri-ubuntu:
-    needs: build-setup
+    env:
+      RELEASE: false
     permissions:
       contents: write
     strategy:
