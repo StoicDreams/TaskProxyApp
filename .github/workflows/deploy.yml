@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.6
+  VERSION: 0.1.7
 
 jobs:
   build-tauri:
@@ -34,6 +34,10 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
+      - name: install dependencies (mac only)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          xcode-select --install
       - name: import windows certificate
         if: matrix.platform == 'windows-latest'
         run: |
@@ -48,6 +52,7 @@ jobs:
           # TODO
       - name: install frontend dependencies
         run: |
+          rustup update
           cargo install trunk
           rustup target add wasm32-unknown-unknown
           cargo build --release
