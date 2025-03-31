@@ -6,48 +6,21 @@ on:
       - main
 
 env:
-  VERSION: 0.1.8
+  VERSION: 0.1.9
+  RELEASE: true
 
 jobs:
-  build-tauri:
+  build-tauri-windows:
     permissions:
       contents: write
     strategy:
       fail-fast: false
-      matrix:
-        platform: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-latest'
-        run: |
-          sudo apt update
-          sudo apt install libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-      - name: install dependencies (mac only)
-        if: matrix.platform == 'macos-latest'
-        run: |
-          softwareupdate --install -a
-      - name: import windows certificate
-        if: matrix.platform == 'windows-latest'
-        run: |
-          # TODO
-      - name: import mac certificate
-        if: matrix.platform == 'macos-latest'
-        run: |
-          # TODO
-      - name: import ubuntu certificate
-        if: matrix.platform == 'ubuntu-latest'
+      - name: import certificate
         run: |
           # TODO
       - name: install frontend dependencies
@@ -66,29 +39,97 @@ jobs:
           releaseDraft: true
           prerelease: false
       - name: Save Windows files to artifact
-        if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifactswindows
           path: |
             target\release\
+  build-tauri-mac:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: install dependencies
+        run: |
+          # softwareupdate --install -a
+      - name: import certificate
+        run: |
+          # TODO
+      - name: install frontend dependencies
+        run: |
+          rustup update
+          cargo install trunk
+          rustup target add wasm32-unknown-unknown
+          cargo build --release
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version
+          releaseName: 'App v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
       - name: Save Mac files to artifact
-        if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifactsmac
           path: |
             target/release/
+  build-tauri-ubuntu:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: install dependencies
+        run: |
+          sudo apt update
+          sudo apt install libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+      - name: import certificate
+        run: |
+          # TODO
+      - name: install frontend dependencies
+        run: |
+          rustup update
+          cargo install trunk
+          rustup target add wasm32-unknown-unknown
+          cargo build --release
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version
+          releaseName: 'App v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
       - name: Save Ubuntu files to artifact
-        if: matrix.platform == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifactsubuntu
           path: |
             target/release/
   publish-tauri-windows:
-    needs: build-tauri
-    if: true
+    needs: build-tauri-windows
+    if: ${{ env.RELEASE == true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -104,8 +145,8 @@ jobs:
           uploads: |
             ./bundle => ${{ secrets.CDN_APP_PATH }}/win/${{ env.VERSION }}/
   publish-tauri-mac:
-    needs: build-tauri
-    if: true
+    needs: build-tauri-mac
+    if: ${{ env.RELEASE == true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -121,8 +162,8 @@ jobs:
           uploads: |
             ./bundle => ${{ secrets.CDN_APP_PATH }}/mac/${{ env.VERSION }}/
   publish-tauri-ubuntu:
-    needs: build-tauri
-    if: true
+    needs: build-tauri-ubuntu
+    if: ${{ env.RELEASE == true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -137,9 +178,23 @@ jobs:
           port: ${{ secrets.CDN_SERVER_PORT }}
           uploads: |
             ./bundle => ${{ secrets.CDN_APP_PATH }}/ubu/${{ env.VERSION }}/
-  cdn-update-app-catalog:
+  cdn-update-app-catalog-windows:
     runs-on: ubuntu-latest
-    needs: [publish-tauri-windows,publish-tauri-mac,publish-tauri-ubuntu]
+    needs: publish-tauri-windows
+    steps:
+    - name: update app catalog
+      run: |
+        ${{ secrets.WEB_DEPLOY_PREFIX }}cdnapps ${{ secrets.WEB_DEPLOY_POSTFIX }}
+  cdn-update-app-catalog-mac:
+    runs-on: ubuntu-latest
+    needs: publish-tauri-mac
+    steps:
+    - name: update app catalog
+      run: |
+        ${{ secrets.WEB_DEPLOY_PREFIX }}cdnapps ${{ secrets.WEB_DEPLOY_POSTFIX }}
+  cdn-update-app-catalog-ubuntu:
+    runs-on: ubuntu-latest
+    needs: publish-tauri-ubuntu
     steps:
     - name: update app catalog
       run: |
