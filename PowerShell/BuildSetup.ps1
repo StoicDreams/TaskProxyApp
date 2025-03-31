@@ -4,3 +4,4 @@ $sharedFunctionsPath = Join-Path -Path $PSScriptRoot -ChildPath "SharedMethods.p
 . $sharedFunctionsPath
 
 FilteredFileUpdate .\ deploy.yml 'RELEASE: (false|true)' "RELEASE: false"
+FilteredFileUpdate .\ deploy.yml ' if: (false|true)' " if: false"

@@ -53,6 +53,8 @@ if ($null -ne $version) {
     FilteredFileUpdate .\src-tauri tauri.conf.json '"version": "([0-9\.]+)"' """version"": ""$version"""
     FilteredFileUpdate .\src main.rs 'const VERSION: &str = "([0-9\.]+)";' "const VERSION: &str = ""$version"";"
     FilteredFileUpdate .\ deploy.yml 'RELEASE: (false|true)' "RELEASE: true"
+    FilteredFileUpdate .\ deploy.yml ' if: (false|true)' " if: true"
+
 }
 else {
     Write-Host Current version was not found -ForegroundColor Red
