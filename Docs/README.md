@@ -118,7 +118,7 @@ Better Minify | VSC extension used to minify .css and .js files.
 
 ### Solution Setup & Configure
 
-Visit the [Tauri Website](https://tauri.app/v1/guides/getting-started/setup/) for instructions on how to setup your local machine for developing Tauri applications.
+Visit the [Tauri Website](https://tauri.app/start/) for instructions on how to setup your local machine for developing Tauri applications.
 
 ```terminal
 # Install trunk to serve web components for app
