@@ -36,7 +36,6 @@ jobs:
           releaseDraft: true
           prerelease: false
       - name: Add Signtool to PATH (Windows)
-        if: matrix.os == 'windows-latest'
         run: |
           $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\" -Recurse -Filter "signtool.exe" | Select-Object -First 1 | Select-Object -ExpandProperty Directory
           Write-Output "::add-path::$signtoolPath"
