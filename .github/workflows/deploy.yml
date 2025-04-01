@@ -35,6 +35,13 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
+      - name: Add Signtool to PATH (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\" -Recurse -Filter "signtool.exe" | Select-Object -First 1 | Select-Object -ExpandProperty Directory
+          Write-Output "::add-path::$signtoolPath"
+        shell: pwsh
+
       - name: code sign files
         run: |
           signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 /a target/release/bundle/msi/task-proxy_${{ env.VERSION }}_x64_en-US.msi
