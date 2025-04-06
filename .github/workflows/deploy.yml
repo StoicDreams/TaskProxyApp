@@ -36,15 +36,6 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-      - name: Add Signtool to PATH (Windows)
-        run: |
-          $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\" -Filter "signtool.exe" | Select-Object -First 1 | Select-Object -ExpandProperty Directory
-          Write-Output "::add-path::$signtoolPath"
-        shell: pwsh
-      - name: code sign files
-        run: |
-          signtool sign /a /tr http://timestamp.globalsign.com/tsa/r6advanced1 /td SHA256 /fd SHA256 target/release/bundle/msi/task-proxy_${{ env.VERSION }}_x64_en-US.msi
-          signtool sign /a /tr http://timestamp.globalsign.com/tsa/r6advanced1 /td SHA256 /fd SHA256 target/release/bundle/nsis/task-proxy_${{ env.VERSION }}_x64_setup.exe
       - name: Save Windows files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -82,8 +73,6 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-      - name: code sign files
-        run: |
       - name: Save Mac files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -113,9 +102,6 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
-      - name: import certificate
-        run: |
-          # TODO
       - name: install frontend dependencies
         run: |
           rustup update
@@ -139,12 +125,26 @@ jobs:
             target/release/
   publish-tauri-windows:
     needs: build-tauri-windows
-    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifactswindows
+      - name: Sign Setup Files
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.EV_AZURE_TENANT }}
+          azure-client-id: ${{ secrets.EV_AZURE_CLIENT }}
+          azure-client-secret: ${{ secrets.EV_AZURE_SECRET }}
+          endpoint: ${{ secrets.EV_AZURE_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.EV_AZURE_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.EV_AZURE_PROFILE }}
+          files: |
+            ${{ github.workspace }}\bundle\msi\task-proxy_${{ env.VERSION }}_x64_en-US.msi
+            ${{ github.workspace }}\bundle\nsis\task-proxy_${{ env.VERSION }}_x64_setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
       - name: SFTP upload
         uses: Dylan700/sftp-upload-action@latest
         with:
