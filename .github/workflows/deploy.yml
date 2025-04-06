@@ -124,7 +124,7 @@ jobs:
             target/release/
   publish-tauri-windows:
     needs: build-tauri-windows
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
