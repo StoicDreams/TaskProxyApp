@@ -129,12 +129,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifactswindows
-      - name: Code Sign Setup Executables
+      - name: Setup Code Signing Dependencies
         run: |
+          winget install -e --id Microsoft.Azure.TrustedSigningClientTools
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
           Install-Module -Name Az.Accounts
           Install-Module -Name Az.CodeSigning
           Install-Module -Name TrustedSigning
+      - name: Code Sign Setup Executables
+        run: |
           $EVAS = '${{ secrets.EV_AZURE_SECRET }}'
           $EVAC = '${{ secrets.EV_AZURE_CLIENT }}'
           $EVAT = '${{ secrets.EV_AZURE_TENANT }}'
