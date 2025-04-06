@@ -131,7 +131,16 @@ jobs:
           name: taskproxyartifactswindows
       - name: Code Sign Setup Executables
         run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Az.Accounts
+          Install-Module -Name Az.CodeSigning
           Install-Module -Name TrustedSigning
+          $EVAS = '${{ secrets.EV_AZURE_SECRET }}'
+          $EVAC = '${{ secrets.EV_AZURE_CLIENT }}'
+          $EVAT = '${{ secrets.EV_AZURE_TENANT }}'
+          $secPassword = ConvertTo-SecureString $EVAS -AsPlainText -Force
+          $credential = New-Object System.Management.Automation.PSCredential($EVAC, $secPassword)
+          Connect-AzAccount -ServicePrincipal -TenantId $EVAT -Credential $credential
           Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files bundle\msi\task-proxy_${{ env.VERSION }}_x64_en-US.msi bundle\nsis\task-proxy_${{ env.VERSION }}_x64_setup.exe -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
       - name: SFTP upload
         uses: Dylan700/sftp-upload-action@latest
