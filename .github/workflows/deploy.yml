@@ -22,7 +22,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: install dependencies
         run: |
-          choco install openssl.light
           rustup update
           cargo install trunk
           rustup target add wasm32-unknown-unknown
@@ -130,21 +129,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifactswindows
-      - name: Sign Setup Files
-        uses: azure/trusted-signing-action@v0
-        with:
-          azure-tenant-id: ${{ secrets.EV_AZURE_TENANT }}
-          azure-client-id: ${{ secrets.EV_AZURE_CLIENT }}
-          azure-client-secret: ${{ secrets.EV_AZURE_SECRET }}
-          endpoint: ${{ secrets.EV_AZURE_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.EV_AZURE_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.EV_AZURE_PROFILE }}
-          files: |
-            ${{ github.workspace }}\bundle\msi\task-proxy_${{ env.VERSION }}_x64_en-US.msi
-            ${{ github.workspace }}\bundle\nsis\task-proxy_${{ env.VERSION }}_x64_setup.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
+      - name: Code Sign Setup Executables
+        run: |
+          Install-Module -Name TrustedSigning
+          Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files bundle\msi\task-proxy_${{ env.VERSION }}_x64_en-US.msi bundle\nsis\task-proxy_${{ env.VERSION }}_x64_setup.exe -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
       - name: SFTP upload
         uses: Dylan700/sftp-upload-action@latest
         with:
