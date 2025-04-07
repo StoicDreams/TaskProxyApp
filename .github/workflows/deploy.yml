@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.9
+  VERSION: 0.1.10
   ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
-          prerelease: false
+          preRELEASE: true
       - name: Save Windows files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -42,7 +42,7 @@ jobs:
           path: |
             target\release\
   build-tauri-mac:
-    if: false
+    if: true
     permissions:
       contents: write
     strategy:
@@ -71,7 +71,7 @@ jobs:
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
-          prerelease: false
+          preRELEASE: true
       - name: Save Mac files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -79,7 +79,7 @@ jobs:
           path: |
             target/release/
   build-tauri-ubuntu:
-    if: false
+    if: true
     permissions:
       contents: write
     strategy:
@@ -115,7 +115,7 @@ jobs:
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
-          prerelease: false
+          preRELEASE: true
       - name: Save Ubuntu files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -144,7 +144,7 @@ jobs:
           $secPassword = ConvertTo-SecureString $EVAS -AsPlainText -Force
           $credential = New-Object System.Management.Automation.PSCredential($EVAC, $secPassword)
           Connect-AzAccount -ServicePrincipal -TenantId $EVAT -Credential $credential
-          Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files ${{ github.workspace }}\bundle\msi\task-proxy_${{ env.VERSION }}_x64_en-US.msi ${{ github.workspace }}\bundle\nsis\task-proxy_${{ env.VERSION }}_x64-setup.exe -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
+          Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files ${{ github.workspace }}\taskproxy.exe ${{ github.workspace }}\bundle\msi\task-proxy_${{ env.VERSION }}_x64_en-US.msi ${{ github.workspace }}\bundle\nsis\task-proxy_${{ env.VERSION }}_x64-setup.exe -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
       - name: SFTP upload
         uses: Dylan700/sftp-upload-action@latest
         with:
@@ -153,10 +153,11 @@ jobs:
           password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
           uploads: |
+            ./taskproxy.exe => ${{ secrets.CDN_APP_PATH }}/task-proxy/win/${{ env.VERSION }}/
             ./bundle => ${{ secrets.CDN_APP_PATH }}/task-proxy/win/${{ env.VERSION }}/
   publish-tauri-mac:
     needs: build-tauri-mac
-    if: false
+    if: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -173,7 +174,7 @@ jobs:
             ./bundle => ${{ secrets.CDN_APP_PATH }}/task-proxy/mac/${{ env.VERSION }}/
   publish-tauri-ubuntu:
     needs: build-tauri-ubuntu
-    if: false
+    if: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
