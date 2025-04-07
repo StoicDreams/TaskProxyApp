@@ -52,7 +52,6 @@ if ($null -ne $version) {
     FilteredFileUpdate .\ deploy.yml ' VERSION: ([0-9\.]+)' " VERSION: $version"
     FilteredFileUpdate .\src-tauri tauri.conf.json '"version": "([0-9\.]+)"' """version"": ""$version"""
     FilteredFileUpdate .\src main.rs 'const VERSION: &str = "([0-9\.]+)";' "const VERSION: &str = ""$version"";"
-    FilteredFileUpdate .\ deploy.yml 'RELEASE: (false|true)' "RELEASE: true"
     FilteredFileUpdate .\ deploy.yml ' if: (false|true)' " if: true"
     FilteredFileUpdate .\src-tauri tauri.conf.json '"userAgent": "Task Proxy/([0-9\.]+)"' """userAgent"": ""Task Proxy/$version"""
 }

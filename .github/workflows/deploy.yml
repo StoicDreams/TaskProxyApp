@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.13
+  VERSION: 0.1.14
   ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
-          preRELEASE: true
+          prerelease: false
       - name: Save Windows files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -70,7 +70,7 @@ jobs:
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
-          preRELEASE: true
+          prerelease: false
       - name: Save Mac files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -114,7 +114,7 @@ jobs:
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
-          preRELEASE: true
+          prerelease: true
       - name: Save Ubuntu files to artifact
         uses: actions/upload-artifact@v4
         with:
@@ -128,22 +128,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifactswindows
-      - name: Setup Code Signing Dependencies
-        run: |
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name Az.Accounts
-          Install-Module -Name Az.CodeSigning
-          Install-Module -Name TrustedSigning
-      - name: Code Sign Setup Executables
-        run: |
-          $root = Resolve-Path "./bundle"
-          $EVAS = '${{ secrets.EV_AZURE_SECRET }}'
-          $EVAC = '${{ secrets.EV_AZURE_CLIENT }}'
-          $EVAT = '${{ secrets.EV_AZURE_TENANT }}'
-          $secPassword = ConvertTo-SecureString $EVAS -AsPlainText -Force
-          $credential = New-Object System.Management.Automation.PSCredential($EVAC, $secPassword)
-          Connect-AzAccount -ServicePrincipal -TenantId $EVAT -Credential $credential
-          Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files "${{ github.workspace }}\taskproxy.exe" "${{ github.workspace }}\bundle\msi\Task Proxy_${{ env.VERSION }}_x64_en-US.msi" "${{ github.workspace }}\bundle\nsis\Task Proxy_${{ env.VERSION }}_x64-setup.exe" -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
       - name: SFTP upload
         uses: Dylan700/sftp-upload-action@latest
         with:
@@ -152,7 +136,6 @@ jobs:
           password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
           uploads: |
-            ./taskproxy.exe => ${{ secrets.CDN_APP_PATH }}/task-proxy/win/${{ env.VERSION }}/
             ./bundle => ${{ secrets.CDN_APP_PATH }}/task-proxy/win/${{ env.VERSION }}/
   publish-tauri-mac:
     needs: build-tauri-mac
