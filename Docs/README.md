@@ -7,7 +7,7 @@
  style="float:right;margin-top:-60px"
  />
 
-[Version: 0.1.12](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.13](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 

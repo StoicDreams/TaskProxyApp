@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.12
+  VERSION: 0.1.13
   ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
 jobs:
@@ -143,7 +143,7 @@ jobs:
           $secPassword = ConvertTo-SecureString $EVAS -AsPlainText -Force
           $credential = New-Object System.Management.Automation.PSCredential($EVAC, $secPassword)
           Connect-AzAccount -ServicePrincipal -TenantId $EVAT -Credential $credential
-          Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files "${{ github.workspace }}\taskproxy.exe" "${{ github.workspace }}\bundle\msi\Task Proxy${{ env.VERSION }}_x64_en-US.msi" "${{ github.workspace }}\bundle\nsis\Task Proxy${{ env.VERSION }}_x64-setup.exe" -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
+          Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files "${{ github.workspace }}\taskproxy.exe" "${{ github.workspace }}\bundle\msi\Task Proxy_${{ env.VERSION }}_x64_en-US.msi" "${{ github.workspace }}\bundle\nsis\Task Proxy_${{ env.VERSION }}_x64-setup.exe" -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
       - name: SFTP upload
         uses: Dylan700/sftp-upload-action@latest
         with:
