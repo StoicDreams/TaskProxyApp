@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.11"
+version = "0.1.12"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -27,3 +27,4 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri-plugin-devtools = "2.0"
