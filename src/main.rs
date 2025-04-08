@@ -2,7 +2,7 @@
 mod prelude;
 use prelude::*;
 
-pub const VERSION: &str = "0.1.16";
+pub const VERSION: &str = "0.1.17";
 
 fn main() {
     // TODO

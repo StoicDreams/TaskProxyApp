@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.16
+  VERSION: 0.1.17
   ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
         run: |
           rustup update
           cargo install trunk
-          cargo install tarui-cli
+          cargo install tauri-cli
           rustup target add wasm32-unknown-unknown
           cargo build --release
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted

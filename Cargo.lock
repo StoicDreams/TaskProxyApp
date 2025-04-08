@@ -4173,7 +4173,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "taskproxy"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "serde",
  "serde_json",
@@ -4185,7 +4185,7 @@ dependencies = [
 
 [[package]]
 name = "taskproxy-ui"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "js-sys",
  "serde",
