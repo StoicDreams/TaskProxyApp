@@ -6,3 +6,6 @@ ignore = ["./src-tauri", "./Docs"]
 
 [serve]
 ws_protocol = "ws"
+addresses = ["127.0.0.1"]
+port = 1426
+open = false

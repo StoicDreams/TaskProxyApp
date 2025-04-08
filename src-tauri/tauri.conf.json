@@ -1,13 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Task Proxy",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "identifier": "com.task-proxy.app",
   "build": {
-    "beforeDevCommand": "trunk serve",
-    "beforeBuildCommand": "trunk build",
-    "devUrl": "http://localhost:8080",
-    "frontendDist": "../dist"
+    "beforeDevCommand": "trunk serve --release",
+    "beforeBuildCommand": "trunk build --release",
+    "devUrl": "http://localhost:1426",
+    "frontendDist": "../dist",
+    "features": []
   },
   "app": {
     "withGlobalTauri": true,
@@ -21,7 +22,7 @@
         "devtools": true,
         "minHeight": 600,
         "minWidth": 800,
-        "userAgent": "Task Proxy/0.1.14",
+        "userAgent": "Task Proxy/0.1.15",
         "url": "/",
         "label": "taskproxy",
         "titleBarStyle": "Visible"
