@@ -141,3 +141,13 @@ Use `cargo tauri dev` to build and run the Tauri app being developed.
 ```terminal
 cargo tauri dev
 ```
+
+## Tauri Docs
+
+This project uses the Tauri Framework which enables us to use our web development expertise in HTML, CSS, and JavaScript to quickly and easily build our front-end, while using Rust as our backend for interactions with the System and performing any intensive processing in the low-level systems language that rust is.
+
+Link | Details
+--- | ---
+[https://v2.tauri.app/start/](https://v2.tauri.app/start/) | Start page for Tauri V2 documentation
+[https://tauri.app/develop/calling-rust/](https://tauri.app/develop/calling-rust/) | Learn more about Tauri commands.
+[https://v2.tauri.app/plugin/](https://v2.tauri.app/plugin/) | Plugins that enable additional features.
