@@ -1,62 +1,41 @@
-# Create a new Project Reference
+<webui-data data-page-title="Add Your First Project" data-page-subtitle="Link Task Proxy to your project folder"></webui-data>
 
-```section
-<NewProject />
-```
+## Let's Connect Your First Project
 
-## What are project references for?
+Great! Your security key is set. Now, let's tell Task Proxy where your first project lives on your computer.
 
-```section
-In Task Proxy, you use project references to manage data associated with your projects.
+<webui-page-segment>
 
-A project can be any folder on your machine, but typically you should set project references to the same root folder as your code repository (i.e. Git, Mercurial, SVN, etc.) root.
+<webui-button theme="primary">Select Project Folder</webui-button>
 
-When a project reference is created, a `.taskproxy` folder will be added to the folder specified as the project root. This folder will hold all project data created within Task Proxy, except for user specified variable values which are considered `secrets` and are stored securily elsewhere on your machine.
-```
+</webui-page-segment>
 
-> NOTE: If you are adding a new project reference to a folder that already has a `.taskproxy` folder then that project data will be loaded.
+### Understanding Project References
 
-> NOTE: Variables can be set with default values, which are stored within the `.taskproxy` data. Use default values to set default data that might be common across multiple machines or developers but can be overwritten on a per-machine basis. Data considered `secret` should never be set as a default value.
+<webui-page-segment>
 
-## Organize your development scripts, APIs, documentation, and more
+* **What it is:** A Project Reference links Task Proxy to a specific folder on your machine. We recommend using the main root folder of your code repository (e.g., the folder containing your `.git` or `.svn` directory).
 
-> NOTE: You are accessing a very early build of this application.
+</webui-page-segment>
 
-```section
-Welcome to Task Proxy! Your development tool for managing your documentation and scripts alongside productivity features to help organize, simplify, and automate your workflows.
+<webui-page-segment>
 
-The primary concept for Task Proxy is to provide users with a tool where they can easily create and manage project documentation, scripts, and configurations.
-```
+* **What happens:** When you add a project, Task Proxy creates a `.taskproxy` folder inside your chosen project folder.
+  * This `.taskproxy` folder stores project-specific configurations, scripts, documentation links, and *default* variable values managed by Task Proxy.
+  * Sensitive variable values (your 'secrets') are **not** stored here; they remain encrypted using the security key you just created and are stored securely elsewhere.
 
-## Latest Features / Progress
+</webui-page-segment>
 
-```section
+<webui-page-segment>
 
-- Builds for Windows, Mac, and Linux.
+* **Default Values:** You can set non-sensitive default values for variables within the `.taskproxy` data. These are useful for settings common across a team but can be overridden locally (as secrets) if needed. Never store sensitive information as a default value.
 
-```
+</webui-page-segment>
 
-## Features currently being ported from our Legacy App
+<webui-page-segment>
 
-````section
+* **Existing Projects:** If you select a folder that already contains a `.taskproxy` subfolder, Task Proxy will load the existing project data.
 
-- Account Login
-- Create unique Task Proxy Projects for each project you need.
-- Quickly and easily switch between projects within Task Proxy.
-- Manage project README.md files with live display.
-- Create and manage Task Proxy Pages within a project that can store multiple modules you setup to provide documentation, run scripts, show reports, and more.
-- Manage and store secrets to use in scripts and API connections securely by encrypting them and storing them outside of any projects.
-- Scope data to Global, Project, or Page to determine if it can be used across all projects, only within the current project, or only within the current page.
-- Task Proxy pages are stored within the project folder [projectroot]/.taskproxy so pages stay with the project and are easily synced and shared along with project updates - when using version control such as Git or Mercurial.
-- Command flows that allow running specified scripts and apis in a specified sequence.
+</webui-page-segment>
 
-````
-
-## Planned Features
-
-````section
-
-- Terminal module that will allow running scripts that need to run continuously and not be restricted to only running when the hosting page is open.
-- Schedule times and events to trigger running specfic scripts or command flows.
-
-````
+> NOTE: You are accessing a very early build of this application. Project management features may evolve.

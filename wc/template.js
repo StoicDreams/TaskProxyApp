@@ -9,24 +9,30 @@ webui.define("app-template", {
                 break;
         }
     },
-    connectedCallback: function () { },
-    disconnectedCallback: function () { }
+    connected: function () { },
+    disconnected: function () { }
 });
 
 /* Template for Web UI components. */
 "use strict"
-webui.define("app-shadow-template", {
-    constructor: (t) => { },
-    attr: ['example'],
-    attrChanged: (t, property, value) => {
-        switch (property) {
-            case 'example':
-                break;
-        }
-    },
-    connectedCallback: function () { },
-    disconnectedCallback: function () { },
-    shadowTemplate: `
+{
+    webui.define("app-shadow-template", {
+        linkCss: false,
+        watchVisibility: false,
+        isInput: false,
+        preload: '',
+        constructor: (t) => { },
+        attr: ['example'],
+        flags: [],
+        attrChanged: (t, property, value) => {
+            switch (property) {
+                case 'example':
+                    break;
+            }
+        },
+        connected: function () { },
+        disconnected: function () { },
+        shadowTemplate: `
 <style type="text/css">
 :host {
 }
@@ -34,4 +40,5 @@ webui.define("app-shadow-template", {
 <slot></slot>
 <slot name="something"></slot>
 `
-});
+    });
+}

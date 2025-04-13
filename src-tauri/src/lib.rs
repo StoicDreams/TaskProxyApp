@@ -1,14 +1,20 @@
+use crate::prelude::*;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
+use tauri::State;
 
+pub mod appdata;
+pub mod datatypes;
 pub mod errors;
+pub mod prelude;
 pub mod projects;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(debug_assertions)] // only enable instrumentation in development builds
-    let devtools = tauri_plugin_devtools::init();
-
+    // Setup plugins
     let mut builder = tauri::Builder::default()
+        .manage(Arc::new(Mutex::new(Vec::<ProjectFull>::new())))
+        .plugin(tauri_plugin_log::Builder::new().clear_targets().build())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
@@ -16,11 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init());
 
-    #[cfg(debug_assertions)]
-    {
-        builder = builder.plugin(devtools);
-    }
-
+    // Fix for bug in initial page loading
     builder = builder.setup(|app| {
         // Get a handle to your main window using its label
         if let Some(window) = app.get_webview_window("taskproxy") {
@@ -30,14 +32,19 @@ pub fn run() {
             //std::thread::sleep(std::time::Duration::from_millis(100));
             let _ = window.eval(&nav_script);
         } else {
-            eprintln!("Could not get main window handle");
+            log::error!("Could not get main window handle");
         }
         Ok(())
     });
+
+    // Set commands accessible from JavaScript
     builder
         .invoke_handler(tauri::generate_handler![
+            appdata::has_securitykey,
+            appdata::set_securitykey,
             projects::manager::greet,
-            projects::manager::add_project
+            projects::manager::add_project,
+            projects::manager::get_projects
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

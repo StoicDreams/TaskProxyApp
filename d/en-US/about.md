@@ -1,23 +1,46 @@
 <webui-data data-page-title="About {APP_NAME}" data-page-subtitle=""></webui-data>
 
-## Powered by [WebUI {WEBUI_VERSION}](https://webui.stoicdreams.com)
+<webui-page-segment>
+
+- Integrated [Tauri](https://tauri.app) framework for simplified development and deployments to multiple platform targets (Windows, Mac, Linux).
+- Integrated [Web UI Framework](https://webui.stoicdreams.com) for layout, components, and default styling.
+- New Task Proxy desktop application is setup with CICD pipeline to build and publish app as changes are committed.
+
+</webui-page-segment>
+
+## Current Features being ported from Legacy App
 
 <webui-page-segment>
 
-[![WebUI GitHub Actions][wui-gh-image]][wui-gh-checks]  [![Timestamp on crates.io][wui-cratesio-image]][wui-cratesio]  [![Timestamp on docs.rs][wui-docsrs-image]][wui-docsrs]
+- Create unique Task Proxy Projects for each project you need.
+- Quickly and easily switch between projects within Task Proxy.
+- Manage project README.md files with live display.
+- Create and manage Task Proxy Pages within a project that can store multiple modules you setup to provide documentation, run scripts, show reports, and more.
+- Manage and store secrets to use in scripts and API connections securely by encrypting them and storing them outside of any projects.
+- Scope data to Global, Project, or Page to determine if it can be used across all projects, only within the current project, or only within the current page.
+- Task Proxy pages are stored within the project folder [projectroot]/TaskProxyData so pages stay with the project and are easily synced and shared along with project updates - when using version control such as Git or Mercurial.
+- Command flows that allow running specified scripts and apis in a specified sequence.
 
-[wui-gh-image]: https://github.com/stoicdreams/WebUI/actions/workflows/deploy.yml/badge.svg
-[wui-gh-checks]: https://github.com/stoicdreams/WebUI/actions?query=branch%3Amain
-[wui-cratesio-image]: https://img.shields.io/crates/v/webui.svg
-[wui-cratesio]: https://crates.io/crates/webui
-[wui-docsrs-image]: https://docs.rs/webui/badge.svg
-[wui-docsrs]: https://docs.rs/webui
+</webui-page-segment>
+
+## Additional Planned Features for new App
+
+<webui-page-segment>
+
+- Terminal module that will allow running scripts that need to run continuously and not be restricted to only running when the hosting page is open.
+- Schedule times and events to trigger running specfic scripts or command flows.
+
+</webui-page-segment>
+
+## Powered by Open-Source
+
+<webui-page-segment>
 
 Task Proxy is a new developer tool for managing development documentation and scripts alongside productivity features to help organize, simplify, and automate developer workflows.
 
 The primary concept for Task Proxy is to provide users with a tool where they can easily create and manage project documentation, scripts, and configurations.
 
-This application is made possible by [Tauri](https://tauri.app), and other open source software.
+This application is made possible by [Tauri](https://tauri.app), and other open-source software.
 
 </webui-page-segment>
 
