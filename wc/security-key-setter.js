@@ -24,37 +24,43 @@
         preload: 'input-message alert alerts',
         constructor: (t) => {
             t._alert = t.template.querySelector('webui-alert');
+            t._del = t.template.querySelector('webui-button[theme="danger"]');
             t._sav = t.template.querySelector('webui-button[theme="primary"]');
             t._gen = t.template.querySelector('webui-button[theme="secondary"]');
             t._input = t.template.querySelector('webui-input-message');
         },
         linkCss: true,
-        attr: ['example'],
-        attrChanged: (t, property, value) => {
-            switch (property) {
-                case 'example':
-                    break;
+        connected: async function (t) {
+            let hasSecurityKey = await window.__TAURI__.core.invoke('has_securitykey', {}).catch(handleError);
+            if (hasSecurityKey) {
+                t._del.classList.remove('hidden');
+            } else {
+                t._del.classList.add('hidden');
             }
-        },
-        connected: function (t) {
-            let isSaving = false;
-            t._sav.addEventListener('click', async _ => {
-                if (isSaving) return;
-                isSaving = true;
+            t._del.addEventListener('click', webui.trySoloProcess(async _ => {
+                let result = await window.__TAURI__.core.invoke('delete_securitykey', {});
+                if (!result) return;
+                t._alert.setValue({ text: result, theme: 'success' });
+                webui.setData('home-state', 'sec-key-deleted');
+            }, handleError));
+            t._sav.addEventListener('click', webui.trySoloProcess(async _ => {
                 let secKey = `${t._input.value}`.trim();
                 if (secKey.length < 100) {
                     t._alert.setValue({ text: 'Security key must be at least 100 characters in length.', theme: 'danger' });
-                    isSaving = false;
                     return;
                 }
-
-                t._alert.setValue({ text: 'Key saving coming soon!', theme: 'info' });
-                //await window.__TAURI__.core.invoke('set_security_key', {}).catch(msg=>t._alert.setValue({ text: msg, theme: 'danger' });)
-                isSaving = false;
-            });
-            t._gen.addEventListener('click', _ => {
+                t._alert.setValue({ text: 'Setting key, please wait', theme: 'info' });
+                let result = await window.__TAURI__.core.invoke('set_securitykey', { securityKey: secKey });
+                if (!result) return;
+                t._alert.setValue({ text: result, theme: 'success' });
+                webui.setData('home-state', 'sec-key-saved');
+            }, handleError));
+            t._gen.addEventListener('click', webui.trySoloProcess(async _ => {
                 t._input.setValue(generateSecurityKey());
-            });
+            }, handleError));
+            function handleError(ex) {
+                t._alert.setValue({ text: ex, theme: 'danger' });
+            }
         },
         disconnected: function (t) { },
         shadowTemplate: `
@@ -64,12 +70,13 @@ display:flex;
 max-width:700px;
 margin: 0 auto;
 flex-direction:column;
-gap: 10px;
+gap: var(--padding);
 }
 </style>
 <webui-input-message theme="primary" label="Enter your security key here!" autofocus></webui-input-message>
-<webui-flex gap="10" justify="flex-end">
+<webui-flex gap="var(--padding)" justify="flex-end">
 <webui-alert id="alert"></webui-alert>
+<webui-button theme="danger">Delete Key</webui-button>
 <webui-button theme="secondary">Generate Key</webui-button>
 <webui-button theme="primary">Save</webui-button>
 </webui-flex>

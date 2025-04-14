@@ -40,3 +40,13 @@ pub struct Project {
     pub name: String,
     pub path: String,
 }
+
+impl ProjectFull {
+    pub fn new(name: &str, path: &str) -> Self {
+        return ProjectFull {
+            name: String::from(name),
+            path: String::from(path),
+            secrets: HashMap::new(),
+        };
+    }
+}

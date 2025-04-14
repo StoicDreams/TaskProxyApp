@@ -11,7 +11,8 @@ function get_uuid() {
         });
     }
 }
-const currentVersion = location.host.startsWith('localhost') ? `${get_uuid()}` : 'webui_0.10.11';
+const currentVersion = `${get_uuid()}`;
+console.log('Current version', currentVersion, location.host);
 const cacheNamePrefix = 'offline-cache-';
 const cacheName = `${cacheNamePrefix}${currentVersion}_ts_2503251820`;
 const offlineAssetsInclude = [/\.wasm/, /\.html/, /\.js$/, /\.json$/, /\.css$/, /\.woff$/, /\.png$/, /\.jpe?g$/, /\.gif$/, /\.ico$/];
@@ -34,12 +35,27 @@ async function onActivate(event) {
 
 async function onFetch(event) {
     let cachedResponse = null;
-    if (allowCache(event.request)) {
+    let request = applyCacheBusting(event.request);
+    if (allowCache(request)) {
         const cache = await caches.open(cacheName);
-        cachedResponse = await cache.match(event.request);
+        cachedResponse = await cache.match(request);
     }
 
-    return cachedResponse || fetch(event.request);
+    return cachedResponse || fetch(request);
+}
+
+/// Applying cache busting to CDN content to assure Web UI components are always up to date with the latest changes.
+function applyCacheBusting(request) {
+    try {
+        if (!request.url.startsWith('https://cdn.myfi.ws')) {
+            return request;
+        }
+        const url = new URL(request.url);
+        url.searchParams.set('_', cacheName);
+        return new Request(url.toString(), request);
+    } catch {
+        return request;
+    }
 }
 
 function allowCache(request) {

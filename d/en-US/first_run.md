@@ -10,7 +10,7 @@ Think of this key as a master password. It's essential because Task Proxy uses i
 
 </webui-page-segment>
 
-### How it works:
+### How it works
 
 <webui-page-segment>
 

@@ -6,7 +6,7 @@ Great! Your security key is set. Now, let's tell Task Proxy where your first pro
 
 <webui-page-segment>
 
-<webui-button theme="primary">Select Project Folder</webui-button>
+<app-add-project></app-add-project>
 
 </webui-page-segment>
 
@@ -39,3 +39,19 @@ Great! Your security key is set. Now, let's tell Task Proxy where your first pro
 </webui-page-segment>
 
 > NOTE: You are accessing a very early build of this application. Project management features may evolve.
+
+### Change or remove your key
+
+<webui-page-segment>
+
+If you were expecting projects to be loaded but none were, you may have entered the wrong key. You can try entering a different key here.
+
+<webui-quote theme="danger">
+
+NOTE: Once you have set your first project with a new key, any projects set with an old key will be erased.
+
+</webui-quote>
+
+</webui-page-segment>
+
+<app-security-key-setter></app-security-key-setter>

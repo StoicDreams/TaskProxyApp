@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.17
+  VERSION: 0.1.18
   ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
         run: |
           cargo tauri build
       - name: sign executable
-        if: false
+        if: true
         run: |
           $EVAS = '${{ secrets.EV_AZURE_SECRET }}'
           $EVAC = '${{ secrets.EV_AZURE_CLIENT }}'
@@ -45,22 +45,22 @@ jobs:
           Connect-AzAccount -ServicePrincipal -TenantId $EVAT -Credential $credential
           Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files "${{ github.workspace }}\target\release\taskproxy.exe" -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
       - name: build bundles
-        if: false
+        if: true
         run: |
           cargo tauri bundle
       - name: sign setup executables
-        if: false
+        if: true
         run: |
           Invoke-TrustedSigning -Endpoint ${{ secrets.EV_AZURE_ENDPOINT }} -CodeSigningAccountName ${{ secrets.EV_AZURE_ACCOUNT }} -CertificateProfileName ${{ secrets.EV_AZURE_PROFILE }} -FileDigest sha256 -Files "${{ github.workspace }}\target\release\bundle\msi\Task Proxy_${{ env.VERSION }}_x64_en-US.msi" "${{ github.workspace }}\target\release\bundle\nsis\Task Proxy_${{ env.VERSION }}_x64-setup.exe" -TimestampRfc3161 http://timestamp.acs.microsoft.com -TimestampDigest sha256
       - name: Save Windows files to artifact
-        if: false
+        if: true
         uses: actions/upload-artifact@v4
         with:
           name: taskproxyartifactswindows
           path: |
             target\release\
   build-tauri-mac:
-    if: false
+    if: true
     permissions:
       contents: write
     strategy:
@@ -96,7 +96,7 @@ jobs:
           path: |
             target/release/
   build-tauri-ubuntu:
-    if: false
+    if: true
     permissions:
       contents: write
     strategy:
@@ -141,7 +141,7 @@ jobs:
             target/release/
   publish-tauri-windows:
     needs: build-tauri-windows
-    if: false
+    if: true
     runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -158,7 +158,7 @@ jobs:
             ./bundle => ${{ secrets.CDN_APP_PATH }}/task-proxy/win/${{ env.VERSION }}/
   publish-tauri-mac:
     needs: build-tauri-mac
-    if: false
+    if: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -175,7 +175,7 @@ jobs:
             ./bundle => ${{ secrets.CDN_APP_PATH }}/task-proxy/mac/${{ env.VERSION }}/
   publish-tauri-ubuntu:
     needs: build-tauri-ubuntu
-    if: false
+    if: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -193,7 +193,7 @@ jobs:
   cdn-update-app-catalog-windows:
     runs-on: ubuntu-latest
     needs: publish-tauri-windows
-    if: false
+    if: true
     steps:
     - name: update app catalog
       run: |
@@ -201,7 +201,7 @@ jobs:
   cdn-update-app-catalog-mac:
     runs-on: ubuntu-latest
     needs: publish-tauri-mac
-    if: false
+    if: true
     steps:
     - name: update app catalog
       run: |
@@ -209,7 +209,7 @@ jobs:
   cdn-update-app-catalog-ubuntu:
     runs-on: ubuntu-latest
     needs: publish-tauri-ubuntu
-    if: false
+    if: true
     steps:
     - name: update app catalog
       run: |
