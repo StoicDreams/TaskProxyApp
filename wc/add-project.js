@@ -21,6 +21,10 @@
                 if (!result) return;
                 alert(result, 'success');
                 webui.setData('home-state', 'project-added');
+                webui.setData('new-project-name', '');
+                projects = await window.__TAURI__.core.invoke('get_projects', {});
+                projects = projects || [];
+                webui.setData('app-projects', projects);
             }, alert));
             function alert(ex, theme) {
                 t._alert.setValue({ text: ex, theme: theme || 'danger' });

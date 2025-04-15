@@ -21,7 +21,10 @@ webui.define("app-template", {
         watchVisibility: false,
         isInput: false,
         preload: '',
-        constructor: (t) => { },
+        constructor: (t) => {
+            t._slotMain = t.template.querySelector('slot:not([name])');
+            t._slotSomething = t.template.querySelector('slot[name="something"]');
+        },
         attr: ['example'],
         flags: [],
         attrChanged: (t, property, value) => {

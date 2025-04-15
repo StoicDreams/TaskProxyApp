@@ -146,6 +146,5 @@ fn get_app_data_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
         ));
     }
     let file_path = data_dir.join(PROJECTS_FILENAME);
-    log::info!("Using data file path: {:?}", file_path); // Log for debugging
     Ok(file_path)
 }

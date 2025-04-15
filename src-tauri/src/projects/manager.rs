@@ -16,9 +16,20 @@ pub fn add_project(
 
     let project = ProjectFull::new(name, &file_path.to_string());
     let mut projects = state.lock().unwrap();
+    let project_path = file_path.to_string();
+    let project_exists = projects
+        .iter()
+        .any(|item| item.path.eq_ignore_ascii_case(&project_path));
+    if project_exists {
+        return Err(String::from(
+            "The provided path is already in your set of projects.",
+        ));
+    }
     projects.push(project);
-    let projects = projects.to_vec();
-    save_projects_to_local_storage(&app_handle, &projects)?;
+    projects.sort_by_key(|p| p.name.clone());
+    let vec_projects = projects.to_vec();
+    *projects = vec_projects.clone();
+    save_projects_to_local_storage(&app_handle, &vec_projects)?;
     Ok(String::from("Project Successfully Added"))
 }
 

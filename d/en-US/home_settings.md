@@ -1,4 +1,4 @@
-<webui-data data-page-title="Project Dashboard" data-page-subtitle=""></webui-data>
+<webui-data data-page-title="Task Proxy Settings" data-page-subtitle=""></webui-data>
 
 ## Add additional projects
 
@@ -9,6 +9,10 @@ Use this form to add additional projects as needed.
 <app-add-project></app-add-project>
 
 </webui-page-segment>
+
+### Remove Current Project
+
+Coming soon!
 
 ### Change or remove your key
 
