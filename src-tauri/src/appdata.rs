@@ -14,7 +14,7 @@ pub(crate) fn has_securitykey() -> bool {
     match get_passphrase() {
         Ok(_) => true,
         Err(err) => {
-            log::info!("Does not have security key: {}", err);
+            println!("Does not have security key: {}", err);
             false
         }
     }
@@ -32,10 +32,23 @@ pub(crate) fn get_app_data(app_handle: AppHandle, state: State<SharedAppData>) -
         Err(_) => TaskProxyData::new(),
     };
     let mut data = data;
-    data.is_saved = true;
+    if !data.is_saved {
+        data.is_saved = true;
+        _ = save_app_data_to_local_storage(&app_handle, &data);
+    }
     *app_data = data.clone();
-    _ = save_app_data_to_local_storage(&app_handle, &data);
     data
+}
+
+#[tauri::command]
+pub(crate) fn sync_app_data(
+    state: State<SharedAppData>,
+    data: TaskProxyData,
+) -> Result<String, String> {
+    let mut app_data = state.lock().unwrap();
+    let data = data;
+    *app_data = data.clone();
+    Ok(String::from("App Data Synced"))
 }
 
 #[tauri::command]
@@ -46,7 +59,9 @@ pub(crate) fn save_app_data(
 ) -> Result<String, String> {
     let mut app_data = state.lock().unwrap();
     let mut data = data;
-    data.is_saved = true;
+    if !data.is_saved {
+        data.is_saved = true;
+    }
     *app_data = data.clone();
     save_app_data_to_local_storage(&app_handle, &data)
 }
@@ -76,6 +91,16 @@ pub(crate) fn delete_securitykey() -> Result<String, String> {
         .delete_credential()
         .map_err(|e| format!("Failed to delete security key from keychain: {:?}", e))?;
     Ok(String::from("Security Key Deleted!"))
+}
+
+pub(crate) fn get_app_data_from_app(app_handle: &AppHandle) -> Result<TaskProxyData, String> {
+    if let Some(state) = app_handle.try_state::<SharedAppData>() {
+        let app_data = state.lock().unwrap();
+        let data = app_data.to_owned();
+        Ok(data)
+    } else {
+        Err(String::from("Failed to load state"))
+    }
 }
 
 /// Get encryption passphrase from the keychain
@@ -164,8 +189,14 @@ fn save_json_to_local_storage(
         Err(err) => return Err(format!("Failed to save {}: {}", data_type, err)),
     };
     match fs::write(&file_path, encrypted) {
-        Ok(()) => Ok(format!("{} saved", data_type)),
-        Err(err) => Err(format!("Error saving {}: {}", data_type, err)),
+        Ok(()) => {
+            eprintln!("Successfully saved {}!", data_type);
+            Ok(format!("{} saved", data_type))
+        }
+        Err(err) => {
+            eprintln!("Failed to save {}!", data_type);
+            Err(format!("Error saving {}: {}", data_type, err))
+        }
     }
 }
 
@@ -176,7 +207,7 @@ fn get_data_from_local_storage(app_handle: &AppHandle, file_path: &str) -> Resul
     let encrypted_data = match fs::read(&file_path) {
         Ok(data) => data,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            log::info!("Data file not found at {:?}.", file_path);
+            println!("Data file not found at {:?}.", file_path);
             return Ok(Vec::new());
         }
         Err(e) => {
@@ -184,7 +215,7 @@ fn get_data_from_local_storage(app_handle: &AppHandle, file_path: &str) -> Resul
         }
     };
     if encrypted_data.is_empty() {
-        log::info!("Data file {:?} is empty.", file_path);
+        println!("Data file {:?} is empty.", file_path);
         return Ok(Vec::new());
     }
     match age::decrypt(&identity, &encrypted_data) {

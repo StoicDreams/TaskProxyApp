@@ -68,7 +68,7 @@ pub fn load_projects(state: State<SharedProjects>, app_handle: AppHandle) -> Opt
             Some(projects)
         }
         Err(err) => {
-            log::error!("Failed to load projects: {}", err);
+            eprintln!("Failed to load projects: {}", err);
             None
         }
     }

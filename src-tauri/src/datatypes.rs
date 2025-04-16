@@ -33,6 +33,7 @@ pub type SharedAppData = Arc<Mutex<TaskProxyData>>;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TaskProxyData {
     pub is_saved: bool,
+    pub save_interval_minutes: u64,
     pub data: HashMap<String, Value>,
 }
 
@@ -53,6 +54,7 @@ impl TaskProxyData {
     pub fn new() -> Self {
         TaskProxyData {
             is_saved: false,
+            save_interval_minutes: 20,
             data: HashMap::new(),
         }
     }

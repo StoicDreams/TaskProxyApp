@@ -17,7 +17,7 @@
         webui.watchAppDataChanges(queueAppDataChanges);
     });
     let queueId = '';
-    const queueTimeout = 2000;
+    const syncQueueTimeout = 500;
     function handlePagePath(pagePath) {
         let navTo = pagePath === '/root' ? '/' : pagePath;
         webui.navigateTo(navTo);
@@ -26,24 +26,26 @@
         let myId = webui.uuid();
         let oldId = queueId;
         queueId = myId;
+        webui.taskProxyData.data = appData;
         if (oldId === '') {
-            await saveAppData(appData);
+            await syncAppData();
             setTimeout(() => {
                 if (queueId === '' || queueId !== myId) return;
                 queueId = '';
-            }, queueTimeout);
+            }, syncQueueTimeout);
         } else {
             setTimeout(async () => {
                 if (queueId !== '' && queueId !== myId) return;
-                await saveAppData(appData);
+                await syncAppData();
                 if (queueId === '' || queueId !== myId) return;
                 queueId = '';
-            }, queueTimeout);
+            }, syncQueueTimeout);
         }
     }
-    async function saveAppData(appData) {
-        if (!appData) return;
-        webui.taskProxyData.data = appData;
+    async function syncAppData() {
+        await window.__TAURI__.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
+    }
+    async function saveAppData() {
         await window.__TAURI__.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
     }
     function runWhenWebUIReady(action) {

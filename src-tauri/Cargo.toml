@@ -43,14 +43,14 @@ keyring = { version = "3.6", features = [
     "windows-native",
     "linux-native",
 ] }
+tokio = { version = "1.44", features = ["full"] }
 age = "0.11"
 secrecy = { version = "0.10", features = ["serde"] }
 rand = "0.9"
 hex = "0.4"
 thiserror = "2.0"
 base64 = "0.22"
-tauri-plugin-log = "2"
-log = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-positioner = { version = "2.0.0", features = ["tray-icon"] }
