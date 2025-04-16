@@ -14,6 +14,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(Arc::new(Mutex::new(Vec::<ProjectFull>::new())))
+        .manage(Arc::new(Mutex::new(TaskProxyData::new())))
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
@@ -54,9 +55,11 @@ pub fn run() {
     // Set commands accessible from JavaScript
     builder
         .invoke_handler(tauri::generate_handler![
-            appdata::has_securitykey,
-            appdata::set_securitykey,
             appdata::delete_securitykey,
+            appdata::get_app_data,
+            appdata::has_securitykey,
+            appdata::save_app_data,
+            appdata::set_securitykey,
             projects::manager::greet,
             projects::manager::add_project,
             projects::manager::get_projects,

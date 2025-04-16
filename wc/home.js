@@ -28,9 +28,6 @@
             } else {
                 projects = await window.__TAURI__.core.invoke('get_projects', {}).catch(msg => webui.alert(msg));
             }
-
-            console.log('LOADED PROJECTS', projects);
-            projects.forEach(item => { console.log('Project', item.path, item.path.length) });
             projects = projects || [];
             webui.setData('app-projects', projects);
             if (projects.length === 0) {

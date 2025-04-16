@@ -12,7 +12,6 @@ function get_uuid() {
     }
 }
 const currentVersion = `${get_uuid()}`;
-console.log('Current version', currentVersion, location.host);
 const cacheNamePrefix = 'offline-cache-';
 const cacheName = `${cacheNamePrefix}${currentVersion}_ts_2503251820`;
 const offlineAssetsInclude = [/\.wasm/, /\.html/, /\.js$/, /\.json$/, /\.css$/, /\.woff$/, /\.png$/, /\.jpe?g$/, /\.gif$/, /\.ico$/];

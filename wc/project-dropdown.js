@@ -14,8 +14,11 @@
             switch (property) {
             }
         },
-        connected: function (t) {
+        connected: async function (t) {
             t.dataset.subscribe = 'app-projects:setProjects';
+            let projects = await window.__TAURI__.core.invoke('get_projects', {});
+            projects = projects || [];
+            webui.setData('app-projects', projects);
         },
         disconnected: function (t) { },
         setProjects(projects) {
@@ -42,7 +45,7 @@ display:none;
 display:block;
 }
 </style>
-<webui-dropdown title="Project" data-name="app-current-project" data-subscribe="app-current-project:value" data-trigger="app-current-project"></webui-dropdown>
+<webui-dropdown title="Project" data-name="app-current-project"></webui-dropdown>
 `
     });
 }
