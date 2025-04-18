@@ -1,0 +1,17 @@
+{
+  "NavList": [
+    "8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920"
+  ],
+  "NavMap": {
+    "8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920": {
+      "Id": "8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920",
+      "Name": "Tasks",
+      "Title": "Tasks",
+      "IconType": 2,
+      "Icon": "tasks",
+      "SubTitle": "",
+      "RelativePath": "/8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920",
+      "ActiveId": 1
+    }
+  }
+}

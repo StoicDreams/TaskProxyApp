@@ -10,7 +10,7 @@
             t._btn = t.template.querySelector('webui-button[theme="primary"]');
         },
         connected: function (t) {
-            t._btn.addEventListener('click', webui.trySoloProcess(async _ => {
+            t._btn.addEventListener('click', webui.eventSoloProcess(async _ => {
                 let name = webui.getData('new-project-name') || '';
                 if (!name) {
                     alert('Please set the name of the project before selecting your project folder');
@@ -18,12 +18,14 @@
                 }
                 alert('Selecting folder', 'info');
                 let result = await webui.proxy.addProject(name);
+                console.log('Got result', result);
                 if (!result) return;
                 alert(result, 'success');
                 webui.setData('home-state', 'project-added');
                 webui.setData('new-project-name', '');
             }, alert));
             function alert(ex, theme) {
+                console.log('Alert', ex);
                 t._alert.setValue({ text: ex, theme: theme || 'danger' });
             }
         },

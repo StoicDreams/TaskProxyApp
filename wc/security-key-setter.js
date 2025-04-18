@@ -37,13 +37,13 @@
             } else {
                 t._del.classList.add('hidden');
             }
-            t._del.addEventListener('click', webui.trySoloProcess(async _ => {
+            t._del.addEventListener('click', webui.eventSoloProcess(async _ => {
                 let result = await webui.proxy.deleteSecurityKey(handleError);
                 if (!result) return;
                 t._alert.setValue({ text: result, theme: 'success' });
                 webui.setData('home-state', 'sec-key-deleted');
             }, handleError));
-            t._sav.addEventListener('click', webui.trySoloProcess(async _ => {
+            t._sav.addEventListener('click', webui.eventSoloProcess(async _ => {
                 let secKey = `${t._input.value}`.trim();
                 if (secKey.length < 100) {
                     t._alert.setValue({ text: 'Security key must be at least 100 characters in length.', theme: 'danger' });
@@ -55,7 +55,7 @@
                 t._alert.setValue({ text: result, theme: 'success' });
                 webui.setData('home-state', 'sec-key-saved');
             }, handleError));
-            t._gen.addEventListener('click', webui.trySoloProcess(async _ => {
+            t._gen.addEventListener('click', webui.eventSoloProcess(async _ => {
                 t._input.setValue(generateSecurityKey());
             }, handleError));
             function handleError(ex) {

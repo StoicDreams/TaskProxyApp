@@ -28,15 +28,30 @@ pub(crate) type SharedProjects = Arc<Mutex<Vec<ProjectFull>>>;
 pub(crate) type SharedAppData = Arc<Mutex<TaskProxyData>>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectData {
     pub id: String,
     pub path: String,
-    pub navigation: String,
+    pub navigation: Vec<ProjectNavItem>,
     pub variables: Vec<String>,
     pub data: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectNavItem {
+    #[serde(alias = "Name")]
+    name: String,
+    #[serde(alias = "Icon")]
+    icon: String,
+    #[serde(alias = "Url")]
+    url: Option<String>,
+    #[serde(alias = "Children")]
+    children: Option<Vec<ProjectNavItem>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TaskProxyData {
     pub is_saved: bool,
     pub save_interval_minutes: u64,
@@ -44,6 +59,7 @@ pub(crate) struct TaskProxyData {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectFull {
     pub name: String,
     pub path: String,
@@ -51,6 +67,7 @@ pub(crate) struct ProjectFull {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Project {
     pub name: String,
     pub path: String,
@@ -61,9 +78,29 @@ impl ProjectData {
         ProjectData {
             id: String::new(),
             path: String::new(),
-            navigation: String::new(),
-            variables: vec![],
+            navigation: Vec::new(),
+            variables: Vec::new(),
             data: HashMap::new(),
+        }
+    }
+}
+
+impl ProjectNavItem {
+    pub fn new() -> Self {
+        let url = format!("/{}", newid());
+        ProjectNavItem {
+            name: String::new(),
+            icon: String::from("star|backing|theme:primary|shape:circle"),
+            url: Some(url),
+            children: None,
+        }
+    }
+    pub fn group() -> Self {
+        ProjectNavItem {
+            name: String::new(),
+            icon: String::from("star|backing|theme:primary|shape:circle"),
+            url: None,
+            children: Some(Vec::new()),
         }
     }
 }

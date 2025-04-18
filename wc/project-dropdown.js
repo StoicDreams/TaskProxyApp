@@ -33,6 +33,13 @@
                 t.classList.remove('show');
             } else {
                 t.classList.add('show');
+                setTimeout(() => {
+                    let value = webui.getData('app-current-project');
+                    if (!value) {
+                        console.log('set app-current-project value');
+                        webui.setData('app-current-project', dp[0]);
+                    }
+                }, 3000);
             }
         },
         shadowTemplate: `

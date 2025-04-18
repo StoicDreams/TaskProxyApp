@@ -3,5 +3,21 @@
         "name": "Home",
         "icon": "home|theme:primary|shape:circle|backing",
         "url": "/"
+    },
+    {
+        "name": "Test",
+        "icon": "test|fill|shade:tri",
+        "children": [
+            {
+                "name": "404 Not Found",
+                "icon": "compass|fill|bordered|backing|shape:circle",
+                "url": "/test"
+            },
+            {
+                "name": "Under Construction",
+                "icon": "traffic-cone|stroke:thin|fill|shade|tri",
+                "url": "/under-construction"
+            }
+        ]
     }
 ]

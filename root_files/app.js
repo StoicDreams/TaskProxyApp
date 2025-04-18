@@ -1,10 +1,10 @@
 "use strict";
 {
     const tauri = window.__TAURI__;
-    console.log('Tauri?', tauri);
     delete window.__TAURI__;
     let firstLoad = true;
     const defaultErrHandler = msg => webui.alert(msg);
+    const cache = {};
     class Tauri {
         openUrl = tauri.opener.openUrl;
         constructor() {
@@ -13,8 +13,7 @@
             errHandler ??= defaultErrHandler;
             let result = await tauri.core.invoke('add_project', { name: name }).catch(errHandler);
             if (!result) return;
-            projects = await webui.proxy.getProjects().catch(errHandler);
-            projects = projects || [];
+            let projects = await webui.proxy.getProjects().catch(errHandler) || [];
             webui.setData('app-projects', projects);
             return result;
         }
@@ -69,6 +68,14 @@
             }
         });
         webui.watchAppDataChanges(queueAppDataChanges);
+        let currentProject = webui.getData('app-current-project');
+        console.log('current project', currentProject);
+        if (currentProject) {
+            loadProject({
+                name: currentProject.display,
+                path: currentProject.value
+            });
+        }
     });
     let queueId = '';
     const syncQueueTimeout = 500;
@@ -81,16 +88,24 @@
         handleUpdatedAppData(appData);
     }
     async function handleChanges(changes) {
-        console.log('changes', changes);
         switch (changes.property) {
             case 'app-current-project':
-                let project = { name: changes.newValue.display, path: changes.newValue.value };
-                let projectData = await webui.proxy.getProjectData(project);
-                webui.projectData = projectData || {};
-                console.log('Loaded project data', webui.projectData);
+                await loadProject({
+                    name: changes.newValue.display,
+                    path: changes.newValue.value
+                });
                 break;
         }
 
+    }
+    async function loadProject(project) {
+        if (cache.currentProject === project) return;
+        webui.setData('app-nav-routes', []);
+        let projectData = await webui.proxy.getProjectData(project);
+        webui.projectData = projectData || {};
+        console.log('Loaded project data', webui.projectData);
+        console.log('nav', webui.projectData.navigation);
+        webui.setData('app-nav-routes', webui.projectData.navigation);
     }
     async function handleUpdatedAppData(appData) {
         let myId = webui.uuid();

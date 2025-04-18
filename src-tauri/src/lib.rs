@@ -55,19 +55,21 @@ pub fn run() {
             println!("Saving data from window close");
             match app_handle.try_state::<SharedAppData>() {
                 Some(state) => {
-                    let app_data = state.lock().unwrap();
-                    let data = app_data.to_owned();
-                    let result = save_app_data_to_local_storage(app_handle, &data);
-                    println!("{:?}", result);
+                    if let Ok(app_data) = state.lock() {
+                        let data = app_data.to_owned();
+                        let result = save_app_data_to_local_storage(app_handle, &data);
+                        println!("{:?}", result);
+                    }
                 }
                 None => {}
             }
             match app_handle.try_state::<CurrentProject>() {
                 Some(state) => {
-                    let project: std::sync::MutexGuard<'_, ProjectData> = state.lock().unwrap();
-                    let data = project.to_owned();
-                    let result = save_project_data(data, &app_handle);
-                    println!("{:?}", result);
+                    if let Ok(project) = state.lock() {
+                        let data = project.to_owned();
+                        let result = save_project_data(data, &app_handle);
+                        println!("{:?}", result);
+                    }
                 }
                 None => {}
             }

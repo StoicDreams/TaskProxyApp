@@ -29,6 +29,15 @@
 
 <body>
     <webui-app-config src="appConfig.json"></webui-app-config>
+    <webui-data>
+        <template slot="html" name="app-not-found-html">
+            <app-page-handler></app-page-handler>
+        </template>
+        <template slot="html" name="app-under-construction">
+            <p>This is custom Under Construction content set by a webui-data component in the index.html file.</p>
+            <p class="text-center"><webui-link theme="success" href="/">Return Home</webui-link></p>
+        </template>
+    </webui-data>
     <webui-app data-removeclass=".nav|open;.shared|open">
         <webui-drawer slot="left" class="nav elevation-20" docked="true" data-state="slot|docked" data-moveable data-dockable>
             <webui-nav-link url="/" data-subscribe="page-path:setter">
@@ -69,15 +78,15 @@
     <script src="https://cdn.myfi.ws/highlight/highlight.min.js" async></script>
     <script src="https://cdn.myfi.ws/i/tooltips.min.js" async></script>
     <script type="text/javascript">
-        (function checkHighlighting() {
-            if (window.hljs) {
-                document.querySelectorAll('pre code:not([data-hl])').forEach((el) => {
-                    el.setAttribute('data-hl', true);
-                    window.hljs.highlightElement(el);
-                });
-            }
-            setTimeout(checkHighlighting, 100);
-        })();
+        // (function checkHighlighting() {
+        //     if (window.hljs) {
+        //         document.querySelectorAll('pre code:not([data-hl])').forEach((el) => {
+        //             el.setAttribute('data-hl', true);
+        //             window.hljs.highlightElement(el);
+        //         });
+        //     }
+        //     setTimeout(checkHighlighting, 100);
+        // })();
         {
             // Send external links to OS to open in default app.
             document.body.addEventListener('click', ev => {

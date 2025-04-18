@@ -19,11 +19,16 @@ pub(crate) fn has_securitykey() -> bool {
 }
 
 #[tauri::command]
-pub(crate) fn get_app_data(app_handle: AppHandle, state: State<SharedAppData>) -> TaskProxyData {
-    let mut app_data = state.lock().unwrap();
+pub(crate) fn get_app_data(
+    app_handle: AppHandle,
+    state: State<SharedAppData>,
+) -> Result<TaskProxyData, String> {
+    let mut app_data = state
+        .lock()
+        .map_err(|err| format!("get_app_data State failure: {}", err))?;
     let data = app_data.to_owned();
     if data.is_saved {
-        return data;
+        return Ok(data);
     }
     let data = match get_app_data_from_local_storage(&app_handle) {
         Ok(data) => data,
@@ -35,7 +40,7 @@ pub(crate) fn get_app_data(app_handle: AppHandle, state: State<SharedAppData>) -
         _ = save_app_data_to_local_storage(&app_handle, &data);
     }
     *app_data = data.clone();
-    data
+    Ok(data)
 }
 
 #[tauri::command]
@@ -43,7 +48,9 @@ pub(crate) fn sync_app_data(
     state: State<SharedAppData>,
     data: TaskProxyData,
 ) -> Result<String, String> {
-    let mut app_data = state.lock().unwrap();
+    let mut app_data = state
+        .lock()
+        .map_err(|err| format!("sync_app_data State failure: {}", err))?;
     let data = data;
     *app_data = data.clone();
     Ok(String::from("App Data Synced"))
@@ -55,7 +62,9 @@ pub(crate) fn save_app_data(
     state: State<SharedAppData>,
     data: TaskProxyData,
 ) -> Result<String, String> {
-    let mut app_data = state.lock().unwrap();
+    let mut app_data = state
+        .lock()
+        .map_err(|err| format!("save_app_data State failure: {}", err))?;
     let mut data = data;
     if !data.is_saved {
         data.is_saved = true;
@@ -77,7 +86,7 @@ pub(crate) fn set_securitykey(
     entry
         .set_password(secret.expose_secret())
         .map_err(|e| format!("Failed to store new security key in keychain: {:?}", e))?;
-    save_projects_if_any(&app_handle, &state);
+    _ = save_projects_if_any(&app_handle, &state);
     Ok(String::from("Security Key Saved!"))
 }
 
@@ -104,16 +113,6 @@ pub(crate) fn get_state_data<T: Clone + Send + Sync + 'static>(
     }
 }
 
-pub(crate) fn get_app_data_from_app(app_handle: &AppHandle) -> Result<TaskProxyData, String> {
-    if let Some(state) = app_handle.try_state::<SharedAppData>() {
-        let app_data = state.lock().unwrap();
-        let data = app_data.to_owned();
-        Ok(data)
-    } else {
-        Err(String::from("Failed to load state"))
-    }
-}
-
 /// Get encryption passphrase from the keychain
 fn get_passphrase() -> Result<SecretString, String> {
     let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
@@ -127,13 +126,18 @@ fn get_passphrase() -> Result<SecretString, String> {
     }
 }
 
-fn save_projects_if_any(app_handle: &AppHandle, state: &State<SharedProjects>) {
-    let projects = state.lock().unwrap();
+fn save_projects_if_any(
+    app_handle: &AppHandle,
+    state: &State<SharedProjects>,
+) -> Result<String, String> {
+    let projects = state
+        .lock()
+        .map_err(|err| format!("save_projects_if_any State failure: {}", err))?;
     let projects = projects.to_vec();
     if projects.is_empty() {
-        return;
+        return Ok(String::from("Projects is empty"));
     }
-    _ = save_projects_to_local_storage(&app_handle, &projects);
+    save_projects_to_local_storage(&app_handle, &projects)
 }
 
 /// Save projects to local data storage
