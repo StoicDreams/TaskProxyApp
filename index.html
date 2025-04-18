@@ -87,7 +87,7 @@
                 if (!href || href.split('://').length === 1) return;
                 ev.stopPropagation();
                 ev.preventDefault();
-                window.__TAURI__.opener.openUrl(href);
+                webui.proxy.opener.openUrl(href);
                 return false;
             });
             // Pause any attempts to navigate away from app.

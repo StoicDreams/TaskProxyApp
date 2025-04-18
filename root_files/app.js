@@ -1,9 +1,62 @@
 "use strict";
 {
+    const tauri = window.__TAURI__;
+    console.log('Tauri?', tauri);
+    delete window.__TAURI__;
+    let firstLoad = true;
+    const defaultErrHandler = msg => webui.alert(msg);
+    class Tauri {
+        openUrl = tauri.opener.openUrl;
+        constructor() {
+        }
+        async addProject(name, errHandler) {
+            errHandler ??= defaultErrHandler;
+            let result = await tauri.core.invoke('add_project', { name: name }).catch(errHandler);
+            if (!result) return;
+            projects = await webui.proxy.getProjects().catch(errHandler);
+            projects = projects || [];
+            webui.setData('app-projects', projects);
+            return result;
+        }
+        deleteSecurityKey(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('delete_securitykey', {}).catch(errHandler);
+        }
+        getAppData(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('get_app_data', {}).catch(errHandler)
+        }
+        getProjectData(project, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('get_project_data', { project: project }).catch(errHandler);
+        }
+        getProjects(errHandler) {
+            errHandler ??= defaultErrHandler;
+            if (firstLoad) {
+                firstLoad = false;
+                return tauri.core.invoke('load_projects', {}).catch(errHandler);
+            } else {
+                return tauri.core.invoke('get_projects', {}).catch(errHandler);
+            }
+        }
+        hasSecurityKey(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('has_securitykey', {}).catch(errHandler);
+        }
+        saveAppData(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(errHandler);
+        }
+        setSecurityKey(secKey, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('set_securitykey', { securityKey: secKey }).catch(errHandler);
+        }
+    }
     const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects']
     runWhenWebUIReady(async () => {
         webui._appSettings.isDesktopApp = true;
-        let data = await window.__TAURI__.core.invoke('get_app_data', {}).catch(msg => webui.alert(msg));
+        webui.proxy = new Tauri();
+        let data = await webui.proxy.getAppData();
         webui.taskProxyData = data;
         webui.projectData = {};
         Object.entries(data.data).forEach(([key, value]) => {
@@ -32,7 +85,7 @@
         switch (changes.property) {
             case 'app-current-project':
                 let project = { name: changes.newValue.display, path: changes.newValue.value };
-                let projectData = await window.__TAURI__.core.invoke('get_project_data', { project: project }).catch(msg => webui.alert(msg));
+                let projectData = await webui.proxy.getProjectData(project);
                 webui.projectData = projectData || {};
                 console.log('Loaded project data', webui.projectData);
                 break;
@@ -60,12 +113,7 @@
         }
     }
     async function syncAppData() {
-        await window.__TAURI__.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
-    }
-
-    // TODO: May have button to trigger manual saving, or may remove completely
-    window.saveAppData = async function () {
-        await window.__TAURI__.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
+        await tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
     }
     function runWhenWebUIReady(action) {
         try {

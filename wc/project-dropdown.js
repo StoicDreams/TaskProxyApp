@@ -16,8 +16,7 @@
         },
         connected: async function (t) {
             t.dataset.subscribe = 'app-projects:setProjects';
-            let projects = await window.__TAURI__.core.invoke('get_projects', {});
-            projects = projects || [];
+            let projects = await webui.proxy.getProjects() || [];
             webui.setData('app-projects', projects);
         },
         disconnected: function (t) { },

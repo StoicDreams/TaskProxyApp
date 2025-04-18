@@ -31,14 +31,14 @@
         },
         linkCss: true,
         connected: async function (t) {
-            let hasSecurityKey = await window.__TAURI__.core.invoke('has_securitykey', {}).catch(handleError);
+            let hasSecurityKey = await webui.proxy.hasSecurityKey(handleError);
             if (hasSecurityKey) {
                 t._del.classList.remove('hidden');
             } else {
                 t._del.classList.add('hidden');
             }
             t._del.addEventListener('click', webui.trySoloProcess(async _ => {
-                let result = await window.__TAURI__.core.invoke('delete_securitykey', {});
+                let result = await webui.proxy.deleteSecurityKey(handleError);
                 if (!result) return;
                 t._alert.setValue({ text: result, theme: 'success' });
                 webui.setData('home-state', 'sec-key-deleted');
@@ -50,7 +50,7 @@
                     return;
                 }
                 t._alert.setValue({ text: 'Setting key, please wait', theme: 'info' });
-                let result = await window.__TAURI__.core.invoke('set_securitykey', { securityKey: secKey });
+                let result = await webui.proxy.setSecurityKey(secKey, handleError);
                 if (!result) return;
                 t._alert.setValue({ text: result, theme: 'success' });
                 webui.setData('home-state', 'sec-key-saved');
