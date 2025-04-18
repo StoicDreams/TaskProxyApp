@@ -1,11 +1,7 @@
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use crate::prelude::*;
 
 #[derive(Clone, Debug)]
-pub struct SerializableSecret(pub SecretString);
+pub(crate) struct SerializableSecret(pub SecretString);
 
 impl Serialize for SerializableSecret {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -27,27 +23,49 @@ impl<'de> Deserialize<'de> for SerializableSecret {
     }
 }
 
-pub type SharedProjects = Arc<Mutex<Vec<ProjectFull>>>;
-pub type SharedAppData = Arc<Mutex<TaskProxyData>>;
+pub(crate) type CurrentProject = Arc<Mutex<ProjectData>>;
+pub(crate) type SharedProjects = Arc<Mutex<Vec<ProjectFull>>>;
+pub(crate) type SharedAppData = Arc<Mutex<TaskProxyData>>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TaskProxyData {
+pub(crate) struct ProjectData {
+    pub id: String,
+    pub path: String,
+    pub navigation: String,
+    pub variables: Vec<String>,
+    pub data: HashMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct TaskProxyData {
     pub is_saved: bool,
     pub save_interval_minutes: u64,
     pub data: HashMap<String, Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProjectFull {
+pub(crate) struct ProjectFull {
     pub name: String,
     pub path: String,
     pub secrets: HashMap<String, SerializableSecret>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Project {
+pub(crate) struct Project {
     pub name: String,
     pub path: String,
+}
+
+impl ProjectData {
+    pub fn new() -> Self {
+        ProjectData {
+            id: String::new(),
+            path: String::new(),
+            navigation: String::new(),
+            variables: vec![],
+            data: HashMap::new(),
+        }
+    }
 }
 
 impl TaskProxyData {

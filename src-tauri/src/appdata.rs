@@ -1,8 +1,6 @@
 use crate::prelude::*;
 use age::secrecy::{ExposeSecret, SecretString};
 use keyring::Entry;
-use std::{fs, io, path::PathBuf};
-use tauri::{AppHandle, Manager, State};
 
 const KEYCHAIN_SERVICE_NAME: &str = "com.task-proxy.app";
 const KEYCHAIN_USERNAME: &str = "task_proxy_user";
@@ -93,6 +91,19 @@ pub(crate) fn delete_securitykey() -> Result<String, String> {
     Ok(String::from("Security Key Deleted!"))
 }
 
+pub(crate) fn get_state_data<T: Clone + Send + Sync + 'static>(
+    app_handle: &AppHandle,
+) -> Result<T, String> {
+    if let Some(state) = app_handle.try_state::<Arc<Mutex<T>>>() {
+        let app_data = state
+            .lock()
+            .map_err(|_| "Failed to acquire lock".to_string())?;
+        Ok(app_data.clone())
+    } else {
+        Err("Failed to load state".to_string())
+    }
+}
+
 pub(crate) fn get_app_data_from_app(app_handle: &AppHandle) -> Result<TaskProxyData, String> {
     if let Some(state) = app_handle.try_state::<SharedAppData>() {
         let app_data = state.lock().unwrap();
@@ -130,10 +141,8 @@ pub(crate) fn save_projects_to_local_storage(
     app_handle: &AppHandle,
     projects: &Vec<ProjectFull>,
 ) -> Result<String, String> {
-    let json = match serde_json::to_string(projects) {
-        Ok(json) => json,
-        Err(err) => return Err(format!("Failed to serialize projects: {}", err)),
-    };
+    let json = serde_json::to_string(projects)
+        .map_err(|err| format!("Failed to serialize projects: {}", err))?;
     save_json_to_local_storage("Projects", app_handle, json, PROJECTS_FILENAME)
 }
 
@@ -141,10 +150,8 @@ pub(crate) fn save_app_data_to_local_storage(
     app_handle: &AppHandle,
     app_data: &TaskProxyData,
 ) -> Result<String, String> {
-    let json = match serde_json::to_string(app_data) {
-        Ok(json) => json,
-        Err(err) => return Err(format!("Failed to serialize app data: {}", err)),
-    };
+    let json = serde_json::to_string(app_data)
+        .map_err(|err| format!("Failed to serialize app data: {}", err))?;
     save_json_to_local_storage("app data", app_handle, json, APPDATA_FILENAME)
 }
 
@@ -156,10 +163,8 @@ pub(crate) fn get_projects_from_local_storage(
     if decrypted.is_empty() {
         return Ok(Vec::new());
     }
-    match serde_json::from_slice::<Vec<ProjectFull>>(&decrypted) {
-        Ok(projects) => Ok(projects),
-        Err(err) => Err(format!("Failed to deserialize projects: {}", err)),
-    }
+    Ok(serde_json::from_slice::<Vec<ProjectFull>>(&decrypted)
+        .map_err(|err| format!("Failed to deserialize projects: {}", err))?)
 }
 
 pub(crate) fn get_app_data_from_local_storage(
@@ -169,13 +174,11 @@ pub(crate) fn get_app_data_from_local_storage(
     if decrypted.is_empty() {
         return Ok(TaskProxyData::new());
     }
-    match serde_json::from_slice::<TaskProxyData>(&decrypted) {
-        Ok(projects) => Ok(projects),
-        Err(err) => Err(format!("Failed to deserialize app data: {}", err)),
-    }
+    Ok(serde_json::from_slice::<TaskProxyData>(&decrypted)
+        .map_err(|err| format!("Failed to deserialize app data: {}", err))?)
 }
 
-fn save_json_to_local_storage(
+pub(crate) fn save_json_to_local_storage(
     data_type: &str,
     app_handle: &AppHandle,
     json: String,
@@ -200,7 +203,10 @@ fn save_json_to_local_storage(
     }
 }
 
-fn get_data_from_local_storage(app_handle: &AppHandle, file_path: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn get_data_from_local_storage(
+    app_handle: &AppHandle,
+    file_path: &str,
+) -> Result<Vec<u8>, String> {
     let file_path = get_app_data_path(app_handle, file_path)?;
     let passphrase = get_passphrase()?;
     let identity = age::scrypt::Identity::new(passphrase);

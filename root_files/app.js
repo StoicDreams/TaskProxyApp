@@ -5,6 +5,7 @@
         webui._appSettings.isDesktopApp = true;
         let data = await window.__TAURI__.core.invoke('get_app_data', {}).catch(msg => webui.alert(msg));
         webui.taskProxyData = data;
+        webui.projectData = {};
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1) return;
             console.log('Load data', key, value);
@@ -22,7 +23,23 @@
         let navTo = pagePath === '/root' ? '/' : pagePath;
         webui.navigateTo(navTo);
     }
-    async function queueAppDataChanges(_, appData) {
+    async function queueAppDataChanges(changes, appData) {
+        handleChanges(changes);
+        handleUpdatedAppData(appData);
+    }
+    async function handleChanges(changes) {
+        console.log('changes', changes);
+        switch (changes.property) {
+            case 'app-current-project':
+                let project = { name: changes.newValue.display, path: changes.newValue.value };
+                let projectData = await window.__TAURI__.core.invoke('get_project_data', { project: project }).catch(msg => webui.alert(msg));
+                webui.projectData = projectData || {};
+                console.log('Loaded project data', webui.projectData);
+                break;
+        }
+
+    }
+    async function handleUpdatedAppData(appData) {
         let myId = webui.uuid();
         let oldId = queueId;
         queueId = myId;
@@ -45,7 +62,9 @@
     async function syncAppData() {
         await window.__TAURI__.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
     }
-    async function saveAppData() {
+
+    // TODO: May have button to trigger manual saving, or may remove completely
+    window.saveAppData = async function () {
         await window.__TAURI__.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
     }
     function runWhenWebUIReady(action) {

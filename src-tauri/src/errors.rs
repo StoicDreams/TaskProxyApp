@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum TaskProxyError {
+pub(crate) enum TaskProxyError {
     NotImplemented(String),
     Invalid(String),
     MissingData,

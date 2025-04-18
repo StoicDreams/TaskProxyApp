@@ -1,3 +1,3 @@
-pub mod manager;
+pub(crate) mod manager;
 
-pub use manager::*;
+pub(crate) use manager::*;

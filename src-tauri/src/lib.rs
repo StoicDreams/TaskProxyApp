@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 
 pub mod appdata;
 pub mod background;
+pub mod common;
 pub mod datatypes;
 pub mod errors;
 pub mod prelude;
@@ -20,14 +21,18 @@ pub fn run() {
     // Setup plugins
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::new().build())
-        .manage(Arc::new(Mutex::new(Vec::<ProjectFull>::new())))
-        .manage(Arc::new(Mutex::new(TaskProxyData::new())))
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init());
+
+    // Setup states
+    builder = builder
+        .manage(Arc::new(Mutex::new(Vec::<ProjectFull>::new())))
+        .manage(Arc::new(Mutex::new(TaskProxyData::new())))
+        .manage(Arc::new(Mutex::new(ProjectData::new())));
 
     // Setup window positioner
     builder = builder.setup(|app| {
@@ -43,16 +48,26 @@ pub fn run() {
         Ok(())
     });
 
-    // Save app data on close
+    // Save data on close
     builder = builder.on_window_event(|window, event| match event {
         WindowEvent::CloseRequested { .. } => {
             let app_handle = window.app_handle();
+            println!("Saving data from window close");
             match app_handle.try_state::<SharedAppData>() {
                 Some(state) => {
                     let app_data = state.lock().unwrap();
                     let data = app_data.to_owned();
-                    println!("Save from window close");
-                    _ = save_app_data_to_local_storage(app_handle, &data);
+                    let result = save_app_data_to_local_storage(app_handle, &data);
+                    println!("{:?}", result);
+                }
+                None => {}
+            }
+            match app_handle.try_state::<CurrentProject>() {
+                Some(state) => {
+                    let project: std::sync::MutexGuard<'_, ProjectData> = state.lock().unwrap();
+                    let data = project.to_owned();
+                    let result = save_project_data(data, &app_handle);
+                    println!("{:?}", result);
                 }
                 None => {}
             }
@@ -90,7 +105,9 @@ pub fn run() {
             projects::manager::greet,
             projects::manager::add_project,
             projects::manager::get_projects,
-            projects::manager::load_projects
+            projects::manager::get_project_data,
+            projects::manager::load_projects,
+            projects::manager::sync_project_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
