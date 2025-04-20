@@ -143,7 +143,7 @@ fn save_projects_if_any(
 /// Save projects to local data storage
 pub(crate) fn save_projects_to_local_storage(
     app_handle: &AppHandle,
-    projects: &Vec<ProjectFull>,
+    projects: &Vec<Project>,
 ) -> Result<String, String> {
     let json = serde_json::to_string(projects)
         .map_err(|err| format!("Failed to serialize projects: {}", err))?;
@@ -162,12 +162,12 @@ pub(crate) fn save_app_data_to_local_storage(
 /// Get projects from local data storage
 pub(crate) fn get_projects_from_local_storage(
     app_handle: &AppHandle,
-) -> Result<Vec<ProjectFull>, String> {
+) -> Result<Vec<Project>, String> {
     let decrypted = get_data_from_local_storage(app_handle, PROJECTS_FILENAME)?;
     if decrypted.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(serde_json::from_slice::<Vec<ProjectFull>>(&decrypted)
+    Ok(serde_json::from_slice::<Vec<Project>>(&decrypted)
         .map_err(|err| format!("Failed to deserialize projects: {}", err))?)
 }
 

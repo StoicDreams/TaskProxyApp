@@ -30,7 +30,7 @@ pub fn run() {
 
     // Setup states
     builder = builder
-        .manage(Arc::new(Mutex::new(Vec::<ProjectFull>::new())))
+        .manage(Arc::new(Mutex::new(Vec::<Project>::new())))
         .manage(Arc::new(Mutex::new(TaskProxyData::new())))
         .manage(Arc::new(Mutex::new(ProjectData::new())));
 
@@ -67,7 +67,7 @@ pub fn run() {
                 Some(state) => {
                     if let Ok(project) = state.lock() {
                         let data = project.to_owned();
-                        let result = save_project_data(data, &app_handle);
+                        let result = save_project_data(data, app_handle.clone());
                         println!("{:?}", result);
                     }
                 }
@@ -109,6 +109,7 @@ pub fn run() {
             projects::manager::get_projects,
             projects::manager::get_project_data,
             projects::manager::load_projects,
+            projects::manager::save_project_data,
             projects::manager::sync_project_data
         ])
         .run(tauri::generate_context!())

@@ -2,6 +2,7 @@
   {
     "name": "Tasks",
     "icon": "star|backing|theme:primary|shape:circle",
-    "url": "/8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920"
+    "url": "/8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920",
+    "children": null
   }
 ]

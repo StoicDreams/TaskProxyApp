@@ -26,7 +26,7 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
             }
         }
         if let Ok(data) = get_state_data::<ProjectData>(&app_handle) {
-            match save_project_data(data, &app_handle) {
+            match save_project_data(data, app_handle.clone()) {
                 Ok(msg) => println!("{}", msg),
                 Err(err) => eprintln!("{}", err),
             }

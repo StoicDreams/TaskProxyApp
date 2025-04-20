@@ -24,7 +24,7 @@ impl<'de> Deserialize<'de> for SerializableSecret {
 }
 
 pub(crate) type CurrentProject = Arc<Mutex<ProjectData>>;
-pub(crate) type SharedProjects = Arc<Mutex<Vec<ProjectFull>>>;
+pub(crate) type SharedProjects = Arc<Mutex<Vec<Project>>>;
 pub(crate) type SharedAppData = Arc<Mutex<TaskProxyData>>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -32,6 +32,7 @@ pub(crate) type SharedAppData = Arc<Mutex<TaskProxyData>>;
 pub(crate) struct ProjectData {
     pub id: String,
     pub path: String,
+    pub current_page: String,
     pub navigation: Vec<ProjectNavItem>,
     pub variables: Vec<String>,
     pub data: HashMap<String, String>,
@@ -60,14 +61,6 @@ pub(crate) struct TaskProxyData {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ProjectFull {
-    pub name: String,
-    pub path: String,
-    pub secrets: HashMap<String, SerializableSecret>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct Project {
     pub name: String,
     pub path: String,
@@ -78,6 +71,7 @@ impl ProjectData {
         ProjectData {
             id: String::new(),
             path: String::new(),
+            current_page: String::from("/"),
             navigation: Vec::new(),
             variables: Vec::new(),
             data: HashMap::new(),
@@ -115,12 +109,11 @@ impl TaskProxyData {
     }
 }
 
-impl ProjectFull {
+impl Project {
     pub fn new(name: &str, path: &str) -> Self {
-        ProjectFull {
+        Project {
             name: String::from(name),
             path: String::from(path),
-            secrets: HashMap::new(),
         }
     }
 }

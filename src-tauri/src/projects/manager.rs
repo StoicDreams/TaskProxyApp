@@ -15,7 +15,7 @@ pub(crate) fn get_project_data(
     if project_hash == current_project.id {
         return Ok(current_project);
     }
-    _ = save_project_data(current_project, &app_handle);
+    _ = save_project_data(current_project, app_handle.clone());
     let project_root = PathBuf::from(&project.path);
     let data_root = project_root.join(".taskproxy");
     let nav_file = data_root.join("Navigation.json");
@@ -34,6 +34,15 @@ pub(crate) fn get_project_data(
         if let Ok(content) = fs::read_to_string(var_file) {
             if let Ok(variables) = serde_json::from_str::<Vec<String>>(&content) {
                 data.variables = variables;
+            }
+        }
+    }
+    if let Ok(decrypted) =
+        get_data_from_local_storage(&app_handle, &format!("{}.cp.enc", project_hash))
+    {
+        if !decrypted.is_empty() {
+            if let Ok(current_page) = String::from_utf8(decrypted) {
+                data.current_page = current_page;
             }
         }
     }
@@ -76,7 +85,7 @@ pub(crate) fn add_project(
         None => return Err(String::from("Folder selection cancelled")),
     };
 
-    let project = ProjectFull::new(name, &file_path.to_string());
+    let project = Project::new(name, &file_path.to_string());
     let mut projects = state
         .lock()
         .map_err(|err| format!("add_project State failure: {}", err))?;
@@ -148,21 +157,22 @@ pub(crate) fn load_projects(
     }
 }
 
+#[tauri::command]
 pub(crate) fn save_project_data(
-    project: ProjectData,
-    app_handle: &AppHandle,
+    data: ProjectData,
+    app_handle: AppHandle,
 ) -> Result<String, String> {
-    if project.id.is_empty() {
+    if data.id.is_empty() {
         return Err(format!("Project data is not associated with any project."));
     }
-    if project.path.is_empty() {
+    if data.path.is_empty() {
         return Err(format!("Project data is missing path."));
     }
-    let project_root = PathBuf::from(&project.path);
+    let project_root = PathBuf::from(&data.path);
     let data_root = project_root.join(".taskproxy");
     let nav_file = data_root.join("Navigation.json");
     let var_file = data_root.join("Variables.json");
-    match to_json(&project.navigation) {
+    match to_json(&data.navigation) {
         Ok(json) => {
             match fs::write(&nav_file, &json) {
                 Ok(_) => println!("{} Saved!", nav_file.display()),
@@ -171,7 +181,7 @@ pub(crate) fn save_project_data(
         }
         Err(err) => eprintln!("Error converting navigation to json: {}", err),
     }
-    match to_json(&project.variables) {
+    match to_json(&data.variables) {
         Ok(json) => {
             match fs::write(&var_file, json) {
                 Ok(_) => println!("{} Saved!", var_file.display()),
@@ -180,15 +190,28 @@ pub(crate) fn save_project_data(
         }
         Err(err) => eprintln!("Error converting variables to json: {}", err),
     };
-    let secrets_path = format!("{}.enc", project.id);
-    match serde_json::to_string(&project.data) {
+    let secrets_path = format!("{}.cp.enc", data.id);
+    match save_json_to_local_storage(
+        "Project current page",
+        &app_handle,
+        data.current_page.clone(),
+        &secrets_path,
+    ) {
+        Ok(_) => println!(
+            "Current page {} at {} Saved!",
+            data.current_page, secrets_path
+        ),
+        Err(err) => eprintln!("Error saving Current Page {}:{}", secrets_path, err),
+    }
+    let secrets_path = format!("{}.enc", data.id);
+    match serde_json::to_string(&data.data) {
         Ok(json) => {
-            match save_json_to_local_storage("Project secrets", app_handle, json, &secrets_path) {
-                Ok(_) => println!("{} Saved!", secrets_path),
-                Err(err) => eprintln!("Error saving {}:{}", secrets_path, err),
+            match save_json_to_local_storage("Project secrets", &app_handle, json, &secrets_path) {
+                Ok(_) => println!("Secrets at {} Saved!", secrets_path),
+                Err(err) => eprintln!("Error saving secrets {}:{}", secrets_path, err),
             }
         }
         Err(err) => eprintln!("Error converting variable values to json: {}", err),
     }
-    Err(format!("Not Implemented"))
+    Ok(format!("Project data saved"))
 }

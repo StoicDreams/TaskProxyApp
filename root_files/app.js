@@ -46,9 +46,23 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(errHandler);
         }
+        saveProjectData(errHandler) {
+            errHandler ??= defaultErrHandler;
+            if (!webui.projectData || !webui.projectData.id) {
+                return;
+            }
+            return tauri.core.invoke('save_project_data', { data: webui.projectData }).catch(errHandler);
+        }
         setSecurityKey(secKey, errHandler) {
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('set_securitykey', { securityKey: secKey }).catch(errHandler);
+        }
+        syncProjectData(errHandler) {
+            errHandler ??= defaultErrHandler;
+            if (!webui.projectData || !webui.projectData.id) {
+                return;
+            }
+            return tauri.core.invoke('sync_project_data', { data: webui.projectData }).catch(errHandler);
         }
     }
     const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects']
@@ -60,7 +74,6 @@
         webui.projectData = {};
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1) return;
-            console.log('Load data', key, value);
             if (key === 'page-path') {
                 setTimeout(() => handlePagePath(value), 100);
             } else {
@@ -69,7 +82,6 @@
         });
         webui.watchAppDataChanges(queueAppDataChanges);
         let currentProject = webui.getData('app-current-project');
-        console.log('current project', currentProject);
         if (currentProject) {
             loadProject({
                 name: currentProject.display,
@@ -81,6 +93,7 @@
     const syncQueueTimeout = 500;
     function handlePagePath(pagePath) {
         let navTo = pagePath === '/root' ? '/' : pagePath;
+        if (location.pathname === pagePath) return;
         webui.navigateTo(navTo);
     }
     async function queueAppDataChanges(changes, appData) {
@@ -89,6 +102,11 @@
     }
     async function handleChanges(changes) {
         switch (changes.property) {
+            case 'page-path':
+                let project = webui.getData('app-current-project');
+                webui.projectData.currentPage = changes.newValue == '/root' ? '/' : changes.newValue;
+                webui.proxy.syncProjectData();
+                break;
             case 'app-current-project':
                 await loadProject({
                     name: changes.newValue.display,
@@ -100,12 +118,12 @@
     }
     async function loadProject(project) {
         if (cache.currentProject === project) return;
+        await webui.proxy.saveProjectData();
         webui.setData('app-nav-routes', []);
         let projectData = await webui.proxy.getProjectData(project);
         webui.projectData = projectData || {};
-        console.log('Loaded project data', webui.projectData);
-        console.log('nav', webui.projectData.navigation);
         webui.setData('app-nav-routes', webui.projectData.navigation);
+        handlePagePath(webui.projectData.currentPage || '/');
     }
     async function handleUpdatedAppData(appData) {
         let myId = webui.uuid();
