@@ -50,29 +50,48 @@ pub fn run() {
 
     // Save data on close
     builder = builder.on_window_event(|window, event| match event {
-        WindowEvent::CloseRequested { .. } => {
-            let app_handle = window.app_handle();
+        WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            let window = window.clone();
             println!("Saving data from window close");
-            match app_handle.try_state::<SharedAppData>() {
-                Some(state) => {
-                    if let Ok(app_data) = state.lock() {
-                        let data = app_data.to_owned();
-                        let result = save_app_data_to_local_storage(app_handle, &data);
+            let app_handle = window.app_handle().clone();
+            let app_data = {
+                match app_handle.try_state::<SharedAppData>() {
+                    Some(state) => match state.lock() {
+                        Ok(data) => Some(data.to_owned()),
+                        Err(_) => None,
+                    },
+                    None => None,
+                }
+            };
+            let project_data = {
+                match app_handle.try_state::<CurrentProject>() {
+                    Some(state) => match state.lock() {
+                        Ok(data) => Some(data.to_owned()),
+                        Err(_) => None,
+                    },
+                    None => None,
+                }
+            };
+            tauri::async_runtime::spawn(async move {
+                let save_app_data = async {
+                    if let Some(app_data) = app_data {
+                        let result = save_app_data_to_local_storage(&app_handle, &app_data).await;
                         println!("{:?}", result);
                     }
-                }
-                None => {}
-            }
-            match app_handle.try_state::<CurrentProject>() {
-                Some(state) => {
-                    if let Ok(project) = state.lock() {
-                        let data = project.to_owned();
-                        let result = save_project_data(data, app_handle.clone());
+                };
+                let save_project_data = async {
+                    if let Some(project_data) = project_data {
+                        let result = save_project_data(project_data, app_handle.clone()).await;
                         println!("{:?}", result);
                     }
-                }
-                None => {}
-            }
+                };
+                let (_save_app_result, _save_project_result) =
+                    join!(save_app_data, save_project_data);
+
+                println!("Saves complete - Closing window.");
+                let _ = window.close();
+            });
         }
         _ => {}
     });
@@ -106,10 +125,12 @@ pub fn run() {
             appdata::sync_app_data,
             projects::manager::greet,
             projects::manager::add_project,
-            projects::manager::get_projects,
             projects::manager::get_project_data,
+            projects::manager::get_project_file,
+            projects::manager::get_projects,
             projects::manager::load_projects,
             projects::manager::save_project_data,
+            projects::manager::save_project_file,
             projects::manager::sync_project_data
         ])
         .run(tauri::generate_context!())

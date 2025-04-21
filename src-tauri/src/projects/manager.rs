@@ -1,63 +1,82 @@
+use std::path::Path;
+
 use crate::prelude::*;
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
-pub(crate) fn get_project_data(
+pub(crate) async fn get_project_data(
     app_handle: AppHandle,
-    state: State<CurrentProject>,
+    state: State<'_, CurrentProject>,
     project: Project,
 ) -> Result<ProjectData, String> {
     let project_hash = get_hash_code(&project.path);
-    let mut project_state = state
-        .lock()
-        .map_err(|err| format!("get_project_data State failure: {}", err))?;
-    let current_project = project_state.to_owned();
+    let current_project = {
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("get_project_data State failure: {}", err))?;
+        project_state.to_owned()
+    };
     if project_hash == current_project.id {
         return Ok(current_project);
     }
-    _ = save_project_data(current_project, app_handle.clone());
+    _ = save_project_data(current_project, app_handle.clone()).await;
     let project_root = PathBuf::from(&project.path);
     let data_root = project_root.join(".taskproxy");
     let nav_file = data_root.join("Navigation.json");
     let var_file = data_root.join("Variables.json");
-    let mut data = ProjectData::new();
-    data.id = project_hash.to_owned();
-    data.path = project.path.to_owned();
-    if nav_file.exists() && nav_file.is_file() {
-        if let Ok(content) = fs::read_to_string(nav_file) {
-            if let Ok(nav) = serde_json::from_str::<Vec<ProjectNavItem>>(&content) {
-                data.navigation = nav;
+    let project = project.clone();
+    let result = task::spawn_blocking(async move || {
+        let mut data = ProjectData::new();
+        data.id = project_hash.to_owned();
+        data.path = project.path.to_owned();
+        if nav_file.exists() && nav_file.is_file() {
+            if let Ok(content) = fs::read_to_string(nav_file) {
+                if let Ok(nav) = serde_json::from_str::<Vec<ProjectNavItem>>(&content) {
+                    data.navigation = nav;
+                }
             }
         }
-    }
-    if var_file.exists() && var_file.is_file() {
-        if let Ok(content) = fs::read_to_string(var_file) {
-            if let Ok(variables) = serde_json::from_str::<Vec<String>>(&content) {
-                data.variables = variables;
+        if var_file.exists() && var_file.is_file() {
+            if let Ok(content) = fs::read_to_string(var_file) {
+                if let Ok(variables) = serde_json::from_str::<Vec<String>>(&content) {
+                    data.variables = variables;
+                }
             }
         }
-    }
-    if let Ok(decrypted) =
-        get_data_from_local_storage(&app_handle, &format!("{}.cp.enc", project_hash))
+        if let Ok(decrypted) =
+            get_data_from_local_storage(&app_handle, &format!("{}.cp.enc", project_hash)).await
+        {
+            if !decrypted.is_empty() {
+                if let Ok(current_page) = String::from_utf8(decrypted) {
+                    data.current_page = current_page;
+                }
+            }
+        }
+        if let Ok(decrypted) =
+            get_data_from_local_storage(&app_handle, &format!("{}.enc", project_hash)).await
+        {
+            if !decrypted.is_empty() {
+                if let Ok(project_variables) =
+                    serde_json::from_slice::<HashMap<String, String>>(&decrypted)
+                {
+                    data.data = project_variables;
+                }
+            }
+        }
+        data
+    })
+    .await
+    .map_err(|err| format!("{}", err));
+    let data = match result {
+        Ok(data) => data.await,
+        Err(_) => ProjectData::new(),
+    };
     {
-        if !decrypted.is_empty() {
-            if let Ok(current_page) = String::from_utf8(decrypted) {
-                data.current_page = current_page;
-            }
-        }
-    }
-    if let Ok(decrypted) =
-        get_data_from_local_storage(&app_handle, &format!("{}.enc", project_hash))
-    {
-        if !decrypted.is_empty() {
-            if let Ok(project_variables) =
-                serde_json::from_slice::<HashMap<String, String>>(&decrypted)
-            {
-                data.data = project_variables;
-            }
-        }
-    }
-    *project_state = data.clone();
+        let mut project_state = state
+            .lock()
+            .map_err(|err| format!("get_project_data State failure: {}", err))?;
+        *project_state = data.clone();
+    };
     Ok(data)
 }
 
@@ -73,36 +92,133 @@ pub(crate) fn sync_project_data(
     Ok(format!("Project data synced"))
 }
 
+#[tauri::command]
+pub(crate) async fn get_project_file(
+    state: State<'_, CurrentProject>,
+    file_path: String,
+) -> Result<String, String> {
+    let mut project_path = String::new();
+    {
+        for _ in 1..=100 {
+            match state.lock() {
+                Ok(project_state) => {
+                    if !project_state.path.is_empty() {
+                        project_path = project_state.path.to_owned();
+                        break;
+                    }
+                }
+                Err(_) => (),
+            };
+            sleep(Duration::from_millis(100)).await;
+        }
+    }
+    if file_path.is_empty() {
+        return Err(String::from(
+            "Get Project File: Unable to load page data, project not loaded.",
+        ));
+    }
+    if file_path.contains("./") || file_path.contains(".\\") {
+        return Err(String::from("Get Project File: Invalid file path."));
+    }
+    let proj_path = PathBuf::from(project_path);
+    let tproot = proj_path.join(".taskproxy");
+    let file = tproot.join(file_path);
+    if !file.is_file() {
+        return Err(String::from("Get Project File: File not found"));
+    }
+    let result = task::spawn_blocking(move || fs::read_to_string(file)).await;
+    let result = result.map_err(|err| format!("{}", err))?;
+    result.map_err(|err| format!("Failed to load file: {}", err))
+}
+
+#[tauri::command]
+pub(crate) async fn save_project_file(
+    state: State<'_, CurrentProject>,
+    file_path: String,
+    contents: String,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| {
+            format!(
+                "Save Project File Failed: get_page_data State failure: {}",
+                err
+            )
+        })?;
+        let project = project_state.to_owned();
+        if project.path.is_empty() {
+            return Err(String::from(
+                "Save Project File Failed: Unable to load page data, project not loaded.",
+            ));
+        }
+        project.path
+    };
+    if file_path.is_empty() {
+        return Err(String::from(
+            "Save Project File Failed: File path is empty.",
+        ));
+    }
+    if file_path.contains("./") || file_path.contains(".\\") {
+        return Err(format!(
+            "Save Project File Failed: Invalid file path:{}",
+            file_path
+        ));
+    }
+    if file_path.starts_with(".") {
+        return Err(format!(
+            "Save Project File Failed: File path cannot start with a period:{}",
+            file_path
+        ));
+    }
+    let proj_path = PathBuf::from(project_path);
+    let tproot = proj_path.join(".taskproxy");
+    let file = tproot.join(file_path);
+    if file.extension().is_none() {
+        return Err(String::from(
+            "Save Project File Failed: File path is missing a file extension",
+        ));
+    }
+    let file_clone = file.clone();
+    let contents_clone = contents.clone();
+    let result = task::spawn_blocking(move || fs::write(file_clone, contents_clone)).await;
+    let result = result.map_err(|err| format!("{}", err))?;
+    match result {
+        Ok(()) => Ok(String::from("File saved")),
+        Err(err) => Err(format!("{}", err)),
+    }
+}
+
 /// Create or load a project from the given path.
 #[tauri::command]
-pub(crate) fn add_project(
+pub(crate) async fn add_project(
     app_handle: tauri::AppHandle,
-    state: State<SharedProjects>,
+    state: State<'_, SharedProjects>,
     name: &str,
 ) -> Result<String, String> {
     let file_path = match app_handle.dialog().file().blocking_pick_folder() {
         Some(file_path) => file_path,
         None => return Err(String::from("Folder selection cancelled")),
     };
-
-    let project = Project::new(name, &file_path.to_string());
-    let mut projects = state
-        .lock()
-        .map_err(|err| format!("add_project State failure: {}", err))?;
     let project_path = file_path.to_string();
-    let project_exists = projects
-        .iter()
-        .any(|item| item.path.eq_ignore_ascii_case(&project_path));
-    if project_exists {
-        return Err(String::from(
-            "The provided path is already in your set of projects.",
-        ));
-    }
-    projects.push(project);
-    projects.sort_by_key(|p| p.name.clone());
-    let vec_projects = projects.to_vec();
-    *projects = vec_projects.clone();
-    save_projects_to_local_storage(&app_handle, &vec_projects)?;
+    let project = Project::new(name, &file_path.to_string());
+    let vec_projects = {
+        let mut projects = state
+            .lock()
+            .map_err(|err| format!("add_project State failure: {}", err))?;
+        let project_exists = projects
+            .iter()
+            .any(|item| item.path.eq_ignore_ascii_case(&project_path));
+        if project_exists {
+            return Err(String::from(
+                "The provided path is already in your set of projects.",
+            ));
+        }
+        projects.push(project);
+        projects.sort_by_key(|p| p.name.clone());
+        let vec_projects = projects.to_vec();
+        *projects = vec_projects.clone();
+        vec_projects
+    };
+    save_projects_to_local_storage(&app_handle, &vec_projects).await?;
     Ok(String::from("Project Successfully Added"))
 }
 
@@ -128,37 +244,29 @@ pub(crate) fn get_projects(state: State<SharedProjects>) -> Result<Vec<Project>,
 
 /// Create or load a project from the given path.
 #[tauri::command]
-pub(crate) fn load_projects(
-    state: State<SharedProjects>,
+pub(crate) async fn load_projects(
+    state: State<'_, SharedProjects>,
     app_handle: AppHandle,
-) -> Option<Vec<Project>> {
-    match get_projects_from_local_storage(&app_handle) {
-        Ok(loaded_projects) => match state.lock() {
-            Ok(mut projects) => {
-                *projects = loaded_projects;
-                let projects = projects
-                    .iter()
-                    .map(|p| Project {
-                        name: p.name.clone(),
-                        path: p.path.clone(),
-                    })
-                    .collect();
-                Some(projects)
-            }
-            Err(err) => {
-                eprintln!("load_projects State failure: {}", err);
-                None
-            }
-        },
-        Err(err) => {
-            eprintln!("Failed to load projects: {}", err);
-            None
-        }
-    }
+) -> Result<Vec<Project>, String> {
+    let loaded_projects = get_projects_from_local_storage(&app_handle)
+        .await
+        .map_err(|err| format!("Failed to load projects: {}", err))?;
+    let mut projects = state
+        .lock()
+        .map_err(|err| format!("load_projects State failure: {}", err))?;
+    *projects = loaded_projects;
+    let projects = projects
+        .iter()
+        .map(|p| Project {
+            name: p.name.clone(),
+            path: p.path.clone(),
+        })
+        .collect();
+    Ok(projects)
 }
 
 #[tauri::command]
-pub(crate) fn save_project_data(
+pub(crate) async fn save_project_data(
     data: ProjectData,
     app_handle: AppHandle,
 ) -> Result<String, String> {
@@ -196,7 +304,9 @@ pub(crate) fn save_project_data(
         &app_handle,
         data.current_page.clone(),
         &secrets_path,
-    ) {
+    )
+    .await
+    {
         Ok(_) => println!(
             "Current page {} at {} Saved!",
             data.current_page, secrets_path
@@ -206,7 +316,9 @@ pub(crate) fn save_project_data(
     let secrets_path = format!("{}.enc", data.id);
     match serde_json::to_string(&data.data) {
         Ok(json) => {
-            match save_json_to_local_storage("Project secrets", &app_handle, json, &secrets_path) {
+            match save_json_to_local_storage("Project secrets", &app_handle, json, &secrets_path)
+                .await
+            {
                 Ok(_) => println!("Secrets at {} Saved!", secrets_path),
                 Err(err) => eprintln!("Error saving secrets {}:{}", secrets_path, err),
             }

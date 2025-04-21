@@ -6,10 +6,24 @@
     The page you were looking for was not found.
     `;
     let comp = null;
-    function loadProject(project) {
-
+    let markdown = '';
+    let myId = '';
+    let myFile = '';
+    async function loadProject(project) {
+        myId = location.pathname.substring(1);
+        myFile = `${myId}.md`;
+        console.log('Page Handler - load project %o - %o', myId, myFile);
+        let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
+        console.log('md', md);
+        if (!md) {
+            md = '';
+            console.log('save file %o', myFile);
+            await webui.proxy.saveProjectFile(myFile, md);
+        }
+        setMarkdown(md);
     }
-    function setMarkdown(markdown) {
+    function setMarkdown(md) {
+        markdown = md;
         comp.innerHTML = webui.applyAppDataToContent(markdown);
     }
     webui.define("app-page-handler", {
@@ -19,6 +33,7 @@
         },
         connected: function (t) {
             let project = webui.getData('app-current-project');
+            console.log('Page Handler - project %o', project);
             if (project && project.value) {
                 loadProject(project);
             } else {

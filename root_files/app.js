@@ -1,10 +1,34 @@
 "use strict";
 {
+    const AsyncFunction = (async () => { }).constructor;
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
     let firstLoad = true;
     const defaultErrHandler = msg => webui.alert(msg);
     const cache = {};
+    let isLoadingDialog = null;
+    async function showLoading(during) {
+        if (isLoadingDialog) {
+            if (typeof during === 'function') {
+                during();
+            }
+            return;
+        }
+        isLoadingDialog = webui.dialog({ isLoading: true });
+        if (typeof during === 'function') {
+            if (handler.constructor == AsyncFunction) {
+                await during();
+            } else {
+                during();
+            }
+            hideLoading();
+        }
+    }
+    function hideLoading() {
+        if (!isLoadingDialog) return;
+        isLoadingDialog.close();
+        isLoadingDialog = null;
+    }
     class Tauri {
         openUrl = tauri.opener.openUrl;
         constructor() {
@@ -24,6 +48,14 @@
         getAppData(errHandler) {
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('get_app_data', {}).catch(errHandler)
+        }
+        getProjectFile(filePath, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('get_project_file', { filePath: filePath }).catch(errHandler);
+        }
+        saveProjectFile(filePath, contents, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('save_project_file', { filePath: filePath, contents: contents }).catch(errHandler);
         }
         getProjectData(project, errHandler) {
             errHandler ??= defaultErrHandler;
@@ -67,6 +99,7 @@
     }
     const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects']
     runWhenWebUIReady(async () => {
+        showLoading();
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
         let data = await webui.proxy.getAppData();
@@ -83,11 +116,12 @@
         webui.watchAppDataChanges(queueAppDataChanges);
         let currentProject = webui.getData('app-current-project');
         if (currentProject) {
-            loadProject({
+            await loadProject({
                 name: currentProject.display,
                 path: currentProject.value
             });
         }
+        hideLoading();
     });
     let queueId = '';
     const syncQueueTimeout = 500;
@@ -118,12 +152,19 @@
     }
     async function loadProject(project) {
         if (cache.currentProject === project) return;
-        await webui.proxy.saveProjectData();
-        webui.setData('app-nav-routes', []);
-        let projectData = await webui.proxy.getProjectData(project);
-        webui.projectData = projectData || {};
-        webui.setData('app-nav-routes', webui.projectData.navigation);
-        handlePagePath(webui.projectData.currentPage || '/');
+        showLoading();
+        try {
+            await webui.proxy.saveProjectData();
+            webui.setData('app-nav-routes', []);
+            let projectData = await webui.proxy.getProjectData(project);
+            webui.projectData = projectData || {};
+            webui.setData('app-nav-routes', webui.projectData.navigation);
+            handlePagePath(webui.projectData.currentPage || '/');
+        } catch (ex) {
+            webui.alert(ex);
+        } finally {
+            hideLoading();
+        }
     }
     async function handleUpdatedAppData(appData) {
         let myId = webui.uuid();
@@ -150,7 +191,7 @@
     }
     function runWhenWebUIReady(action) {
         try {
-            webui.isEqual(1, 1);
+            showLoading();
             action();
         } catch {
             setTimeout(() => runWhenWebUIReady(action), 10);

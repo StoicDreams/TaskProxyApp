@@ -16,5 +16,5 @@ pub(crate) use std::sync::{Arc, Mutex};
 pub(crate) use std::time::Duration;
 pub(crate) use std::{fs, io, path::PathBuf};
 pub(crate) use tauri::{AppHandle, Manager, State};
-pub(crate) use tokio::time::sleep;
+pub(crate) use tokio::{join, task, time::sleep};
 pub(crate) use uuid::Uuid;

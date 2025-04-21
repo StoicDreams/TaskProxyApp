@@ -20,13 +20,13 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
         // --- Perform the save ---
         println!("Periodic save: Attempting to save...");
         if let Ok(data) = get_state_data::<TaskProxyData>(&app_handle) {
-            match save_app_data_to_local_storage(&app_handle, &data) {
+            match save_app_data_to_local_storage(&app_handle, &data).await {
                 Ok(msg) => println!("{}", msg),
                 Err(err) => eprintln!("{}", err),
             }
         }
         if let Ok(data) = get_state_data::<ProjectData>(&app_handle) {
-            match save_project_data(data, app_handle.clone()) {
+            match save_project_data(data, app_handle.clone()).await {
                 Ok(msg) => println!("{}", msg),
                 Err(err) => eprintln!("{}", err),
             }

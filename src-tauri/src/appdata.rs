@@ -19,27 +19,32 @@ pub(crate) fn has_securitykey() -> bool {
 }
 
 #[tauri::command]
-pub(crate) fn get_app_data(
+pub(crate) async fn get_app_data(
     app_handle: AppHandle,
-    state: State<SharedAppData>,
+    state: State<'_, SharedAppData>,
 ) -> Result<TaskProxyData, String> {
-    let mut app_data = state
-        .lock()
-        .map_err(|err| format!("get_app_data State failure: {}", err))?;
-    let data = app_data.to_owned();
-    if data.is_saved {
-        return Ok(data);
+    {
+        let app_data = state
+            .lock()
+            .map_err(|err| format!("get_app_data State failure: {}", err))?;
+        if app_data.is_saved {
+            return Ok(app_data.to_owned());
+        }
     }
-    let data = match get_app_data_from_local_storage(&app_handle) {
+    let mut data = match get_app_data_from_local_storage(&app_handle).await {
         Ok(data) => data,
         Err(_) => TaskProxyData::new(),
     };
-    let mut data = data;
     if !data.is_saved {
         data.is_saved = true;
-        _ = save_app_data_to_local_storage(&app_handle, &data);
+        _ = save_app_data_to_local_storage(&app_handle, &data).await;
     }
-    *app_data = data.clone();
+    {
+        let mut app_data = state
+            .lock()
+            .map_err(|err| format!("get_app_data State failure: {}", err))?;
+        *app_data = data.clone();
+    }
     Ok(data)
 }
 
@@ -57,47 +62,61 @@ pub(crate) fn sync_app_data(
 }
 
 #[tauri::command]
-pub(crate) fn save_app_data(
+pub(crate) async fn save_app_data(
     app_handle: AppHandle,
-    state: State<SharedAppData>,
+    state: State<'_, SharedAppData>,
     data: TaskProxyData,
 ) -> Result<String, String> {
-    let mut app_data = state
-        .lock()
-        .map_err(|err| format!("save_app_data State failure: {}", err))?;
-    let mut data = data;
-    if !data.is_saved {
-        data.is_saved = true;
-    }
-    *app_data = data.clone();
-    save_app_data_to_local_storage(&app_handle, &data)
+    let data = {
+        let mut app_data = state
+            .lock()
+            .map_err(|err| format!("save_app_data State failure: {}", err))?;
+        let mut data = data;
+        if !data.is_saved {
+            data.is_saved = true;
+        }
+        *app_data = data.clone();
+        data
+    };
+    save_app_data_to_local_storage(&app_handle, &data).await
 }
 
 /// Set the encryption passphrase to the keychain
 #[tauri::command]
-pub(crate) fn set_securitykey(
+pub(crate) async fn set_securitykey(
     app_handle: AppHandle,
-    state: State<SharedProjects>,
+    state: State<'_, SharedProjects>,
     security_key: &str,
 ) -> Result<String, String> {
-    let secret = SecretString::from(security_key);
-    let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
-        .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
-    entry
-        .set_password(secret.expose_secret())
-        .map_err(|e| format!("Failed to store new security key in keychain: {:?}", e))?;
-    _ = save_projects_if_any(&app_handle, &state);
-    Ok(String::from("Security Key Saved!"))
+    let security_key_clone = security_key.to_owned();
+    let result = task::spawn_blocking(move || {
+        let secret = SecretString::from(security_key_clone);
+        let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
+            .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
+        entry
+            .set_password(secret.expose_secret())
+            .map_err(|e| format!("Failed to store new security key in keychain: {:?}", e))?;
+        Ok(String::from("Security Key Saved!"))
+    })
+    .await;
+    _ = save_projects_if_any(&app_handle, &state).await;
+    let result = result.map_err(|err| format!("{}", err))?;
+    result
 }
 
 #[tauri::command]
-pub(crate) fn delete_securitykey() -> Result<String, String> {
-    let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
-        .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
-    entry
-        .delete_credential()
-        .map_err(|e| format!("Failed to delete security key from keychain: {:?}", e))?;
-    Ok(String::from("Security Key Deleted!"))
+pub(crate) async fn delete_securitykey() -> Result<String, String> {
+    let result = task::spawn_blocking(move || {
+        let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
+            .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
+        entry
+            .delete_credential()
+            .map_err(|e| format!("Failed to delete security key from keychain: {:?}", e))?;
+        Ok(String::from("Security Key Deleted!"))
+    })
+    .await;
+    let result = result.map_err(|err| format!("{}", err))?;
+    result
 }
 
 pub(crate) fn get_state_data<T: Clone + Send + Sync + 'static>(
@@ -126,44 +145,47 @@ fn get_passphrase() -> Result<SecretString, String> {
     }
 }
 
-fn save_projects_if_any(
+async fn save_projects_if_any(
     app_handle: &AppHandle,
-    state: &State<SharedProjects>,
+    state: &State<'_, SharedProjects>,
 ) -> Result<String, String> {
-    let projects = state
-        .lock()
-        .map_err(|err| format!("save_projects_if_any State failure: {}", err))?;
-    let projects = projects.to_vec();
-    if projects.is_empty() {
-        return Ok(String::from("Projects is empty"));
-    }
-    save_projects_to_local_storage(&app_handle, &projects)
+    let projects = {
+        let projects = state
+            .lock()
+            .map_err(|err| format!("save_projects_if_any State failure: {}", err))?;
+        let projects = projects.to_vec();
+        if projects.is_empty() {
+            return Ok(String::from("Projects is empty"));
+        }
+        projects
+    };
+    save_projects_to_local_storage(&app_handle, &projects).await
 }
 
 /// Save projects to local data storage
-pub(crate) fn save_projects_to_local_storage(
+pub(crate) async fn save_projects_to_local_storage(
     app_handle: &AppHandle,
     projects: &Vec<Project>,
 ) -> Result<String, String> {
     let json = serde_json::to_string(projects)
         .map_err(|err| format!("Failed to serialize projects: {}", err))?;
-    save_json_to_local_storage("Projects", app_handle, json, PROJECTS_FILENAME)
+    save_json_to_local_storage("Projects", app_handle, json, PROJECTS_FILENAME).await
 }
 
-pub(crate) fn save_app_data_to_local_storage(
+pub(crate) async fn save_app_data_to_local_storage(
     app_handle: &AppHandle,
     app_data: &TaskProxyData,
 ) -> Result<String, String> {
     let json = serde_json::to_string(app_data)
         .map_err(|err| format!("Failed to serialize app data: {}", err))?;
-    save_json_to_local_storage("app data", app_handle, json, APPDATA_FILENAME)
+    save_json_to_local_storage("app data", app_handle, json, APPDATA_FILENAME).await
 }
 
 /// Get projects from local data storage
-pub(crate) fn get_projects_from_local_storage(
+pub(crate) async fn get_projects_from_local_storage(
     app_handle: &AppHandle,
 ) -> Result<Vec<Project>, String> {
-    let decrypted = get_data_from_local_storage(app_handle, PROJECTS_FILENAME)?;
+    let decrypted = get_data_from_local_storage(app_handle, PROJECTS_FILENAME).await?;
     if decrypted.is_empty() {
         return Ok(Vec::new());
     }
@@ -171,10 +193,10 @@ pub(crate) fn get_projects_from_local_storage(
         .map_err(|err| format!("Failed to deserialize projects: {}", err))?)
 }
 
-pub(crate) fn get_app_data_from_local_storage(
+pub(crate) async fn get_app_data_from_local_storage(
     app_handle: &AppHandle,
 ) -> Result<TaskProxyData, String> {
-    let decrypted = get_data_from_local_storage(app_handle, APPDATA_FILENAME)?;
+    let decrypted = get_data_from_local_storage(app_handle, APPDATA_FILENAME).await?;
     if decrypted.is_empty() {
         return Ok(TaskProxyData::new());
     }
@@ -182,20 +204,22 @@ pub(crate) fn get_app_data_from_local_storage(
         .map_err(|err| format!("Failed to deserialize app data: {}", err))?)
 }
 
-pub(crate) fn save_json_to_local_storage(
+pub(crate) async fn save_json_to_local_storage(
     data_type: &str,
     app_handle: &AppHandle,
     json: String,
     file_name: &str,
 ) -> Result<String, String> {
-    let file_path = get_app_data_path(app_handle, file_name)?;
+    let file_path = get_app_data_path(app_handle, file_name).await?;
     let passphrase = get_passphrase()?;
     let recipient = age::scrypt::Recipient::new(passphrase.clone());
     let encrypted = match age::encrypt(&recipient, json.as_bytes()) {
         Ok(encrypted) => encrypted,
         Err(err) => return Err(format!("Failed to save {}: {}", data_type, err)),
     };
-    match fs::write(&file_path, encrypted) {
+    let result = task::spawn_blocking(move || fs::write(file_path, encrypted)).await;
+    let result = result.map_err(|err| format!("{}", err))?;
+    match result {
         Ok(()) => {
             eprintln!("Successfully saved {}!", data_type);
             Ok(format!("{} saved", data_type))
@@ -207,14 +231,17 @@ pub(crate) fn save_json_to_local_storage(
     }
 }
 
-pub(crate) fn get_data_from_local_storage(
+pub(crate) async fn get_data_from_local_storage(
     app_handle: &AppHandle,
     file_path: &str,
 ) -> Result<Vec<u8>, String> {
-    let file_path = get_app_data_path(app_handle, file_path)?;
+    let file_path = get_app_data_path(app_handle, file_path).await?;
     let passphrase = get_passphrase()?;
     let identity = age::scrypt::Identity::new(passphrase);
-    let encrypted_data = match fs::read(&file_path) {
+    let file_path_clone = file_path.clone();
+    let result = task::spawn_blocking(move || fs::read(file_path_clone)).await;
+    let result = result.map_err(|err| format!("{}", err))?;
+    let encrypted_data = match result {
         Ok(data) => data,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             println!("Data file not found at {:?}.", file_path);
@@ -234,7 +261,7 @@ pub(crate) fn get_data_from_local_storage(
     }
 }
 
-fn get_app_data_path(app_handle: &AppHandle, file_name: &str) -> Result<PathBuf, String> {
+async fn get_app_data_path(app_handle: &AppHandle, file_name: &str) -> Result<PathBuf, String> {
     let data_dir = match app_handle.path().app_local_data_dir() {
         Ok(dir) => dir,
         Err(err) => {
@@ -244,7 +271,10 @@ fn get_app_data_path(app_handle: &AppHandle, file_name: &str) -> Result<PathBuf,
             ));
         }
     };
-    if let Err(err) = fs::create_dir_all(&data_dir) {
+    let data_dir_clone = data_dir.clone();
+    let result = task::spawn_blocking(move || fs::create_dir_all(data_dir_clone)).await;
+    let result = result.map_err(|err| format!("{}", err))?;
+    if let Err(err) = result {
         return Err(format!(
             "Could not create application data directory {:?}: {}",
             data_dir, err
