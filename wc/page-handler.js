@@ -9,40 +9,125 @@
     let markdown = '';
     let myId = '';
     let myFile = '';
-    async function loadProject(project) {
+    let segments = [];
+    async function loadProject() {
         myId = location.pathname.substring(1);
         myFile = `pages/${myId}.md`;
-        console.log('Page Handler - load project %o - %o', myId, myFile);
         let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
-        console.log('md', md);
         if (!md) {
             md = '';
-            console.log('save file %o', myFile);
             await webui.proxy.saveProjectFile(myFile, md);
         }
         setMarkdown(md);
     }
+    let topBar = webui.create('webui-flex', { justify: 'right' });
+    {
+        let btnSave = webui.create('webui-button', { html: 'Save', startIcon: 'star', theme: 'primary' });
+        btnSave.addEventListener('click', async _ => {
+            if (!myFile) return;
+            let md = [];
+            segments.forEach(segment => {
+                md.push(segment.getMarkdown());
+            });
+            let result = await webui.proxy.saveProjectFile(myFile, md.join('\n\n').trim());
+            if (result) {
+                webui.alert(result, 'success');
+            }
+        });
+        topBar.appendChild(btnSave);
+    }
     function setMarkdown(md) {
         markdown = md;
-        comp.innerHTML = webui.applyAppDataToContent(markdown);
+        comp.innerHTML = '';
+        convertMarkdownToSegments(markdown);
+        comp.appendChild(topBar);
+        segments.forEach(segment => {
+            comp.appendChild(segment);
+        });
+    }
+    const segmentType = {
+        INVALID: 0,
+        EMTPY: 1,
+        RAW: 2,
+        COMPONENT: 3,
+        COMPONENTSTART: 4,
+        COMPONENTEND: 5
+    };
+    function getSegmentDetail(line) {
+        if (line.trim() === '') return [segmentType.EMTPY, { mdt: 'empty' }];
+        if (line.startsWith('#')) return [segmentType.RAW, { mdt: 'heading' }];
+        if (line.match(/<([^ >]+)[^>]*>.*<\/\1>\s*$/)) return [segmentType.COMPONENT, { mdt: 'sl-comp' }];
+        let match = line.match(/<\/([^ >]+)[^>]*>/);
+        if (match) {
+            let [_, tag] = match;
+            return [segmentType.COMPONENTEND, { tag: tag }];
+        }
+        match = line.match(/<([^ >]+)[^>]*>/);
+        if (match) {
+            let [_, tag] = match;
+            return [segmentType.COMPONENTSTART, { tag: tag }];
+        }
+        return [segmentType.RAW, { mdt: 'text' }];
+    }
+    function convertMarkdownToSegments(markdown) {
+        segments.length = 0;
+        let lines = markdown.replace(/\r\n/g, '\n').split('\n');
+        let s = [];
+        let currentSegment = null;
+        let tag = null;
+        let last = null;
+        for (let index = 0; index < lines.length; ++index) {
+            let line = lines[index];
+            let [st, options] = getSegmentDetail(line);
+            let prev = last;
+            last = st;
+            switch (st) {
+                case segmentType.INVALID:
+                    break;
+                case segmentType.COMPONENTSTART:
+                    if (!currentSegment) {
+                        currentSegment = webui.create('app-markdown-segment');
+                        tag = options.tag;
+                    }
+                    s.push(line);
+                    break;
+                case segmentType.COMPONENTEND:
+                    if (!currentSegment) continue;
+                    s.push(line);
+                    let md = s.join('\n');
+                    let ms = webui.create('app-markdown-segment', { 'data-markdown': md, mdt: 'ml-comp' });
+                    segments.push(ms);
+                    s.length = 0;
+                    currentSegment = null;
+                    break;
+                default:
+                    if (currentSegment) {
+                        s.push(line);
+                    } else {
+                        if (st === segmentType.EMTPY && prev !== segmentType.EMTPY) {
+                            continue;
+                        }
+                        options['data-markdown'] = line;
+                        let ms = webui.create('app-markdown-segment', options);
+                        segments.push(ms);
+                    }
+                    break;
+            }
+        }
     }
     webui.define("app-page-handler", {
+        preload: 'app-markdown-segment webui-dropdown webui-input-text webui-input-message',
         constructor: (t) => {
             comp = t;
-            webui.log('Page Handler Init - %o', location.pathname);
         },
         connected: function (t) {
             let project = webui.getData('app-current-project');
-            console.log('Page Handler - project %o', project);
             if (project && project.value) {
-                loadProject(project);
+                loadProject();
             } else {
                 setMarkdown(notFound);
             }
         },
-        disconnected: function (t) { },
-        loadProject: function (project) {
-
-        }
+        disconnected: function (t) { }
     });
 }

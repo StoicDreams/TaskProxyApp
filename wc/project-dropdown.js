@@ -1,5 +1,13 @@
 "use strict"
 {
+    async function loadProjects() {
+        if (webui.proxy) {
+            let projects = await webui.proxy.getProjects() || [];
+            webui.setData('app-projects', projects);
+        } else {
+            setTimeout(loadProjects, 100);
+        }
+    }
     webui.define("app-project-dropdown", {
         linkCss: false,
         watchVisibility: false,
@@ -14,10 +22,9 @@
             switch (property) {
             }
         },
-        connected: async function (t) {
+        connected: function (t) {
             t.dataset.subscribe = 'app-projects:setProjects';
-            let projects = await webui.proxy.getProjects() || [];
-            webui.setData('app-projects', projects);
+            loadProjects();
         },
         disconnected: function (t) { },
         setProjects(projects) {
