@@ -7,6 +7,23 @@
     const defaultErrHandler = msg => webui.alert(msg);
     const cache = {};
     let isLoadingDialog = null;
+    function buildNav(projectNav) {
+        let baseNav = [
+            {
+                name: "Docs",
+                icon: "star",
+                url: "/docs",
+                children: null
+            },
+            {
+                name: "Navigation",
+                icon: "star",
+                url: "/nav-manager",
+                children: null
+            },
+        ];
+        return projectNav.concat(baseNav);
+    }
     async function showLoading(during) {
         if (isLoadingDialog) {
             if (typeof during === 'function') {
@@ -99,7 +116,10 @@
     }
     const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects']
     runWhenWebUIReady(async () => {
-        showLoading();
+        webui.isclosing = (msg) => {
+            webui.dialog({ content: msg, isLoading: true });
+        };
+        document.querySelector('dialog.isloading').remove();
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
         let data = await webui.proxy.getAppData();
@@ -157,11 +177,12 @@
             await webui.proxy.saveProjectData();
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
-            webui.projectData = projectData || {};
-            webui.setData('app-nav-routes', webui.projectData.navigation);
+            webui.projectData = projectData || { navigation: [] };
+            webui.setData('app-nav-routes', buildNav(webui.projectData.navigation));
             handlePagePath(webui.projectData.currentPage || '/');
         } catch (ex) {
             webui.alert(ex);
+            handlePagePath('/');
         } finally {
             hideLoading();
         }
@@ -189,9 +210,9 @@
     async function syncAppData() {
         await tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
     }
-    function runWhenWebUIReady(action) {
+    async function runWhenWebUIReady(action) {
         try {
-            showLoading();
+            await showLoading();
             action();
         } catch {
             setTimeout(() => runWhenWebUIReady(action), 10);

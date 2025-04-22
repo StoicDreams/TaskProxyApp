@@ -12,7 +12,10 @@ pub(crate) use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Des
 pub(crate) use serde_json::Value;
 pub(crate) use sha2::{Digest, Sha256};
 pub(crate) use std::collections::HashMap;
-pub(crate) use std::sync::{Arc, Mutex};
+pub(crate) use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 pub(crate) use std::time::Duration;
 pub(crate) use std::{fs, io, path::PathBuf};
 pub(crate) use tauri::{AppHandle, Manager, State};

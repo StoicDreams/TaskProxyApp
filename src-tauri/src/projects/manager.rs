@@ -99,7 +99,7 @@ pub(crate) async fn get_project_file(
 ) -> Result<String, String> {
     let mut project_path = String::new();
     {
-        for _ in 1..=100 {
+        for attempt in 1..=100 {
             match state.lock() {
                 Ok(project_state) => {
                     if !project_state.path.is_empty() {
@@ -109,6 +109,7 @@ pub(crate) async fn get_project_file(
                 }
                 Err(_) => (),
             };
+            println!("Waiting for project state - {}", attempt);
             sleep(Duration::from_millis(100)).await;
         }
     }
@@ -179,7 +180,13 @@ pub(crate) async fn save_project_file(
     }
     let file_clone = file.clone();
     let contents_clone = contents.clone();
-    let result = task::spawn_blocking(move || fs::write(file_clone, contents_clone)).await;
+    let result = task::spawn_blocking(move || {
+        if let Some(dir) = file_clone.parent() {
+            _ = fs::create_dir_all(dir);
+        }
+        fs::write(file_clone, contents_clone)
+    })
+    .await;
     let result = result.map_err(|err| format!("{}", err))?;
     match result {
         Ok(()) => Ok(String::from("File saved")),

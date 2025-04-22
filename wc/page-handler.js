@@ -11,7 +11,7 @@
     let myFile = '';
     async function loadProject(project) {
         myId = location.pathname.substring(1);
-        myFile = `${myId}.md`;
+        myFile = `pages/${myId}.md`;
         console.log('Page Handler - load project %o - %o', myId, myFile);
         let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
         console.log('md', md);

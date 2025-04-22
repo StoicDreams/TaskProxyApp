@@ -1,7 +1,8 @@
+use std::sync::LazyLock;
+
 use crate::prelude::*;
 use background::background_tasks;
-use std::sync::{Arc, Mutex};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 use tracing_subscriber::EnvFilter;
 
 pub mod appdata;
@@ -11,6 +12,8 @@ pub mod datatypes;
 pub mod errors;
 pub mod prelude;
 pub mod projects;
+
+static DID_SAVE_ON_CLOSE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -51,10 +54,21 @@ pub fn run() {
     // Save data on close
     builder = builder.on_window_event(|window, event| match event {
         WindowEvent::CloseRequested { api, .. } => {
+            let can_close = DID_SAVE_ON_CLOSE.load(Ordering::SeqCst);
+            if can_close {
+                return;
+            }
+            DID_SAVE_ON_CLOSE.store(true, Ordering::SeqCst);
             api.prevent_close();
             let window = window.clone();
             println!("Saving data from window close");
             let app_handle = window.app_handle().clone();
+            let main_window = app_handle.get_webview_window("main").unwrap();
+            let _ = main_window.emit(
+                "webui.isclosing",
+                "Closing, please wait while we save your data!",
+            );
+
             let app_data = {
                 match app_handle.try_state::<SharedAppData>() {
                     Some(state) => match state.lock() {

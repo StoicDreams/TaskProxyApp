@@ -128,6 +128,16 @@ cargo intall trunk
 cargo install tauri-cli
 ```
 
+### Updates
+
+Commands to run to update tools and dependencies
+
+Update trunk
+
+```termanal
+cargo install --locked trunk
+```
+
 ### Build Project
 
 ```terminal
