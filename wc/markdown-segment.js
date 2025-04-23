@@ -34,6 +34,10 @@
             return t._currentOption.replace('{}', input);
         },
         connected: function (t) {
+            console.log('----CONNECTED---');
+            if (t._skipReconnect) {
+                return;
+            }
             let md = t.dataset.markdown;
             t.setMarkdown(md || '');
             t._input.addEventListener('input', ev => {
@@ -60,7 +64,10 @@
                 }
             });
         },
-        disconnected: function (t) { },
+        disconnected: function (t) {
+            t._skipReconnect = true;
+            console.log('----DISCONNECTED---');
+        },
         setMarkdown: function (markdown) {
             let t = this;
             t._markdown = markdown;
@@ -105,6 +112,11 @@
         },
         render: function () {
             let t = this;
+            console.log('render setHTML', t._content.setHtml);
+            if (!t._content.setHtml) {
+                setTimeout(() => t.render(), 100);
+                return;
+            }
             t._content.setHtml('');
             let mdt = t.getAttribute('mdt');
             switch (mdt) {

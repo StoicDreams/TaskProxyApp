@@ -16,3 +16,24 @@
     width: 100%;
     z-index: 100;
 }
+
+.moving {
+    z-index: 1;
+    position: fixed !important;
+    opacity: 0.5;
+    transform: scale(0.8);
+    pointer-events: none;
+    cursor: move;
+}
+
+body.dragging * {
+    pointer-events: none;
+}
+
+.placeholder {
+    display: block;
+    border: 5px dashed var(--color-info);
+    background-color: var(--theme-color, var(--color-warning));
+    height: 30px;
+    opacity: 0.5;
+}
