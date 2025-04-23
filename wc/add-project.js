@@ -18,14 +18,12 @@
                 }
                 alert('Selecting folder', 'info');
                 let result = await webui.proxy.addProject(name);
-                console.log('Got result', result);
                 if (!result) return;
                 alert(result, 'success');
                 webui.setData('home-state', 'project-added');
                 webui.setData('new-project-name', '');
             }, alert));
             function alert(ex, theme) {
-                console.log('Alert', ex);
                 t._alert.setValue({ text: ex, theme: theme || 'danger' });
             }
         },

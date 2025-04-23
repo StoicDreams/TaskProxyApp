@@ -34,7 +34,6 @@
             return t._currentOption.replace('{}', input);
         },
         connected: function (t) {
-            console.log('----CONNECTED---');
             if (t._skipReconnect) {
                 return;
             }
@@ -56,7 +55,6 @@
             });
             t._options.setOptions(segmentOptions);
             t._options.addEventListener('change', ev => {
-                console.log('options changed', ev, t._options.value);
                 if (t._currentOption !== t._options.value) {
                     t._currentOption = t._options.value;
                     let markdown = t.buildFinalMarkdown(t._input.value);
@@ -66,13 +64,11 @@
         },
         disconnected: function (t) {
             t._skipReconnect = true;
-            console.log('----DISCONNECTED---');
         },
         setMarkdown: function (markdown) {
             let t = this;
             t._markdown = markdown;
             let foundMatch = false;
-            console.log('Setting markdown', markdown);
             segmentOptions.forEach(option => {
                 if (foundMatch) return;
                 let [left, right] = option.value.split('{}');
@@ -80,8 +76,6 @@
                     foundMatch = true;
                     t._currentOption = option.value;
                     t._inputValue = markdown.substring(left.length, markdown.length - right.length);
-                    console.log('found match', option, t._currentOption, t._options, t._options.value);
-                    console.log('input value', t._inputValue);
                     t.setOption();
                 }
             });
@@ -95,11 +89,8 @@
         },
         setOption: function () {
             let t = this;
-            console.log('set option %o', t._options.value, t._currentOption);
             if (t._options.value !== t._currentOption) {
-                console.log('is connected', t._options._isConnected, !t._options._optionsSet);
                 t._options.value = t._currentOption;
-                console.log('set match', t._options.value);
             }
             if (t._options.value !== t._currentOption) {
                 webui.log.warn('option failed to set %o', t._currentOption);
@@ -112,7 +103,6 @@
         },
         render: function () {
             let t = this;
-            console.log('render setHTML', t._content.setHtml);
             if (!t._content.setHtml) {
                 setTimeout(() => t.render(), 100);
                 return;
@@ -169,7 +159,7 @@ display:none;
 </div>
 </div>
 <aside>
-<webui-button start-icon="edit" theme="info"></webui-button>
+<webui-button class="drag-handle" title="Click to edit, drag to move" start-icon="edit" theme="info"></webui-button>
 </aside>
 `
     });

@@ -128,6 +128,8 @@
             comp.appendChild(segment);
             segment.addEventListener('mousedown', ev => {
                 if (ev.buttons !== 1 || mouseisdown) return;
+                const target = webui.closest(ev, '.drag-handle');
+                if (!target) return;
                 mouseisdown = true;
                 let cs = segment.getClientRects()[0];
                 offsetX = ev.clientX - cs.x;

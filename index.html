@@ -95,7 +95,7 @@
         {
             // Send external links to OS to open in default app.
             document.body.addEventListener('click', ev => {
-                const target = ev.composedPath()[0].closest('a') || ev.target.closest('a');
+                const target = webui.closest(ev, 'a');
                 if (!target) return;
                 let href = target.getAttribute('href');
                 if (!href || href.split('://').length === 1) return;
