@@ -25,7 +25,6 @@ A key feature of Task Proxy is the ability to allow teams and developers to crea
 - Reporting components generated from script results or API endpoint results.
 - Scoped variables for storing common, dev-specific, or secret data values.
 - Script templating allowing variables editable in UI
-- Easily update local environment variables as well as Azure App Config services that your local projects connect to.
 - Event driven triggers to run specified scripts on specified events (file updates, button in UI, git commit, etc).
 - Support for Windows 10/11, Mac, Linux
 

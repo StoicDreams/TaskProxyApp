@@ -21,7 +21,14 @@
         setMarkdown(md);
     }
     function setupBar(isEnd) {
+        let wrap = webui.create('webui-flex', { column: true, gap: 0 });
         let bar = webui.create('webui-flex', { justify: 'right' });
+        wrap.appendChild(bar);
+        if (isEnd) {
+            bar.before(webui.create('webui-line'));
+        } else {
+            bar.after(webui.create('webui-line'));
+        }
         let btnSave = webui.create('webui-button', {
             html: 'Save', title: "Save Page", 'start-icon': 'save', theme: 'primary'
         });
@@ -30,7 +37,10 @@
             let md = [];
             comp.querySelectorAll('app-markdown-segment').forEach(segment => {
                 if (segment.parentNode !== comp) return;
-                md.push(segment.getMarkdown());
+                let markdown = segment.getMarkdown();
+                if (markdown) {
+                    md.push(markdown);
+                }
             });
             let result = await webui.proxy.saveProjectFile(myFile, md.join('\n\n').trim());
             if (result) {
@@ -52,7 +62,7 @@
         });
         bar.appendChild(btnAdd);
         bar.appendChild(btnSave);
-        return bar;
+        return wrap;
     }
     let topBar = setupBar(false);
     let bottomBar = setupBar(true);

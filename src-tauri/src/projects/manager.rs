@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::prelude::*;
 use tauri_plugin_dialog::DialogExt;
 
@@ -138,6 +136,10 @@ pub(crate) async fn save_project_file(
     file_path: String,
     contents: String,
 ) -> Result<String, String> {
+    let mut contents = contents.to_owned();
+    if !contents.ends_with('\n') {
+        contents = format!("{}\n", contents);
+    }
     let project_path = {
         let project_state = state.lock().map_err(|err| {
             format!(

@@ -65,6 +65,7 @@
         </header>
         <noscript>Javascript is required to view this site</noscript>
         <webui-page-footer copyright="2016" company="Stoic Dreams">
+            <webui-line></webui-line>
             <webui-next-page theme="tertiary" data-subscribe="page-next-page"></webui-next-page>
             <webui-flex class="my-3" justify="center">
                 <webui-link href="/about" icon="exclamation|shape:circle|backing|bordered">About {APP_NAME}</webui-link>
@@ -101,7 +102,7 @@
                 if (!href || href.split('://').length === 1) return;
                 ev.stopPropagation();
                 ev.preventDefault();
-                webui.proxy.opener.openUrl(href);
+                webui.proxy.openUrl(href);
                 return false;
             });
             // Pause any attempts to navigate away from app.

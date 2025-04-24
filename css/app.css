@@ -37,3 +37,8 @@ body.dragging * {
     height: 30px;
     opacity: 0.5;
 }
+
+app-nav-preview {
+    display: flex;
+    flex-direction: column;
+}

@@ -1,3 +1,3 @@
 <webui-data data-page-title="Project Navigation" data-page-subtitle="Manage pages for this project"></webui-data>
 
-## Coming Soon!
+<app-nav-manager></app-nav-manager>

@@ -79,25 +79,25 @@ impl ProjectData {
     }
 }
 
-impl ProjectNavItem {
-    pub fn new() -> Self {
-        let url = format!("/{}", newid());
-        ProjectNavItem {
-            name: String::new(),
-            icon: String::from("star|backing|theme:primary|shape:circle"),
-            url: Some(url),
-            children: None,
-        }
-    }
-    pub fn group() -> Self {
-        ProjectNavItem {
-            name: String::new(),
-            icon: String::from("star|backing|theme:primary|shape:circle"),
-            url: None,
-            children: Some(Vec::new()),
-        }
-    }
-}
+// impl ProjectNavItem {
+//     pub fn new() -> Self {
+//         let url = format!("/{}", newid());
+//         ProjectNavItem {
+//             name: String::new(),
+//             icon: String::from("star|backing|theme:primary|shape:circle"),
+//             url: Some(url),
+//             children: None,
+//         }
+//     }
+//     pub fn group() -> Self {
+//         ProjectNavItem {
+//             name: String::new(),
+//             icon: String::from("star|backing|theme:primary|shape:circle"),
+//             url: None,
+//             children: Some(Vec::new()),
+//         }
+//     }
+// }
 
 impl TaskProxyData {
     pub fn new() -> Self {

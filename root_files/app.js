@@ -100,6 +100,8 @@
             if (!webui.projectData || !webui.projectData.id) {
                 return;
             }
+            webui.setData('app-nav-routes', []);
+            webui.setData('app-nav-routes', buildNav(webui.projectData.navigation));
             return tauri.core.invoke('save_project_data', { data: webui.projectData }).catch(errHandler);
         }
         setSecurityKey(secKey, errHandler) {

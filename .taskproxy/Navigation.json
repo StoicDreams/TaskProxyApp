@@ -4,5 +4,23 @@
     "icon": "star|backing|theme:primary|shape:circle",
     "url": "/8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920",
     "children": null
+  },
+  {
+    "name": "Folder",
+    "icon": "diamond|shape:badge|backing|inverted|theme:success|bordered",
+    "url": null,
+    "children": []
+  },
+  {
+    "name": "Page",
+    "icon": "star|theme:warning",
+    "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
+    "children": null
+  },
+  {
+    "name": "Atat",
+    "icon": "star",
+    "url": "/818f2662-c736-4656-853e-0d6cc83e1832",
+    "children": null
   }
 ]
