@@ -169,12 +169,6 @@ pub(crate) async fn save_project_file(
             file_path
         ));
     }
-    if file_path.starts_with(".") {
-        return Err(format!(
-            "Save Project File Failed: File path cannot start with a period:{}",
-            file_path
-        ));
-    }
     let proj_path = PathBuf::from(project_path);
     let file = proj_path.join(file_path);
     if file.extension().is_none() {
