@@ -2,4 +2,4 @@
 
 ## View and Manage Your Projects .md docs
 
-Coming soon!
+<app-doc-manager></app-doc-manager>

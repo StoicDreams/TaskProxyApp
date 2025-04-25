@@ -7,7 +7,7 @@
  style="float:right;margin-top:-60px"
  />
 
-[Version: 0.1.20](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.21](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
@@ -18,7 +18,7 @@ This project is a desktop application targeted towards software developers and p
 
 A key feature of Task Proxy is the ability to allow teams and developers to create and share reports, scripts, automation, and onboarding workflows to help new team members get setup quickly, and help assure developers stays in sync as project configurations are changed.
 
-<div style="clear:both" />
+<div style="clear:both"></div>
 
 ## Expected launch features include
 

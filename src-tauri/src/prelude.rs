@@ -17,7 +17,10 @@ pub(crate) use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 pub(crate) use std::time::Duration;
-pub(crate) use std::{fs, io, path::PathBuf};
+pub(crate) use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 pub(crate) use tauri::{AppHandle, Manager, State};
 pub(crate) use tokio::{join, task, time::sleep};
 pub(crate) use uuid::Uuid;

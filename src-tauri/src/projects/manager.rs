@@ -61,6 +61,9 @@ pub(crate) async fn get_project_data(
                 }
             }
         }
+        {
+            data.docs = get_project_docs(&data.path).await;
+        }
         data
     })
     .await
@@ -116,12 +119,12 @@ pub(crate) async fn get_project_file(
             "Get Project File: Unable to load page data, project not loaded.",
         ));
     }
+    println!("Get project file: {} - {}", project_path, file_path);
     if file_path.contains("./") || file_path.contains(".\\") {
         return Err(String::from("Get Project File: Invalid file path."));
     }
     let proj_path = PathBuf::from(project_path);
-    let tproot = proj_path.join(".taskproxy");
-    let file = tproot.join(file_path);
+    let file = proj_path.join(file_path);
     if !file.is_file() {
         return Err(String::from("Get Project File: File not found"));
     }
@@ -173,8 +176,7 @@ pub(crate) async fn save_project_file(
         ));
     }
     let proj_path = PathBuf::from(project_path);
-    let tproot = proj_path.join(".taskproxy");
-    let file = tproot.join(file_path);
+    let file = proj_path.join(file_path);
     if file.extension().is_none() {
         return Err(String::from(
             "Save Project File Failed: File path is missing a file extension",
@@ -335,4 +337,30 @@ pub(crate) async fn save_project_data(
         Err(err) => eprintln!("Error converting variable values to json: {}", err),
     }
     Ok(format!("Project data saved"))
+}
+
+async fn get_project_docs(project_path: &str) -> Vec<String> {
+    let mut docs = vec![];
+    let root = PathBuf::from(project_path);
+    collect_md_files(&root, &root, &mut docs);
+    docs
+}
+
+fn collect_md_files(current_path: &Path, root: &Path, docs: &mut Vec<String>) {
+    if let Ok(entries) = fs::read_dir(current_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+
+            if path.is_dir() {
+                if path.file_name().map_or(false, |name| name == ".taskproxy") {
+                    continue;
+                }
+                collect_md_files(&path, root, docs);
+            } else if path.extension().map_or(false, |ext| ext == "md") {
+                if let Ok(relative_path) = path.strip_prefix(root) {
+                    docs.push(relative_path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
 }

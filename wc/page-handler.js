@@ -13,7 +13,7 @@
     let segments = [];
     async function loadProject() {
         myId = location.pathname.substring(1);
-        myFile = `pages/${myId}.md`;
+        myFile = `.taskproxy/pages/${myId}.md`;
         let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
         if (!md) {
             md = '';
