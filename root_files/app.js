@@ -4,6 +4,7 @@
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
     let firstLoad = true;
+    let isLoading = {};
     const defaultErrHandler = msg => webui.alert(msg);
     const cache = {};
     let isLoadingDialog = null;
@@ -78,13 +79,20 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('get_project_data', { project: project }).catch(errHandler);
         }
-        getProjects(errHandler) {
+        async getProjects(errHandler) {
             errHandler ??= defaultErrHandler;
             if (firstLoad) {
                 firstLoad = false;
-                return tauri.core.invoke('load_projects', {}).catch(errHandler);
+                isLoading.projects = true;
+                let projects = await tauri.core.invoke('load_projects', {}).catch(errHandler);
+                delete isLoading.projects;
+                return projects;
             } else {
-                return tauri.core.invoke('get_projects', {}).catch(errHandler);
+                let counter = 0;
+                while (counter++ < 1000 && isLoading.projects) {
+                    await webui.wait(10);
+                }
+                return await tauri.core.invoke('get_projects', {}).catch(errHandler);
             }
         }
         hasSecurityKey(errHandler) {
@@ -220,4 +228,104 @@
             setTimeout(() => runWhenWebUIReady(action), 10);
         }
     }
+}
+
+function getDragNDropSetup(getSegments) {
+    const setup = (segment, onSet) => {
+        if (segment._isDNDEnabled) return;
+        segment._isDNDEnabled = true;
+        let canStart = false;
+        let ismoving = false;
+        let mouseisdown = false;
+        let offsetX = 0, offsetY = 0;
+        let placeholder = webui.create('div', { class: 'placeholder', theme: 'success', 'moving': true });
+        let segments = [];
+        function onMove(ev) {
+            if (!mouseisdown) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (ismoving) {
+                let left = ev.clientX - offsetX;
+                let top = ev.clientY - offsetY;
+                segment.style.left = `${left}px`;
+                segment.style.top = `${top}px`;
+                let closest = null;
+                let minDistance = Infinity;
+                let aboveOrBelow = null;
+                segments.forEach(el => {
+                    if (el === segment) {
+                        return;
+                    }
+                    const rect = el.getBoundingClientRect();
+                    const centerY = rect.top + rect.height / 2;
+                    const distance = Math.abs(ev.clientY - centerY);
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        closest = el;
+                        aboveOrBelow = closest.getAttribute('place') || (ev.clientY < centerY ? 'above' : 'below');
+                    }
+                });
+                if (closest) {
+                    if (aboveOrBelow === 'below') {
+                        closest.after(placeholder);
+                    } else {
+                        closest.before(placeholder);
+                    }
+                }
+                return;
+            }
+            if (canStart) {
+                ismoving = true;
+                canStart = false;
+                document.body.classList.add('dragging');
+                segment.style.width = `${segment.clientWidth}px`;
+                segment.style.height = `${segment.clientHeight}px`;
+                segment.classList.add('moving');
+                segment.after(placeholder);
+                if (document.getSelection) {
+                    document.getSelection().empty();
+                } else if (window.getSelection) {
+                    window.getSelection().removeAllRanges();
+                }
+            }
+        }
+        function onRemove(ev) {
+            mouseisdown = false;
+            ismoving = false;
+            canStart = false;
+            placeholder.after(segment);
+            if (typeof onSet === 'function') {
+                onSet();
+            }
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onRemove);
+            segment.classList.remove('moving');
+            segment.style.left = '';
+            segment.style.top = '';
+            segment.style.width = '';
+            segment.style.height = '';
+            placeholder.remove();
+            document.body.classList.remove('dragging');
+        }
+        segment.addEventListener('mousedown', ev => {
+            if (ev.buttons !== 1 || mouseisdown) return;
+            const target = webui.closest(ev, '.drag-handle');
+            if (!target) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            mouseisdown = true;
+            let cs = segment.getClientRects()[0];
+            offsetX = ev.clientX - cs.x;
+            offsetY = ev.clientY - cs.y;
+            setTimeout(() => {
+                if (mouseisdown) {
+                    segments = getSegments(target);
+                    canStart = true;
+                }
+            }, 200);
+            document.addEventListener("mousemove", onMove);
+            document.addEventListener("mouseup", onRemove, { once: true });
+        });
+    };
+    return setup;
 }

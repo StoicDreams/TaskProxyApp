@@ -2,33 +2,43 @@
 "use strict"
 webui.define('app-nav-preview', {
     preload: 'fa paper nav-group nav-link',
+    watched: {},
+    constructor(t) {
+        t.dragNDrop = getDragNDropSetup(t.getSegments);
+    },
     connected: (t) => {
-        t.watched = {};
     },
     setNavRoutes: function (data) {
-        console.error('set nav routes', data);
         this.buildNav(data);
     },
     buildLink: function (parent, link) {
         let t = this;
         let el = null;
         if (link.url) {
-            el = document.createElement('webui-nav-link');
-            //el.setAttribute('url', link.url);
-        } else if (link.children) {
-            el = document.createElement('webui-nav-group');
+            el = webui.create('webui-nav-link');
+            t.dragNDrop(el);
+        } else {
+            if (!link.children) {
+                link.children = [];
+            }
+            let beforeFolder = webui.create('webui-nav-link', { class: 'placeholder', message: 'Before Folder', place: 'above' });
+            parent.appendChild(beforeFolder);
+            el = webui.create('webui-nav-group', { show: true, disabled: true });
+            el.appendChild(webui.create('webui-nav-link', { class: 'placeholder', message: 'Folder Start', place: 'below' }));
             link.children.forEach(child => {
                 t.buildLink(el, child);
             });
-        } else {
-            console.error('Invalid nav item', link);
-            return;
+            let afterFolder = webui.create('webui-nav-link', { class: 'placeholder', message: 'Folder End', place: 'above' });
+            el.appendChild(afterFolder);
+            t.dragNDrop(el, () => {
+                el.before(beforeFolder);
+                el.after(afterFolder);
+            });
         }
         if (!link.id) {
             link.id = webui.uuid();
         }
         let watchedData = webui.watchData(link, changes => {
-            console.log("changed", changes.property, changes.newValue);
             switch (changes.property) {
                 case 'name':
                     el.setAttribute('name', changes.newValue);
@@ -43,11 +53,24 @@ webui.define('app-nav-preview', {
             el.setAttribute('icon', link.icon);
         }
         el.setAttribute('name', link.name);
-        el.addEventListener('click', _ => {
-            let ev = new CustomEvent('nav-preview-click', { detail: watchedData, bubbles: true });
+        el.addEventListener('click', ev => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            ev = new CustomEvent('nav-preview-click', { detail: watchedData, bubbles: true });
             el.dispatchEvent(ev);
         });
+        el._linkData = link;
+        el.classList.add('drag-handle');
         parent.appendChild(el);
+        if (!link.url) {
+            parent.appendChild(webui.create('webui-nav-link', { class: 'placeholder', message: 'After Folder', place: 'below' }));
+        }
+    },
+    getSegments: function (el) {
+        let t = el.closest('app-nav-preview');
+        let segments = [];
+        segments = Array.from(t.querySelectorAll('webui-nav-link'));
+        return segments;
     },
     buildNav: function (navJson, openLast) {
         if (!navJson) return;
@@ -68,7 +91,9 @@ webui.define('app-nav-preview', {
             let openNav = openLast ? nav[nav.length - 1] : nav[0];
             let watched = t.watched[openNav.id];
             let ev = new CustomEvent('nav-preview-click', { detail: watched, bubbles: true });
-            t.dispatchEvent(ev);
+            setTimeout(() => {
+                t.dispatchEvent(ev);
+            }, 100);
         }
     }
 });

@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.19"
+version = "0.1.20"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -20,11 +20,10 @@ name = "task_proxy_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.1", features = [] }
+tauri-build = { version = "2.2", features = [] }
 
 [dependencies]
-tauri = { version = "2.4", features = [
-    "custom-protocol",
+tauri = { version = "2.5", features = [
     "devtools",
     "rustls-tls",
     "tray-icon",
@@ -58,7 +57,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tauri-plugin-positioner = { version = "2.0.0", features = ["tray-icon"] }
 tauri-plugin-window-state = "2"
 
-[features]
+# [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
-custom-protocol = ["tauri/custom-protocol"]
+# custom-protocol = ["tauri/custom-protocol"]

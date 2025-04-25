@@ -9,6 +9,7 @@
     let markdown = '';
     let myId = '';
     let myFile = '';
+    let dragNDrop = getDragNDropSetup((_) => segments);
     let segments = [];
     async function loadProject() {
         myId = location.pathname.substring(1);
@@ -57,7 +58,7 @@
             } else {
                 bar.after(segment);
             }
-            addSegmentEvents(segment);
+            dragNDrop(segment);
             segments = Array.from(comp.querySelectorAll('app-markdown-segment'));
         });
         bar.appendChild(btnAdd);
@@ -66,96 +67,13 @@
     }
     let topBar = setupBar(false);
     let bottomBar = setupBar(true);
-    function addSegmentEvents(segment) {
-        let canStart = false;
-        let ismoving = false;
-        let mouseisdown = false;
-        let offsetX = 0, offsetY = 0;
-        let placeholder = webui.create('div', { class: 'placeholder' });
-        function onMove(event) {
-            if (!mouseisdown) return;
-            if (ismoving) {
-                let left = event.clientX - offsetX;
-                let top = event.clientY - offsetY;
-                segment.style.left = `${left}px`;
-                segment.style.top = `${top}px`;
-                let closest = null;
-                let minDistance = Infinity;
-                let aboveOrBelow = null;
-                segments.forEach(el => {
-                    if (el === segment) {
-                        return;
-                    }
-                    const rect = el.getBoundingClientRect();
-                    const centerY = rect.top + rect.height / 2;
-                    const distance = Math.abs(event.clientY - centerY);
-                    if (distance < minDistance) {
-                        minDistance = distance;
-                        closest = el;
-                        aboveOrBelow = event.clientY < centerY ? 'above' : 'below';
-                    }
-                });
-                if (aboveOrBelow === 'below') {
-                    closest.after(placeholder);
-                } else {
-                    closest.before(placeholder);
-                }
-                return;
-            }
-            if (canStart) {
-                ismoving = true;
-                canStart = false;
-                document.body.classList.add('dragging');
-                segment.style.width = `${segment.clientWidth}px`;
-                segment.style.height = `${segment.clientHeight}px`;
-                segment.classList.add('moving');
-                segment.before(placeholder);
-                if (document.getSelection) {
-                    document.getSelection().empty();
-                } else if (window.getSelection) {
-                    window.getSelection().removeAllRanges();
-                }
-            }
-        }
-        function onRemove(ev) {
-            mouseisdown = false;
-            placeholder.before(segment);
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onRemove);
-            segment.classList.remove('moving');
-            segment.style.left = '';
-            segment.style.top = '';
-            segment.style.width = '';
-            segment.style.height = '';
-            placeholder.remove();
-            ismoving = false;
-            canStart = false;
-            document.body.classList.remove('dragging');
-        }
-        segment.addEventListener('mousedown', ev => {
-            if (ev.buttons !== 1 || mouseisdown) return;
-            const target = webui.closest(ev, '.drag-handle');
-            if (!target) return;
-            mouseisdown = true;
-            let cs = segment.getClientRects()[0];
-            offsetX = ev.clientX - cs.x;
-            offsetY = ev.clientY - cs.y;
-            setTimeout(() => {
-                if (mouseisdown) {
-                    canStart = true;
-                }
-            }, 200);
-            document.addEventListener("mousemove", onMove);
-            document.addEventListener("mouseup", onRemove, { once: true });
-        });
-    }
     function setMarkdown(md) {
         markdown = md;
         comp.innerHTML = '';
         convertMarkdownToSegments(markdown);
         comp.appendChild(topBar);
         segments.forEach(segment => {
-            addSegmentEvents(segment);
+            dragNDrop(segment);
             comp.appendChild(segment);
         });
         comp.appendChild(bottomBar);

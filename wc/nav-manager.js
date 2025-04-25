@@ -18,7 +18,7 @@
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: '',
+        preload: 'webui-icon-search',
         nav: [],
         constructor: (t) => {
             let link = {
@@ -59,20 +59,28 @@
                 t.loadNavigation();
             });
             t._btnDelete.addEventListener('click', _ => {
-                for (let index = 0; index < t.nav.length; ++index) {
-                    if (link.id === t.nav[index].id) {
-                        t.nav.splice(index, 1);
-                        console.log('deleted', index, link);
-                        t._navPreview.buildNav(t.nav, true);
-                        return;
+                t.updateNav();
+                function checkChildren(list) {
+                    for (let index = 0; index < list.length; ++index) {
+                        if (link.id === list[index].id) {
+                            list.splice(index, 1);
+                            return;
+                        }
+                        if (list[index].children) {
+                            checkChildren(list[index]);
+                        }
                     }
                 }
+                checkChildren(t.nav);
+                t._navPreview.buildNav(t.nav, true);
             });
             t._btnAddFolder.addEventListener('click', _ => {
+                t.updateNav();
                 t.nav.push(createNewFolder());
                 t._navPreview.buildNav(t.nav, true);
             });
             t._btnAddPage.addEventListener('click', _ => {
+                t.updateNav();
                 t.nav.push(createNewPage());
                 t._navPreview.buildNav(t.nav, true);
             });
@@ -84,18 +92,31 @@
         loadNavigation() {
             let t = this;
             if (!t._navPreview.setNavRoutes || webui.projectData.navigation === undefined) {
-                console.log('nav preview not ready');
                 setTimeout(() => t.loadNavigation(), 10);
                 return;
             }
-            console.log('Load Navigation %o', webui.projectData.navigation);
             t.nav = webui.clone(webui.projectData.navigation);
             t._navPreview.setNavRoutes(t.nav);
         },
+        updateNav() {
+            let t = this;
+            function getChildNav(parent) {
+                let nav = [];
+                parent.childNodes.forEach(node => {
+                    let link = node._linkData;
+                    if (!link) return;
+                    nav.push(link);
+                    if (link.url) return;
+                    link.children = getChildNav(node);
+                });
+                return nav;
+            }
+            t.nav = getChildNav(t._navPreview);
+        },
         async saveNavigation() {
             let t = this;
+            t.updateNav();
             webui.projectData.navigation = webui.clone(t.nav);
-            console.log('save navigation', webui.projectData.navigation);
             await webui.proxy.saveProjectData();
         },
         connected: function (t) {

@@ -3,8 +3,8 @@
 {
     function generateSecurityKey() {
         let segments = [];
-        for (let index = 0; index < 50; ++index) {
-            segments.push(generateSecurityKeySegment(20));
+        for (let index = 0; index < 5; ++index) {
+            segments.push(generateSecurityKeySegment(4));
         }
         return segments.join(' ');
     }
@@ -45,8 +45,8 @@
             }, handleError));
             t._sav.addEventListener('click', webui.eventSoloProcess(async _ => {
                 let secKey = `${t._input.value}`.trim();
-                if (secKey.length < 100) {
-                    t._alert.setValue({ text: 'Security key must be at least 100 characters in length.', theme: 'danger' });
+                if (secKey.length < 20) {
+                    t._alert.setValue({ text: 'Security key must be at least 20 characters in length.', theme: 'danger' });
                     return;
                 }
                 t._alert.setValue({ text: 'Setting key, please wait', theme: 'info' });

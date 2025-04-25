@@ -2,7 +2,7 @@
 target = "./index.html"
 
 [watch]
-ignore = ["./src-tauri", "./Docs"]
+watch = ["./src", "./wc", "./root_files", "./d", "./css"]
 
 [serve]
 ws_protocol = "ws"

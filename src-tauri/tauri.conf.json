@@ -4,9 +4,9 @@
   "version": "0.1.20",
   "identifier": "com.task-proxy.app",
   "build": {
-    "beforeDevCommand": "trunk serve --watch ../",
+    "beforeDevCommand": "trunk serve",
     "beforeBuildCommand": "trunk build --release",
-    "devUrl": "http://localhost:1426",
+    "devUrl": "http://127.0.0.1:1426",
     "frontendDist": "../dist",
     "features": []
   },

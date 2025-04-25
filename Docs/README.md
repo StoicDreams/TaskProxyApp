@@ -145,21 +145,7 @@ cargo tauri build
 
 ### Run Project
 
-For development, we want to run our project in 2 separate processes.
-
-The first process will run the UI frontend and watch for updates to refresh the UI as we make updates without requiring a full project reload.
-
-The second process will run the Tauri app and watch for updates to Tauri-specific code and refresh the app as we make changes to src-tauri/* content.
-
-**Run me first!**
-
-```terminal
-trunk serve --watch ".\" --port 1426
-```
-
 Use `cargo tauri dev` to build and run the Tauri app being developed.
-
-**Run me second!**
 
 ```terminal
 cargo tauri dev

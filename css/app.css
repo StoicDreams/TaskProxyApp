@@ -30,14 +30,6 @@ body.dragging * {
     pointer-events: none;
 }
 
-.placeholder {
-    display: block;
-    border: 5px dashed var(--color-info);
-    background-color: var(--theme-color, var(--color-warning));
-    height: 30px;
-    opacity: 0.5;
-}
-
 app-nav-preview {
     display: flex;
     flex-direction: column;

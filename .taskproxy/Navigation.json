@@ -9,18 +9,19 @@
     "name": "Folder",
     "icon": "diamond|shape:badge|backing|inverted|theme:success|bordered",
     "url": null,
-    "children": []
+    "children": [
+      {
+        "name": "Page",
+        "icon": "bell|theme:warning|backing|inverted|shape:badge|shade:duo",
+        "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
+        "children": null
+      }
+    ]
   },
   {
-    "name": "Page",
-    "icon": "star|theme:warning",
-    "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
-    "children": null
-  },
-  {
-    "name": "Atat",
-    "icon": "star",
-    "url": "/818f2662-c736-4656-853e-0d6cc83e1832",
+    "name": "New Page",
+    "icon": "hierarchy|fill|bordered|inverted|theme:info",
+    "url": "/901091c2-ba23-481a-8fd2-534467758277",
     "children": null
   }
 ]

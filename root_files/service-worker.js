@@ -43,10 +43,16 @@ async function onFetch(event) {
     return cachedResponse || fetch(request);
 }
 
+function urlNeedsCaching(url) {
+    if (url.startsWith('https://cdn.myfi.ws')) return false;
+    if (url.startsWith('http://127.0.0.1:1426')) return false;
+    return true;
+}
+
 /// Applying cache busting to CDN content to assure Web UI components are always up to date with the latest changes.
 function applyCacheBusting(request) {
     try {
-        if (!request.url.startsWith('https://cdn.myfi.ws')) {
+        if (urlNeedsCaching(request.url)) {
             return request;
         }
         const url = new URL(request.url);
