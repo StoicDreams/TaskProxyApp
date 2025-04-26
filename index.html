@@ -45,8 +45,10 @@
             </webui-nav-link>
             <app-project-dropdown></app-project-dropdown>
             <webui-nav data-subscribe="app-nav-routes:setNavRoutes"></webui-nav>
+            <webui-flex grow></webui-flex>
+            <app-project-links></app-project-links>
         </webui-drawer>
-        <webui-drawer slot="right" class="shared elevation-20" data-stopclick data-moveable data-state="slot">
+        <webui-drawer slot="right" class="shared elevation-20" data-stopclick data-moveable data-dockable data-state="slot">
         </webui-drawer>
         <header slot="header">
             <button aria-label="open navigation menu" data-toggleclass=".nav|open" class="elevation-10 pa-1 mx-1">
@@ -55,11 +57,13 @@
             <h1 data-subscribe="page-title:innerHTML">Task Proxy</h1>
             <h2 data-subscribe="page-subtitle:innerHTML"></h2>
             <webui-flex grow></webui-flex>
+            <app-var-manager title="Manage Variables" data-toggleclass=".shared|open"></app-var-manager>
+            <app-terminals title="Terminals" data-toggleclass=".shared|open"></app-terminals>
+            <webui-alerts title="View your notifications" data-title="My Alerts" data-toggleclass=".shared|open"></webui-alerts>
             <app-save-button></app-save-button>
             <webui-feedback title="Provide us your feedback" data-post="https://api.myfi.ws/feedback/new" data-json-name="message">
                 <p>You can also come <a href="https://discord.com/channels/972856291909332993/1025781071608037466">chat with us on the Stoic Dreams discord server.</a></p>
             </webui-feedback>
-            <webui-alerts title="View your notifications" data-title="My Alerts" data-toggleclass=".shared|open"></webui-alerts>
             <webui-myfi-info></webui-myfi-info>
         </header>
         <noscript>Javascript is required to view this site</noscript>

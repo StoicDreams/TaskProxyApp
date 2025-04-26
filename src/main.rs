@@ -2,7 +2,7 @@
 mod prelude;
 use prelude::*;
 
-pub(crate) const VERSION: &str = "0.1.22";
+pub(crate) const VERSION: &str = "0.1.23";
 
 fn main() {
     // TODO

@@ -8,23 +8,6 @@
     const defaultErrHandler = msg => webui.alert(msg);
     const cache = {};
     let isLoadingDialog = null;
-    function buildNav(projectNav) {
-        let baseNav = [
-            {
-                name: "Docs",
-                icon: "star",
-                url: "/docs",
-                children: null
-            },
-            {
-                name: "Navigation",
-                icon: "star",
-                url: "/nav-manager",
-                children: null
-            },
-        ];
-        return projectNav.concat(baseNav);
-    }
     async function showLoading(during) {
         if (isLoadingDialog) {
             if (typeof during === 'function') {
@@ -109,7 +92,7 @@
                 return;
             }
             webui.setData('app-nav-routes', []);
-            webui.setData('app-nav-routes', buildNav(webui.projectData.navigation));
+            webui.setData('app-nav-routes', webui.projectData.navigation);
             return tauri.core.invoke('save_project_data', { data: webui.projectData }).catch(errHandler);
         }
         setSecurityKey(secKey, errHandler) {
@@ -188,7 +171,7 @@
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
             webui.projectData = projectData || { navigation: [] };
-            webui.setData('app-nav-routes', buildNav(webui.projectData.navigation));
+            webui.setData('app-nav-routes', webui.projectData.navigation);
             handlePagePath(webui.projectData.currentPage || '/');
         } catch (ex) {
             webui.alert(ex);

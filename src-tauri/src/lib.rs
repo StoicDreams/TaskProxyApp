@@ -119,6 +119,8 @@ pub fn run() {
             let nav_script = format!("window.location.replace('{}')", url_to_load);
             //std::thread::sleep(std::time::Duration::from_millis(100));
             let _ = window.eval(&nav_script);
+            #[cfg(debug_assertions)]
+            window.open_devtools();
         } else {
             println!("Could not get main window handle");
         }
