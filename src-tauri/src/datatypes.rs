@@ -36,7 +36,7 @@ pub(crate) struct ProjectData {
     pub docs: Vec<String>,
     pub navigation: Vec<ProjectNavItem>,
     pub variables: Vec<String>,
-    pub data: HashMap<String, String>,
+    pub data: HashMap<String, Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

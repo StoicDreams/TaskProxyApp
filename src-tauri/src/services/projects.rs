@@ -55,7 +55,7 @@ pub(crate) async fn get_project_data(
         {
             if !decrypted.is_empty() {
                 if let Ok(project_variables) =
-                    serde_json::from_slice::<HashMap<String, String>>(&decrypted)
+                    serde_json::from_slice::<HashMap<String, Value>>(&decrypted)
                 {
                     data.data = project_variables;
                 }

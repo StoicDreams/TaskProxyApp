@@ -11,7 +11,7 @@ pub mod common;
 pub mod datatypes;
 pub mod errors;
 pub mod prelude;
-pub mod projects;
+pub mod services;
 
 static DID_SAVE_ON_CLOSE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
@@ -139,15 +139,22 @@ pub fn run() {
             appdata::save_app_data,
             appdata::set_securitykey,
             appdata::sync_app_data,
-            projects::manager::greet,
-            projects::manager::add_project,
-            projects::manager::get_project_data,
-            projects::manager::get_project_file,
-            projects::manager::get_projects,
-            projects::manager::load_projects,
-            projects::manager::save_project_data,
-            projects::manager::save_project_file,
-            projects::manager::sync_project_data
+            services::git_controller::get_git_changes,
+            services::git_controller::get_git_file_diff,
+            services::git_controller::get_git_repos,
+            services::git_controller::git_commit,
+            services::git_controller::git_pull,
+            services::git_controller::git_push,
+            services::git_controller::git_sync,
+            services::projects::greet,
+            services::projects::add_project,
+            services::projects::get_project_data,
+            services::projects::get_project_file,
+            services::projects::get_projects,
+            services::projects::load_projects,
+            services::projects::save_project_data,
+            services::projects::save_project_file,
+            services::projects::sync_project_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

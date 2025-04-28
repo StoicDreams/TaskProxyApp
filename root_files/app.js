@@ -34,6 +34,61 @@
         openUrl = tauri.opener.openUrl;
         constructor() {
         }
+        git = {
+            commit: async (repo, files, message, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_commit', { repo: repo, files: files, message: message }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            getChanges: async (path, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('get_git_changes', { path: path }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            getFileDiff: async (repo, file, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('get_git_file_diff', { repo: repo, file: file }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            getRepos: async (path, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('get_git_repos', { path: path }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            pull: async (repo, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_pull', { repo: repo }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            push: async (repo, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_push', { repo: repo }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            sync: async (repo, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_sync', { repo: repo }).catch(errHandler);
+                if (!result) return;
+                return result;
+            }
+        }
+        projects = {
+            isLoaded: false,
+            runWhenLoaded: async (handler) => {
+                while (!webui.proxy.projects.isLoaded) {
+                    console.log('waiting for project to load');
+                    await webui.wait(10);
+                }
+                console.log('done waiting for project');
+                handler();
+            }
+        }
         async addProject(name, errHandler) {
             errHandler ??= defaultErrHandler;
             let result = await tauri.core.invoke('add_project', { name: name }).catch(errHandler);
@@ -171,8 +226,13 @@
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
             webui.projectData = projectData || { navigation: [] };
+            webui.proxy.projects.isLoaded = !!webui.projectData.id;
             webui.setData('app-nav-routes', webui.projectData.navigation);
-            handlePagePath(webui.projectData.currentPage || '/');
+            let startPage = webui.projectData.currentPage || '/';
+            webui.navigateTo('/');
+            setTimeout(() => {
+                handlePagePath(startPage);
+            }, 300);
         } catch (ex) {
             webui.alert(ex);
             handlePagePath('/');
