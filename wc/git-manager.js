@@ -288,7 +288,7 @@
                     return;
                 }
                 let repo = t._repos.value;
-                if (!repo) {
+                if (repo === undefined) {
                     t.setAlert('No repo is set!');
                     return;
                 }
