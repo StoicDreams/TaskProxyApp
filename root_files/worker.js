@@ -15,7 +15,7 @@ async function processMessage(run, data) {
         try {
             return { ok: true, msg: await proc(data) };
         } catch (ex) {
-            console.log('worker proc failed', ex);
+            console.error('worker proc failed', ex);
             return { ok: false, msg: ex };
         }
     }
@@ -67,6 +67,18 @@ const procs = {
                 ln.color = `#00000000`;
             }
             array.push(ln);
+        }
+        let fillTo = Math.max(result.new.length, result.old.length) + 10;
+        while (true) {
+            if (result.new.length < fillTo) {
+                buildLine(result.new);
+            }
+            if (result.old.length < fillTo) {
+                buildLine(result.old);
+            }
+            if (result.old.length >= fillTo && result.new.length >= fillTo) {
+                break;
+            }
         }
         return result;
     },

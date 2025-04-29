@@ -104,7 +104,6 @@
             }
             if (data.fileContent !== undefined) {
                 let result = await webui.proxy.worker.send('processFileDiff', data);
-                console.log('worker result', result);
                 t._viewOld.setLines(result.old);
                 t._viewNew.setLines(result.new);
             }
@@ -204,7 +203,6 @@
         },
         setAlert: function (msg, severity) {
             let t = this;
-            console.log('set alert', msg);
             t._alert.setValue(!msg ? null : { theme: severity, html: msg });
         },
         connected: function (t) {
@@ -216,12 +214,10 @@
                 t.loadRepoChanges();
             });
             t._viewNew.addEventListener('change', _ => {
-                console.log('new scroll change', t._viewNew.getScroll(), t._viewOld.getScroll());
                 if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
                 t._viewOld.setScroll(t._viewNew.getScroll());
             });
             t._viewOld.addEventListener('change', _ => {
-                console.log('old scroll change', t._viewNew.getScroll(), t._viewOld.getScroll());
                 if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
                 t._viewNew.setScroll(t._viewOld.getScroll());
             });
@@ -276,9 +272,7 @@
                     t.setAlert('No repo is set!');
                     return;
                 }
-                console.log('push');
                 let result = await webui.proxy.git.push(repo, msg => t.setAlert(msg));
-                console.log('result', result);
                 if (result) {
                     t.setAlert(result, 'success');
                 }
@@ -326,8 +320,8 @@ Select which files you want to commit, create your commit message, and press Com
 <webui-flex column>
 <h3></h3>
 <webui-grid columns="1fr 1fr">
-<webui-canvas theme="black" line-numbers class="view-old" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
-<webui-canvas theme="black" line-numbers class="view-new" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
+<webui-canvas height="60vh" theme="black" line-numbers class="view-old" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
+<webui-canvas height="60vh" theme="black" line-numbers class="view-new" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
 <webui-grid gap="0" columns="max-content 1fr" class="view-olds"></webui-grid>
 <webui-grid gap="0" columns="max-content 1fr" class="view-news"></webui-grid>
 </webui-grid>

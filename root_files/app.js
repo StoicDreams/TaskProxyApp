@@ -9,14 +9,19 @@
     const defaultErrHandler = msg => webui.alert(msg);
     const cache = {};
     let isLoadingDialog = null;
-    async function showLoading(during) {
+    async function showLoading(msg, during) {
+        if (typeof msg === 'function') {
+            during = msg;
+        }
+        let content = typeof msg === 'string' ? msg : 'Loading, please wait!';
         if (isLoadingDialog) {
             if (typeof during === 'function') {
                 during();
             }
             return;
         }
-        isLoadingDialog = webui.dialog({ isLoading: true });
+        console.log('show loading dialog');
+        isLoadingDialog = webui.dialog({ isLoading: true, content });
         if (typeof during === 'function') {
             if (handler.constructor == AsyncFunction) {
                 await during();
@@ -39,11 +44,14 @@
             worker.onmessage = (event) => {
                 if (!event.isTrusted) return;
                 let data = JSON.parse(event.data);
-                console.log(`Message received from worker : %o %o`, data, event);
                 if (data.id) {
                     messages[data.id] = data.message;
                 }
             };
+        }
+        loading = {
+            show: showLoading,
+            hide: hideLoading
         }
         worker = {
             send: (toRun, data) => {
@@ -255,9 +263,11 @@
     }
     async function loadProject(project) {
         if (cache.currentProject === project) return;
-        showLoading();
+        showLoading('Saving Project!');
         try {
-            await webui.proxy.saveProjectData();
+            webui.proxy.saveProjectData();
+            hideLoading();
+            showLoading('Loading Project!');
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
             webui.projectData = projectData || { navigation: [] };
@@ -300,7 +310,7 @@
     }
     async function runWhenWebUIReady(action) {
         try {
-            await showLoading();
+            await showLoading('Loading App!');
             action();
         } catch {
             setTimeout(() => runWhenWebUIReady(action), 10);

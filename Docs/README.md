@@ -14,7 +14,7 @@
 [gh-image]: https://github.com/stoicdreams/taskproxyapp/actions/workflows/deploy.yml/badge.svg
 [gh-checks]: https://github.com/stoicdreams/taskproxyapp/actions?query=branch%3Amain
 
-This project is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and project documentation and configurations.
+Task Proxy is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and project documentation and configurations.
 
 A key feature of Task Proxy is the ability to allow teams and developers to create and share reports, scripts, automation, and onboarding workflows to help new team members get setup quickly, and help assure developers stays in sync as project configurations are changed.
 
@@ -43,7 +43,7 @@ A key feature of Task Proxy is the ability to allow teams and developers to crea
 
 - Paste exported project, page, and unit templates to share.
 - View templates shared by others.
-- Vote on templates <i class="fa-duotone fa-thumbs-up"></i>.
+- Vote on templates.
 
 ## Expected Workflows
 
@@ -80,27 +80,23 @@ Reports are components that can use an API endpoint or script to generate report
 - Task Proxy can track multiple projects to be loaded and saved as desired.
 - Only 1 project can be loaded at a time.
 - Users will have the option of storing projects locally when using the standard (free) version of Task Proxy.
-  - The common expected usecase is to setup the root of a repository as a Task Proxy project. This way all associated project data is always syned with its respective repository and anyone who clones the repository will have access to the associated Task Proxy project.
-- Users will have the option of storing projects in the Cloud with a paid subscription. Cloud projects will store both pages and variables in the cloud.
-- Projects cannot have their storage location changed between being stored locally or in the Cloud.
+  - The common expected use case is to setup the root of a repository as a Task Proxy project. This way all associated project data is always synced with its respective repository and anyone who clones the repository will have access to the associated Task Proxy project.
+- Users will have the option of storing projects in the Cloud with a paid subscription. Cloud projects will store variables in the cloud.
 - Projects, pages, and components can be exported and imported into other projects.
-- Encryption keys are never passed to or stored in the Cloud. Projects are never decrypted in the Cloud.
-- Task Proxy will include logging to log anonymous usage patterns and bugs. These will be disabled by default, only enabling when the user opts-in for them, and will never send Project details, user information, or any other information that could be deemed sensitive information. The sole purpose of logging is to help gauge what features need priority based on usage, and track bugs so the software can be fixed and improved.
+- Encryption keys are never passed to or stored in the Cloud. Project data stored in the cloud is encrypted prior to transfer and are never decrypted in the Cloud.
 
 ## Changes from Legacy
 
-The original Task Proxy application was written using C#/.NET Blazor Maui. The current version is being rebuilt from the ground up to be built in Rust. Aside from the language changes there are a number of other key differences planned for how the application will function.
+The original Task Proxy application was written using C#/.NET Blazor Maui. The current version is being rebuilt from the ground up to be built in [Rust](https://www.rust-lang.org/) using the [Tauri framework](https://v2.tauri.app/), with [Web UI](https://webui.stoicdreams.com). Aside from the language changes there are a number of other key differences planned for how the application will function.
 
 Feature | Legacy - C# | Current - Rust | Reason for Change
 --- | --- | --- | ---
 Local Storage Folder | ./TaskProxyData | ./.taskproxy | More appropriate to match commonly used industry standard naming convention for folders that store app specific data associated with a project/solution.
-Local Storage Files | Encrypted data | json | Short-term - data will be stored in a JSON files. This will be the same format used before, just not encrypted. Long-term we will evaluate / experiment with other formats for saving.
+Local Storage Files | Encrypted data | md / json | Project pages, scripts, and other shared assets will be stored in text formats such as markdown, json, and script file formats.
 
 ## Installation
 
-Task Proxy is currently in very early development and is not ready for installation and usage by users outside of the development team.
-
-When Task Proxy is available for early access release it will be made available as a downloadable application for Windows, iOS, and Linux through [TaskProxy.com](https://www.taskproxy.com).
+Task Proxy is currently in very early development but is available for download on [TaskProxy.com](https://www.taskproxy.com) for Windows, Mac, and Linux.
 
 ## Dev
 

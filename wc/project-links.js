@@ -1,23 +1,10 @@
-
 "use strict"
 {
     webui.define("app-project-links", {
         linkCss: true,
-        watchVisibility: false,
         isInput: false,
-        preload: '',
-        constructor: (t) => {
-        },
-        attr: ['example'],
-        flags: [],
-        attrChanged: (t, property, value) => {
-            switch (property) {
-                case 'example':
-                    break;
-            }
-        },
+        preload: 'webui-nav-link',
         setProject: function (project) {
-            console.log('set project', project);
             let t = this;
             if (project && project.value) {
                 t.classList.add('enabled');
