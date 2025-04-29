@@ -20,12 +20,21 @@ pub(crate) async fn git_push(
     let mut git_path = PathBuf::from(project_path);
     git_path.push(repo);
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&git_path)
-            .arg("push")
-            .output()
-            .map_err(|e| e.to_string())?;
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(&git_path).arg("push");
+        if !has_upstream(&git_path.to_string_lossy()) {
+            let branch = Command::new("git")
+                .arg("-C")
+                .arg(&git_path)
+                .arg("rev-parse")
+                .arg("--abbrev-ref")
+                .arg("HEAD")
+                .output()
+                .map_err(|err| err.to_string())?;
+            let branch_name = String::from_utf8_lossy(&branch.stdout).trim().to_string();
+            cmd.arg("--set-upstream").arg("origin").arg(&branch_name);
+        }
+        let output = cmd.output().map_err(|err| err.to_string())?;
         if output.status.success() {
             let result = String::from_utf8_lossy(&output.stdout).to_string();
             if result.is_empty() {
@@ -60,6 +69,11 @@ pub(crate) async fn git_pull(
     };
     let mut git_path = PathBuf::from(project_path);
     git_path.push(repo);
+    if !has_upstream(&git_path.to_string_lossy()) {
+        return Ok(String::from(
+            "Nothing to pull: Branch does not have a remote.",
+        ));
+    }
     let result = task::spawn_blocking(move || {
         let output = Command::new("git")
             .arg("-C")
@@ -216,6 +230,22 @@ pub(crate) async fn get_git_changes(
     })
     .await;
     result.map_err(|err| format!("{}", err))?
+}
+
+fn has_upstream(repo_path: &str) -> bool {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("--symbolic-full-name")
+        .arg("@{u}")
+        .output();
+
+    match output {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
 }
 
 fn get_files_from_dir(path: &PathBuf) -> Vec<String> {

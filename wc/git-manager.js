@@ -46,6 +46,7 @@
             t._viewOld = t.template.querySelector('.view-old');
             t._message = t.template.querySelector('webui-input-message[label="Commit Message"]');
             t._alert = t.template.querySelector('webui-alert');
+            t._btnRefresh = t.template.querySelector('webui-button[label="Refresh"]');
             t._btnCommit = t.template.querySelector('webui-button[label="Commit"]');
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
@@ -70,20 +71,15 @@
         loadFileDiff: async function (changeDetail) {
             let t = this;
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
-            t._viewOld.innerHTML = '';
-            t._viewNew.innerHTML = '';
+            t._viewOld.setLines([]);
+            t._viewNew.setLines([]);
             if (changeDetail.fileName.endsWith('/')) {
                 return;
             }
+            let data = { change: changeDetail.change, isCompare: false };
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
-            let fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName) : '';
-            let lineNumber = 0;
-            let lineOld = 0;
-            let isCompare = false;
-            let oldFragment = document.createDocumentFragment();
-            let newFragment = document.createDocumentFragment();
+            data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName) : '';
 
-            const { added, removed } = await parseGitDiff(fileDiff || '');
             switch (changeDetail.change) {
                 case "Add":
                     t._viewOld.classList.add('hidden');
@@ -94,78 +90,25 @@
                     t._viewNew.style.setProperty('grid-column', '1/3');
                     break;
                 default:
-                    isCompare = fileDiff !== undefined;
+                    data.isCompare = data.fileDiff !== undefined;
                     t._viewOld.classList.remove('hidden');
                     t._viewNew.style.removeProperty('grid-column');
                     break;
             }
 
-            let fileLines = [];
-            let fileContent = undefined;
-
             if (changeDetail.change === 'Delete') {
                 let a = fileDiff.split('@@');
-                fileContent = a[a.length - 1].substring(1);
+                data.fileContent = a[a.length - 1].substring(1);
             } else {
-                fileContent = await webui.proxy.getProjectFile(fullFilePath);
+                data.fileContent = await webui.proxy.getProjectFile(fullFilePath);
             }
-            fileLines = fileContent.split('\n');
-
-            async function processFile() {
-                while (lineNumber < fileLines.length) {
-                    requestIdleCallback(processChunk);
-                    await webui.wait(1);
-                }
-            }
-
-            function processChunk(deadline) {
-                let stopAt = Math.min(lineNumber + 10, fileLines.length);
-                while ((deadline.timeRemaining() > 0 || deadline.didTimeout) && lineNumber < stopAt) {
-                    let line = fileLines[lineNumber++];
-                    if (isCompare) {
-                        if (added[lineNumber] !== undefined) {
-                            if (removed[lineOld + 1] !== undefined) {
-                                lineOld++;
-                                buildLine(oldFragment, removed[lineOld], lineOld, 'danger');
-                            } else {
-                                buildLine(oldFragment, line, ' ', 'transparent');
-                            }
-                        } else {
-                            lineOld++;
-                            if (removed[lineOld] !== undefined) {
-                                buildLine(oldFragment, removed[lineOld], lineOld, 'danger');
-                                lineOld++;
-                            }
-                            buildLine(oldFragment, line, lineOld);
-                        }
-                    }
-                    {
-                        let theme = added[lineNumber] !== undefined ? 'success' : null;
-                        buildLine(newFragment, line, lineNumber, theme);
-                    }
-                }
-            }
-
-            if (fileContent !== undefined) {
-                await processFile();
-                t._viewOld.appendChild(oldFragment);
-                t._viewNew.appendChild(newFragment);
+            if (data.fileContent !== undefined) {
+                let result = await webui.proxy.worker.send('processFileDiff', data);
+                console.log('worker result', result);
+                t._viewOld.setLines(result.old);
+                t._viewNew.setLines(result.new);
             }
             t._fileName.innerHTML = changeDetail.display;
-
-            function buildLine(body, line, lineNumber, theme) {
-                let ln = webui.create('webui-flex', { text: lineNumber, align: 'center', justify: 'end', class: 'line-number pr-1' });
-                ln.style.setProperty('--min', '0');
-                let pre = webui.create('pre');
-                let code = webui.create('code');
-                if (theme) {
-                    pre.setAttribute('theme', theme);
-                }
-                code.innerText = line;
-                body.appendChild(ln);
-                pre.appendChild(code);
-                body.appendChild(pre);
-            }
         },
         loadRepoChanges: async function () {
             let t = this;
@@ -174,8 +117,8 @@
             if (repo === undefined) return;
             let changes = await webui.proxy.git.getChanges(repo);
             t._fileName.innerHTML = '';
-            t._viewOld.innerHTML = '';
-            t._viewNew.innerHTML = '';
+            t._viewOld.setLines([]);
+            t._viewNew.setLines([]);
             let first = null;
             t._files = [];
             changes.forEach(fileName => {
@@ -195,15 +138,17 @@
                         theme = 'success';
                         break;
                 }
+                let display = changeDetail[1].split('/');
+                display = display[display.length - 1];
                 let details = {
                     repo: repo,
                     change: changeType,
                     fileName: changeDetail[1],
-                    display: `<span class="change-type">${changeType}</span> <strong>${changeDetail[1]}</strong>`,
+                    display: `<span class="change-type">${changeType}</span> <strong>${display}</strong>`,
                     isIncluded: true,
                 };
                 t._files.push(details);
-                let btn = webui.create('webui-button', { label: details.display, align: 'left', theme: theme });
+                let btn = webui.create('webui-button', { label: details.display, title: details.fileName, align: 'left', theme: theme });
                 let options = [
                     { value: '1', display: `Include` },
                     { value: '0', display: `Exclude` },
@@ -270,6 +215,16 @@
                 webui.projectData.data.selectedGitRepo = t._repos.value;
                 t.loadRepoChanges();
             });
+            t._viewNew.addEventListener('change', _ => {
+                console.log('new scroll change', t._viewNew.getScroll(), t._viewOld.getScroll());
+                if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
+                t._viewOld.setScroll(t._viewNew.getScroll());
+            });
+            t._viewOld.addEventListener('change', _ => {
+                console.log('old scroll change', t._viewNew.getScroll(), t._viewOld.getScroll());
+                if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
+                t._viewNew.setScroll(t._viewOld.getScroll());
+            });
             t._btnCommit.addEventListener('click', async _ => {
                 let message = t._message.value.trim();
                 t.setAlert();
@@ -311,6 +266,9 @@
                 }
                 t.loadRepoChanges();
             });
+            t._btnRefresh.addEventListener('click', async _ => {
+                t.loadRepos();
+            });
             t._btnPush.addEventListener('click', async _ => {
                 t.setAlert();
                 let repo = t._repos.value;
@@ -351,6 +309,7 @@ Select which files you want to commit, create your commit message, and press Com
         disconnected: function (t) { },
         shadowTemplate: `
 <webui-flex>
+<webui-button theme="info" label="Refresh"></webui-button>
 <webui-dropdown class="hidden" label="Repo"></webui-dropdown>
 <webui-button theme="info" label="Sync"></webui-button>
 <webui-button theme="tertiary" label="Pull"></webui-button>
@@ -367,8 +326,10 @@ Select which files you want to commit, create your commit message, and press Com
 <webui-flex column>
 <h3></h3>
 <webui-grid columns="1fr 1fr">
-<webui-grid gap="0" columns="max-content 1fr" class="view-old"></webui-grid>
-<webui-grid gap="0" columns="max-content 1fr" class="view-new"></webui-grid>
+<webui-canvas theme="black" line-numbers class="view-old" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
+<webui-canvas theme="black" line-numbers class="view-new" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
+<webui-grid gap="0" columns="max-content 1fr" class="view-olds"></webui-grid>
+<webui-grid gap="0" columns="max-content 1fr" class="view-news"></webui-grid>
 </webui-grid>
 </webui-flex>
 </webui-grid>

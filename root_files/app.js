@@ -1,6 +1,7 @@
 "use strict";
 {
     const AsyncFunction = (async () => { }).constructor;
+    const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
     let firstLoad = true;
@@ -30,9 +31,43 @@
         isLoadingDialog.close();
         isLoadingDialog = null;
     }
+    const messages = {};
     class Tauri {
         openUrl = tauri.opener.openUrl;
         constructor() {
+            const t = this;
+            worker.onmessage = (event) => {
+                if (!event.isTrusted) return;
+                let data = JSON.parse(event.data);
+                console.log(`Message received from worker : %o %o`, data, event);
+                if (data.id) {
+                    messages[data.id] = data.message;
+                }
+            };
+        }
+        worker = {
+            send: (toRun, data) => {
+                let msg = { id: webui.uuid(), run: toRun, data: data };
+                let json = JSON.stringify(msg);
+                return new Promise(async (resolve, reject) => {
+                    worker.postMessage(json);
+                    let counter = 0;
+                    while (counter++ < 60000) {
+                        if (messages[msg.id]) {
+                            let result = messages[msg.id];
+                            delete messages[msg.id];
+                            if (result.ok) {
+                                resolve(result.msg);
+                            } else {
+                                reject(result.msg);
+                            }
+                            return;
+                        }
+                        await webui.wait(10);
+                    }
+                    reject('Message never returned');
+                });
+            }
         }
         git = {
             commit: async (repo, files, message, errHandler) => {
