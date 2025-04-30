@@ -20,9 +20,10 @@ pub(crate) async fn git_push(
     let mut git_path = PathBuf::from(project_path);
     git_path.push(repo);
     let result = task::spawn_blocking(move || {
+        let repo_path = &git_path.to_string_lossy();
         let mut cmd = Command::new("git");
         cmd.arg("-C").arg(&git_path).arg("push");
-        if !has_upstream(&git_path.to_string_lossy()) {
+        if !has_upstream(repo_path) {
             let branch = Command::new("git")
                 .arg("-C")
                 .arg(&git_path)
@@ -33,6 +34,9 @@ pub(crate) async fn git_push(
                 .map_err(|err| err.to_string())?;
             let branch_name = String::from_utf8_lossy(&branch.stdout).trim().to_string();
             cmd.arg("--set-upstream").arg("origin").arg(&branch_name);
+        } else {
+            let current_branch = get_current_branch(repo_path)?;
+            cmd.arg("origin").arg(&current_branch);
         }
         let output = cmd.output().map_err(|err| err.to_string())?;
         if output.status.success() {
@@ -75,10 +79,14 @@ pub(crate) async fn git_pull(
         ));
     }
     let result = task::spawn_blocking(move || {
+        let repo_path = &git_path.to_string_lossy();
+        let current_branch = get_current_branch(repo_path)?;
         let output = Command::new("git")
             .arg("-C")
             .arg(&git_path)
             .arg("pull")
+            .arg("origin")
+            .arg(&current_branch)
             .output()
             .map_err(|e| e.to_string())?;
         if output.status.success() {
@@ -147,7 +155,7 @@ pub(crate) async fn git_commit(
             .arg("-m")
             .arg(message)
             .output()
-            .map_err(|e| e.to_string())?;
+            .map_err(|err| err.to_string())?;
 
         if commit.status.success() {
             Ok(String::from_utf8_lossy(&commit.stdout).to_string())
@@ -245,6 +253,21 @@ fn has_upstream(repo_path: &str) -> bool {
     match output {
         Ok(out) => out.status.success(),
         Err(_) => false,
+    }
+}
+
+fn get_current_branch(repo_path: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("--show-current")
+        .output()
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
 }
 
