@@ -46,7 +46,6 @@
         },
         buildFinalMarkdown: function () {
             let t = this;
-            console.log('build final markdown $o |%o|%o|%o|', t._inputType, t._inputValue, t._inputMessage.value, t._inputText.value)
             switch (t._inputType) {
                 case inputTypes.MULTI_LINE:
                     t._inputValue = t._inputMessage.value;
@@ -55,10 +54,8 @@
                     t._inputValue = t._inputText.value;
                     break;
                 default:
-                    console.log('return raw option value', t._currentOption);
                     return t._currentOption;
             }
-            console.log('return with replace');
             return t._currentOption.replace('{}', t._inputValue);
         },
         connected: function (t) {
@@ -121,14 +118,12 @@
         },
         setMarkdown: function (markdown) {
             let t = this;
-            console.log('set markdown', markdown);
             t._markdown = markdown;
             let foundMatch = false;
             segmentOptions.forEach(option => {
                 if (foundMatch) return;
                 if (option.value.indexOf('{}') === -1) {
                     if (markdown === option.value) {
-                        console.log('found match', option);
                         foundMatch = true;
                         t.setInputType(option.inputType);
                         t._currentOption = option.value;
@@ -139,7 +134,6 @@
                 let [left, right] = option.value.split('{}');
                 if (markdown.startsWith(left) && markdown.endsWith(right)) {
                     foundMatch = true;
-                    console.log('found match', option);
                     t.setInputType(option.inputType);
                     t._currentOption = option.value;
                     t._inputValue = markdown.substring(left.length, markdown.length - right.length);
@@ -167,14 +161,16 @@
             }
             t.render();
         },
-        setOption: function () {
+        setOption: function (attempt) {
             let t = this;
+            attempt = (attempt || 0) + 1;
             if (t._options.value !== t._currentOption) {
                 t._options.value = t._currentOption;
             }
             if (t._options.value !== t._currentOption) {
-                webui.log.warn('option failed to set %o', t._currentOption);
-                setTimeout(() => { t.setOption(); }, 100);
+                webui.log.warn('option failed to set %o - %o', t._currentOption, t._options.value);
+                if (attempt > 5) return;
+                setTimeout(() => { t.setOption(attempt); }, 100);
             }
         },
         getMarkdown: function () {
