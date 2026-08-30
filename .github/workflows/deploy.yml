@@ -24,9 +24,10 @@ jobs:
       - name: install dependencies
         run: |
           rustup update
-          cargo install trunk
-          cargo install tauri-cli
+          cargo install trunk --force
+          cargo install tauri-cli --force
           rustup target add wasm32-unknown-unknown
+          cargo build --release
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
           Install-Module -Name Az.Accounts
           Install-Module -Name Az.CodeSigning
@@ -75,8 +76,9 @@ jobs:
         run: |
           brew update
           rustup update
-          cargo install trunk
+          cargo install trunk --force
           rustup target add wasm32-unknown-unknown
+          cargo build --release
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -119,8 +121,9 @@ jobs:
       - name: install frontend dependencies
         run: |
           rustup update
-          cargo install trunk
+          cargo install trunk --force
           rustup target add wasm32-unknown-unknown
+          cargo build --release
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
