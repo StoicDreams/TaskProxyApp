@@ -20,11 +20,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Install Tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk, tauri-cli
       - name: install dependencies
         run: |
-          rustup update
-          cargo install trunk
-          cargo install tauri-cli
           rustup target add wasm32-unknown-unknown
           cargo build --release
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
@@ -70,14 +73,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Install Tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
       - name: install dependencies
         run: |
           # softwareupdate --install -a
       - name: install frontend dependencies
         run: |
           brew update
-          rustup update
-          cargo install trunk
           rustup target add wasm32-unknown-unknown
           cargo build --release
       - uses: tauri-apps/tauri-action@v0
@@ -106,6 +113,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Install Tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
       - name: install dependencies
         run: |
           sudo apt update
@@ -120,8 +133,6 @@ jobs:
             librsvg2-dev
       - name: install frontend dependencies
         run: |
-          rustup update
-          cargo install trunk
           rustup target add wasm32-unknown-unknown
           cargo build --release
       - uses: tauri-apps/tauri-action@v0
