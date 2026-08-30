@@ -15,6 +15,11 @@
             navigator.serviceWorker.register(`service-worker.min.js?_=${id}`);
         }
     </script>
+    <link rel="dns-prefetch" href="https://cdn.myfi.ws" />
+    <link rel="dns-prefetch" href="https://api.myfi.ws" />
+    <link href="https://cdn.myfi.ws/css/webui.min.css" rel="preload" as="style" />
+    <link href="https://cdn.myfi.ws/webui/loader.min.js" rel="preload" as="script" />
+
     <link data-trunk href="root_files" rel="copy-dir" data-target-path="" />
     <link data-trunk href="d" rel="copy-dir" data-target-path="d" />
     <link data-trunk href="wc" rel="copy-dir" data-target-path="wc" />
