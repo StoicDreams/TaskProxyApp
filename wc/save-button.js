@@ -5,7 +5,8 @@
     let isSavingProject = false;
     let isSavingApp = false;
     webui.define("app-save-button", {
-        connected: function (t) {
+        connected() {
+            const t = this;
             t.setAttribute('title', 'Save Project & App Data');
             let icon = webui.create('webui-icon', { theme: 'success', 'icon': 'save|fill' });
             t.appendChild(icon);
@@ -36,7 +37,7 @@
                 saveApp();
             });
         },
-        disconnected: function (t) { },
+        disconnected() { },
         shadowTemplate: `
 <style type="text/css">
 :host {

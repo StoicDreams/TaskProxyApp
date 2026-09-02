@@ -40,25 +40,28 @@
         watchVisibility: false,
         isInput: false,
         preload: '',
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             t.icon = t.template.querySelector('webui-icon');
         },
         attr: ['data-toggleclass'],
         flags: [],
-        attrChanged: (t, property, value) => {
+        attrChanged(property, value) {
+            const t = this;
             switch (property) {
                 case 'dataToggleclass':
                     t.drawer = value.split('|')[0];
                     break;
             }
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             t.addEventListener('click', _ev => {
                 openDrawer(t.drawer);
                 return true;
             });
         },
-        disconnected: function (t) { },
+        disconnected() { },
         shadowTemplate: `
 <webui-icon icon="dollar|theme:tertiary"></webui-icon>
 <style type="text/css">

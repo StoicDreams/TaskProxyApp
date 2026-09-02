@@ -27,7 +27,8 @@
     }
     webui.define("app-markdown-segment", {
         linkCss: true,
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             t._content = t.template.querySelector('webui-content');
             t._btnEdit = t.template.querySelector('aside webui-button');
             t._inputMessage = t.template.querySelector('webui-input-message');
@@ -40,11 +41,12 @@
             t._inputType = segmentOptions.slice(-1).inputType;
         },
         attr: [],
-        attrChanged: (t, property, value) => {
+        attrChanged(property, value) {
+            const t = this;
             switch (property) {
             }
         },
-        buildFinalMarkdown: function () {
+        buildFinalMarkdown() {
             let t = this;
             switch (t._inputType) {
                 case inputTypes.MULTI_LINE:
@@ -58,7 +60,8 @@
             }
             return t._currentOption.replace('{}', t._inputValue);
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             if (t._skipReconnect) {
                 return;
             }
@@ -93,10 +96,11 @@
                 }
             });
         },
-        disconnected: function (t) {
+        disconnected() {
+            const t = this;
             t._skipReconnect = true;
         },
-        setInputType: function (inputType) {
+        setInputType(inputType) {
             let t = this;
             t._inputType = inputType;
             switch (inputType) {
@@ -116,8 +120,8 @@
                     break;
             }
         },
-        setMarkdown: function (markdown) {
-            let t = this;
+        setMarkdown(markdown) {
+            const t = this;
             t._markdown = markdown;
             let foundMatch = false;
             segmentOptions.forEach(option => {
@@ -161,8 +165,8 @@
             }
             t.render();
         },
-        setOption: function (attempt) {
-            let t = this;
+        setOption(attempt) {
+            const t = this;
             attempt = (attempt || 0) + 1;
             if (t._options.value !== t._currentOption) {
                 t._options.value = t._currentOption;
@@ -173,12 +177,12 @@
                 setTimeout(() => { t.setOption(attempt); }, 100);
             }
         },
-        getMarkdown: function () {
-            let t = this;
+        getMarkdown() {
+            const t = this;
             return t._inputType === inputTypes.DELETE ? null : t._markdown;
         },
-        render: function () {
-            let t = this;
+        render() {
+            const t = this;
             if (!t._content.setHtml) {
                 setTimeout(() => t.render(), 100);
                 return;

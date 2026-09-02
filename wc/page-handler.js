@@ -150,10 +150,12 @@
     }
     webui.define("app-page-handler", {
         preload: 'app-markdown-segment webui-dropdown webui-input-text webui-input-message',
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             comp = t;
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             let project = webui.getData('app-current-project');
             if (project && project.value) {
                 loadProject();
@@ -161,7 +163,8 @@
                 setMarkdown(notFound);
             }
         },
-        disconnected: function (t) {
+        disconnected() {
+            const t = this;
             comp = null;
             markdown = '';
             myId = '';

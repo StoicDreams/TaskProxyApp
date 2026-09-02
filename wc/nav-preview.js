@@ -3,16 +3,18 @@
 webui.define('app-nav-preview', {
     preload: 'fa paper nav-group nav-link',
     watched: {},
-    constructor(t) {
+    constructor() {
+        const t = this;
         t.dragNDrop = getDragNDropSetup(t.getSegments);
     },
-    connected: (t) => {
+    connected() {
+        const t = this;
     },
-    setNavRoutes: function (data) {
+    setNavRoutes(data) {
         this.buildNav(data);
     },
-    buildLink: function (parent, link) {
-        let t = this;
+    buildLink(parent, link) {
+        const t = this;
         let el = null;
         if (link.url) {
             el = webui.create('webui-nav-link');
@@ -66,21 +68,21 @@ webui.define('app-nav-preview', {
             parent.appendChild(webui.create('webui-nav-link', { class: 'placeholder', message: 'After Folder', place: 'below' }));
         }
     },
-    getSegments: function (el) {
-        let t = el.closest('app-nav-preview');
+    getSegments(el) {
+        const t = el.closest('app-nav-preview');
         let segments = [];
         segments = Array.from(t.querySelectorAll('webui-nav-link'));
         return segments;
     },
-    buildNav: function (navJson, openLast) {
+    buildNav(navJson, openLast) {
         if (!navJson) return;
         let nav = typeof navJson === 'string' ? JSON.parse(navJson) : typeof navJson.forEach === 'function' ? navJson : [];
-        let t = this;
+        const t = this;
         t._navData = nav;
         t._buildNav(openLast);
     },
-    _buildNav: function (openLast) {
-        let t = this;
+    _buildNav(openLast) {
+        const t = this;
         let nav = t._navData;
         if (!nav) return;
         t.innerHTML = '';

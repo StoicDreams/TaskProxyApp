@@ -4,7 +4,8 @@
     webui.define("app-doc-manager", {
         linkCss: true,
         preload: '',
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             t._fileSelector = t.template.querySelector('webui-dropdown[label="File"]');
             t._content = t.template.querySelector('webui-content');
             t._message = t.template.querySelector('webui-input-message');
@@ -13,11 +14,11 @@
         },
         attr: [],
         flags: [],
-        attrChanged: (t, property, value) => {
+        attrChanged: (property, value) => {
             switch (property) {
             }
         },
-        loadFiles: async function () {
+        async loadFiles() {
             let t = this;
             let counter = 0;
             while (webui.projectData.docs === undefined && counter++ < 1000) {
@@ -42,7 +43,7 @@
                 t.loadFile(t._fileSelector.value);
             }
         },
-        loadFile: async function (file) {
+        async loadFile(file) {
             let t = this;
             t._message.value = '';
             if (!file) return;
@@ -58,7 +59,8 @@
                 t._content.setHtml('Failed to load content');
             }
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             t._fileSelector.addEventListener('change', ev => {
                 let file = t._fileSelector.value;
                 t.loadFile(file);
@@ -79,7 +81,7 @@
             });
             t.loadFiles();
         },
-        disconnected: function (t) { },
+        disconnected() { },
         shadowTemplate: `
 <style type="text/css">
 :host {

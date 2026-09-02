@@ -2,16 +2,18 @@
 "use strict"
 {
     webui.define("app-template", {
-        constructor: (t) => { },
+        constructor() {
+            const t = this;
+        },
         attr: ['example'],
-        attrChanged: (t, property, value) => {
+        attrChanged(property, value) {
             switch (property) {
                 case 'example':
                     break;
             }
         },
-        connected: function (t) { },
-        disconnected: function (t) { }
+        connected() { },
+        disconnected() { }
     });
 }
 
@@ -23,20 +25,22 @@
         watchVisibility: false,
         isInput: false,
         preload: '',
-        constructor: (t) => {
+        constructor: () => {
+            const t = this;
             t._slotMain = t.template.querySelector('slot:not([name])');
             t._slotSomething = t.template.querySelector('slot[name="something"]');
         },
         attr: ['example'],
         flags: [],
-        attrChanged: (t, property, value) => {
+        attrChanged: (property, value) => {
+            const t = this;
             switch (property) {
                 case 'example':
                     break;
             }
         },
-        connected: function (t) { },
-        disconnected: function (t) { },
+        connected: function () { },
+        disconnected: function () { },
         shadowTemplate: `
 <style type="text/css">
 :host {

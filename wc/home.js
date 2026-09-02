@@ -2,14 +2,15 @@
 "use strict"
 {
     webui.define("app-home", {
-        constructor: (t) => {
+        constructor() {
+            const t = this;
         },
-        connected: function () {
+        connected() {
             const t = this;
             t.checkAppState();
         },
-        disconnected: function (t) { },
-        checkAppState: async function (k, v) {
+        disconnected() { },
+        async checkAppState(k, v) {
             const t = this;
             let hasSecurityKey = await webui.proxy.hasSecurityKey();
             if (!hasSecurityKey) {
@@ -19,7 +20,7 @@
             }
             t.loadProjects();
         },
-        loadProjects: async function () {
+        async loadProjects() {
             const t = this;
             let projects = await webui.proxy.getProjects() || [];
             webui.setData('app-projects', projects);

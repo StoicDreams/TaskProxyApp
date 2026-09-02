@@ -20,7 +20,8 @@
         isInput: false,
         preload: 'webui-icon-search',
         nav: [],
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             let link = {
                 name: '',
                 icon: '',
@@ -86,11 +87,11 @@
             });
         },
         setNavRoutes() {
-            let t = this;
+            const t = this;
             t.loadNavigation();
         },
         loadNavigation() {
-            let t = this;
+            const t = this;
             if (!t._navPreview.setNavRoutes || webui.projectData.navigation === undefined) {
                 setTimeout(() => t.loadNavigation(), 10);
                 return;
@@ -119,10 +120,11 @@
             webui.projectData.navigation = webui.clone(t.nav);
             await webui.proxy.saveProjectData();
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             t.loadNavigation();
         },
-        disconnected: function (t) { },
+        disconnected() { },
         shadowTemplate: `
 <style type="text/css">
 :host {

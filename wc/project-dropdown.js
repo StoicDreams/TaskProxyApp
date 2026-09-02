@@ -13,22 +13,25 @@
         watchVisibility: false,
         isInput: false,
         preload: 'webui-dropdown',
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             t._dropdown = t.template.querySelector('webui-dropdown');
         },
         attr: [],
         flags: [],
-        attrChanged: (t, property, value) => {
+        attrChanged(property, value) {
+            const t = this;
             switch (property) {
             }
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             t.dataset.subscribe = 'app-projects:setProjects';
             loadProjects();
         },
-        disconnected: function (t) { },
+        disconnected() { },
         setProjects(projects) {
-            let t = this;
+            const t = this;
             projects = projects || [];
             if (!t._dropdown.setOptions) {
                 setTimeout(() => t.setProjects(projects), 10);

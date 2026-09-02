@@ -20,7 +20,6 @@
             }
             return;
         }
-        console.log('show loading dialog');
         isLoadingDialog = webui.dialog({ isLoading: true, content });
         if (typeof during === 'function') {
             if (handler.constructor == AsyncFunction) {
@@ -125,10 +124,8 @@
             isLoaded: false,
             runWhenLoaded: async (handler) => {
                 while (!webui.proxy.projects.isLoaded) {
-                    console.log('waiting for project to load');
                     await webui.wait(10);
                 }
-                console.log('done waiting for project');
                 handler();
             }
         }

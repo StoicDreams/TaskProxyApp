@@ -22,7 +22,7 @@
     webui.define("app-security-key-setter", {
         linkCss: true,
         preload: 'input-message alert alerts',
-        constructor: () => {
+        constructor() {
             const t = this;
             t._alert = t.template.querySelector('webui-alert');
             t._del = t.template.querySelector('webui-button[theme="danger"]');
@@ -31,7 +31,8 @@
             t._input = t.template.querySelector('webui-input-message');
         },
         linkCss: true,
-        connected: async function (t) {
+        async connected() {
+            const t = this;
             let hasSecurityKey = await webui.proxy.hasSecurityKey(handleError);
             if (hasSecurityKey) {
                 t._del.classList.remove('hidden');
@@ -63,7 +64,7 @@
                 t._alert.setValue({ text: ex, theme: 'danger' });
             }
         },
-        disconnected: function (t) { },
+        disconnected() { },
         shadowTemplate: `
 <style type="text/css">
 :host {

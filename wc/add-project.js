@@ -5,11 +5,13 @@
         watchVisibility: false,
         isInput: false,
         preload: '',
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             t._alert = t.template.querySelector('webui-alert');
             t._btn = t.template.querySelector('webui-button[theme="primary"]');
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             t._btn.addEventListener('click', webui.eventSoloProcess(async _ => {
                 let name = webui.getData('new-project-name') || '';
                 if (!name) {
@@ -27,7 +29,7 @@
                 t._alert.setValue({ text: ex, theme: theme || 'danger' });
             }
         },
-        disconnected: function () { },
+        disconnected() { },
         shadowTemplate: `
 <style type="text/css">
 :host {

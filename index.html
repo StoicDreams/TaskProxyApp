@@ -105,7 +105,6 @@
             if (location.host !== '127.0.0.1:1426') {
                 // Pause any attempts to navigate away from app.
                 window.addEventListener('beforeunload', ev => {
-                    console.log('before unload triggered', ev);
                     ev.stopPropagation();
                     ev.preventDefault();
                     return false;

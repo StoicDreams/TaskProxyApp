@@ -4,19 +4,19 @@
         linkCss: true,
         isInput: false,
         preload: 'webui-nav-link',
-        setProject: function (project) {
-            let t = this;
+        setProject(project) {
+            const t = this;
             if (project && project.value) {
                 t.classList.add('enabled');
             } else {
                 t.classList.remove('enabled');
             }
         },
-        connected: function () {
+        connected() {
             const t = this;
             t.dataset.subscribe = 'app-current-project:setProject';
         },
-        disconnected: function (t) { },
+        disconnected() { },
         shadowTemplate: `
 <webui-nav-link icon="compass|fill|bordered|theme:success|backing|shape:circle" url="/nav-manager" title="Navigation Manager"></webui-nav-link>
 <webui-nav-link icon="squares|fill|theme:success|shape:circle|inverted" url="/docs" title="Docs Manager"></webui-nav-link>

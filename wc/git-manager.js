@@ -38,7 +38,8 @@
         watchVisibility: false,
         isInput: false,
         preload: '',
-        constructor: (t) => {
+        constructor() {
+            const t = this;
             t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
             t._fileName = t.template.querySelector('h3');
             t._filesContainer = t.template.querySelector('.files');
@@ -53,7 +54,7 @@
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
             t._instructions = t.template.querySelector('.instructions');
         },
-        loadRepos: async function () {
+        async loadRepos() {
             let t = this;
             let repos = await webui.proxy.git.getRepos();
             if (repos.length === 0) {
@@ -68,7 +69,7 @@
             }
 
         },
-        loadFileDiff: async function (changeDetail) {
+        async loadFileDiff(changeDetail) {
             let t = this;
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
             t._viewOld.setLines([]);
@@ -109,7 +110,7 @@
             }
             t._fileName.innerHTML = changeDetail.display;
         },
-        loadRepoChanges: async function () {
+        async loadRepoChanges() {
             let t = this;
             t._filesContainer.innerText = '';
             let repo = t._repos.value;
@@ -201,11 +202,12 @@
                 }
             });
         },
-        setAlert: function (msg, severity) {
+        setAlert(msg, severity) {
             let t = this;
             t._alert.setValue(!msg ? null : { theme: severity, html: msg });
         },
-        connected: function (t) {
+        connected() {
+            const t = this;
             webui.proxy.projects.runWhenLoaded(() => {
                 t.loadRepos();
             });
@@ -300,7 +302,7 @@ Select which files you want to commit, create your commit message, and press Com
 - <webui-button theme="warning">Ignore</webui-button> Always exclude file from commits.
 `)
         },
-        disconnected: function (t) { },
+        disconnected() { },
         shadowTemplate: `
 <webui-flex>
 <webui-button theme="info" label="Refresh"></webui-button>
