@@ -23,6 +23,14 @@ pub fn run() {
 
     // Setup plugins
     let mut builder = tauri::Builder::default()
+        .setup(|app|{
+            #[cfg(debug_assertions)]
+            {
+                use tauri::Manager;
+                app.get_webview_window("main").unwrap().open_devtools();
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())

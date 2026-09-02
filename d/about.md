@@ -44,4 +44,4 @@ This application is made possible by [Tauri](https://tauri.app), and other open-
 
 </webui-page-segment>
 
-<webui-content src="https://cdn.myfi.ws/d/en-US/about-stoic-dreams.md"></webui-content>
+<webui-content src="https://cdn.myfi.ws/d/about-stoic-dreams.md"></webui-content>
