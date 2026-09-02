@@ -12,7 +12,8 @@
                 t.classList.remove('enabled');
             }
         },
-        connected: function (t) {
+        connected: function () {
+            const t = this;
             t.dataset.subscribe = 'app-current-project:setProject';
         },
         disconnected: function (t) { },

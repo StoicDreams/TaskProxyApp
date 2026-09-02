@@ -4,12 +4,13 @@
     webui.define("app-home", {
         constructor: (t) => {
         },
-        connected: function (t) {
+        connected: function () {
+            const t = this;
             t.checkAppState();
         },
         disconnected: function (t) { },
         checkAppState: async function (k, v) {
-            let t = this;
+            const t = this;
             let hasSecurityKey = await webui.proxy.hasSecurityKey();
             if (!hasSecurityKey) {
                 webui.setData('app-nav-home', 'Security Key');
@@ -19,7 +20,7 @@
             t.loadProjects();
         },
         loadProjects: async function () {
-            let t = this;
+            const t = this;
             let projects = await webui.proxy.getProjects() || [];
             webui.setData('app-projects', projects);
             if (projects.length === 0) {

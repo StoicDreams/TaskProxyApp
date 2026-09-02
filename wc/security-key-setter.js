@@ -22,7 +22,8 @@
     webui.define("app-security-key-setter", {
         linkCss: true,
         preload: 'input-message alert alerts',
-        constructor: (t) => {
+        constructor: () => {
+            const t = this;
             t._alert = t.template.querySelector('webui-alert');
             t._del = t.template.querySelector('webui-button[theme="danger"]');
             t._sav = t.template.querySelector('webui-button[theme="primary"]');
