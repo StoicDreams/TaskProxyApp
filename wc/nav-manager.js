@@ -18,7 +18,7 @@
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: 'webui-icon-search',
+        preload: 'icon-search',
         nav: [],
         constructor() {
             const t = this;

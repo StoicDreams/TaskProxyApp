@@ -12,7 +12,7 @@
         linkCss: false,
         watchVisibility: false,
         isInput: false,
-        preload: 'webui-dropdown',
+        preload: 'dropdown',
         constructor() {
             const t = this;
             t._dropdown = t.template.querySelector('webui-dropdown');

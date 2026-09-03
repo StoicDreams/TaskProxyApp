@@ -159,10 +159,16 @@
         }
         async getProjects(errHandler) {
             errHandler ??= defaultErrHandler;
+            const interceptKeychainError = (err) => {
+                if (typeof err === 'string' && err.includes('Failed to retrieve security key')) {
+                    return [];
+                }
+                return errHandler(err);
+            };
             if (firstLoad) {
                 firstLoad = false;
                 isLoading.projects = true;
-                let projects = await tauri.core.invoke('load_projects', {}).catch(errHandler);
+                let projects = await tauri.core.invoke('load_projects', {}).catch(interceptKeychainError);
                 delete isLoading.projects;
                 return projects;
             } else {
@@ -170,7 +176,7 @@
                 while (counter++ < 1000 && isLoading.projects) {
                     await webui.wait(10);
                 }
-                return await tauri.core.invoke('get_projects', {}).catch(errHandler);
+                return await tauri.core.invoke('get_projects', {}).catch(interceptKeychainError);
             }
         }
         hasSecurityKey(errHandler) {

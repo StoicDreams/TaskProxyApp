@@ -3,7 +3,7 @@
     webui.define("app-project-links", {
         linkCss: true,
         isInput: false,
-        preload: 'webui-nav-link',
+        preload: 'nav-link',
         setProject(project) {
             const t = this;
             if (project && project.value) {
@@ -19,7 +19,7 @@
         disconnected() { },
         shadowTemplate: `
 <webui-nav-link icon="compass|fill|bordered|theme:success|backing|shape:circle" url="/nav-manager" title="Navigation Manager"></webui-nav-link>
-<webui-nav-link icon="squares|fill|theme:success|shape:circle|inverted" url="/docs" title="Docs Manager"></webui-nav-link>
+<webui-nav-link icon="stacked-squares|fill|theme:success|shape:circle|inverted" url="/docs" title="Docs Manager"></webui-nav-link>
 <webui-nav-link icon="diamond|fill|theme:success|shape:circle|inverted" url="/git-controller" title="Git Controller"></webui-nav-link>
 <style type="text/css">
 :host {

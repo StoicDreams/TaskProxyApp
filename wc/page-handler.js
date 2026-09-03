@@ -31,7 +31,7 @@
             bar.after(webui.create('webui-line'));
         }
         let btnSave = webui.create('webui-button', {
-            html: 'Save', title: "Save Page", 'start-icon': 'save', theme: 'primary'
+            html: 'Save', title: "Save Page", 'start-icon': 'emoji-floppy_disk', theme: 'primary'
         });
         btnSave.addEventListener('click', async _ => {
             if (!myFile) return;
@@ -149,7 +149,7 @@
         }
     }
     webui.define("app-page-handler", {
-        preload: 'app-markdown-segment webui-dropdown webui-input-text webui-input-message',
+        preload: 'app-markdown-segment dropdown input-text input-message',
         constructor() {
             const t = this;
             comp = t;
