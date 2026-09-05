@@ -1,11 +1,6 @@
 # Task Proxy
 
-<img
- src="https://www.taskproxy.com/ms-icon-310x310.png"
- alt="Stoic Dreams Task Proxy Logo"
- title="Stoic Dreams Task Proxy Logo"
- style="float:right;margin-top:-60px"
- />
+<img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
 [Version: 0.1.24](https://github.com/StoicDreams/TaskProxyApp)
 
@@ -32,7 +27,7 @@ A key feature of Task Proxy is the ability to allow teams and developers to crea
 
 - Onboarding workflow with step-by-step guidance for developers to setup their local environment for deploying projects locally (websites, fabric cluster, etc).
 - Managing / Sharing scripts (Powershell, command prompt, SQL).
-- Sharing team & project documentation (Architecture, features, coding standards, etc) organized using a tag-based system inspired by mind-map applications.
+- Sharing team &amp; project documentation (Architecture, features, coding standards, etc) organized using a tag-based system inspired by mind-map applications.
 - Health report that will verify required SDKs/configurations are installed/setup as expected for Team/project.
 
 ## Planned Cloud Services
@@ -102,7 +97,7 @@ Task Proxy is currently in very early development but is available for download 
 
 ### Notes
 
-> All terminal commands examples are written as if starting from the root folder of this solution.
+&gt; All terminal commands examples are written as if starting from the root folder of this solution.
 
 ### Tools
 
@@ -111,7 +106,7 @@ Name | Description
 Visual Studio Code (VSC) | Our choice of IDE for Rust / HTML / JavaScript development.
 Better Minify | VSC extension used to minify .css and .js files.
 
-### Solution Setup & Configure
+### Solution Setup &amp; Configure
 
 Visit the [Tauri Website](https://tauri.app/start/) for instructions on how to setup your local machine for developing Tauri applications.
 
