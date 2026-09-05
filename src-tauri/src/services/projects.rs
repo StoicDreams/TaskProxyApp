@@ -341,12 +341,23 @@ async fn get_project_docs(project_path: &str) -> Vec<String> {
 }
 
 fn collect_md_files(current_path: &Path, root: &Path, docs: &mut Vec<String>) {
+    const IGNORED_DIRS: &[&str] = &[
+        ".taskproxy",
+        "target",
+        "dist",
+        "build",
+        "node_modules",
+        ".git"
+    ];
     if let Ok(entries) = fs::read_dir(current_path) {
         for entry in entries.flatten() {
             let path = entry.path();
 
             if path.is_dir() {
-                if path.file_name().map_or(false, |name| name == ".taskproxy") {
+                if path.file_name().map_or(false, |name| {
+                    let name_str = name.to_string_lossy();
+                    IGNORED_DIRS.contains(&name_str.as_ref())
+                }) {
                     continue;
                 }
                 collect_md_files(&path, root, docs);

@@ -12,6 +12,7 @@
     let dragNDrop = getDragNDropSetup((_) => segments);
     let segments = [];
     async function loadProject() {
+        console.log('loadProject()', location.pathname);
         myId = location.pathname.substring(1);
         myFile = `.taskproxy/pages/${myId}.md`;
         let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
@@ -157,6 +158,7 @@
         connected() {
             const t = this;
             let project = webui.getData('app-current-project');
+            console.log('app page handler', project);
             if (project && project.value) {
                 loadProject();
             } else {

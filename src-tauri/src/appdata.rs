@@ -1,11 +1,14 @@
 use crate::prelude::*;
 use age::secrecy::{ExposeSecret, SecretString};
 use keyring::Entry;
+use std::sync::Mutex;
 
 const KEYCHAIN_SERVICE_NAME: &str = "com.task-proxy.app";
 const KEYCHAIN_USERNAME: &str = "task_proxy_user";
 const PROJECTS_FILENAME: &str = "projects.data.enc";
 const APPDATA_FILENAME: &str = "app.data.enc";
+
+static MEMORY_PASSPHRASE: Mutex<Option<String>> = Mutex::new(None);
 
 #[tauri::command]
 pub(crate) fn has_securitykey() -> bool {
@@ -90,12 +93,15 @@ pub(crate) async fn set_securitykey(
 ) -> Result<String, String> {
     let security_key_clone = security_key.to_owned();
     let result = task::spawn_blocking(move || {
-        let secret = SecretString::from(security_key_clone);
+        let secret = SecretString::from(security_key_clone.clone());
         let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
             .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
         entry
             .set_password(secret.expose_secret())
             .map_err(|e| format!("Failed to store new security key in keychain: {:?}", e))?;
+        if let Ok(mut cache) = MEMORY_PASSPHRASE.lock() {
+            *cache = Some(security_key_clone);
+        }
         Ok(String::from("Security Key Saved!"))
     })
     .await;
@@ -134,10 +140,19 @@ pub(crate) fn get_state_data<T: Clone + Send + Sync + 'static>(
 
 /// Get encryption passphrase from the keychain
 fn get_passphrase() -> Result<SecretString, String> {
+    let mut cache = MEMORY_PASSPHRASE
+        .lock()
+        .map_err(|_| "Failed to lock passphrase cache")?;
+    if let Some(cached_pass) = cache.as_ref() {
+        return Ok(SecretString::from(cached_pass.clone()));
+    }
     let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
         .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
     match entry.get_password() {
-        Ok(password) => Ok(SecretString::from(password)),
+        Ok(password) => {
+            *cache = Some(password.clone());
+            Ok(SecretString::from(password))
+        },
         Err(e) => Err(format!(
             "Failed to retrieve security key from keychain: {:?}",
             e
