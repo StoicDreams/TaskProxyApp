@@ -15,7 +15,7 @@
     "windows": [
       {
         "title": "Task Proxy",
-        "width": 1280,
+        "width": 1600,
         "height": 720,
         "resizable": true,
         "backgroundThrottling": "disabled",

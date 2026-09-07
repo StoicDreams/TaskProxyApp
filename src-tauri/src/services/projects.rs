@@ -119,6 +119,10 @@ pub(crate) async fn get_project_file(
             "Get Project File: Unable to load page data, project not loaded.",
         ));
     }
+    let safe_file_path = PathBuf::from(&file_path);
+    if safe_file_path.is_absolute() || file_path.contains("..") {
+        return Err(String::from("Get Project File: Invalid file path. Path must be relative."));
+    }
     println!("Get project file: {} - {}", project_path, file_path);
     if file_path.contains("./") || file_path.contains(".\\") {
         return Err(String::from("Get Project File: Invalid file path."));
@@ -163,9 +167,10 @@ pub(crate) async fn save_project_file(
             "Save Project File Failed: File path is empty.",
         ));
     }
-    if file_path.contains("./") || file_path.contains(".\\") {
+    let safe_file_path = PathBuf::from(&file_path);
+    if safe_file_path.is_absolute() || file_path.contains("..") {
         return Err(format!(
-            "Save Project File Failed: Invalid file path:{}",
+            "Save Project File Failed: Invalid file path: {}",
             file_path
         ));
     }

@@ -228,11 +228,22 @@ pub(crate) async fn save_json_to_local_storage(
     let file_path = get_app_data_path(app_handle, file_name).await?;
     let passphrase = get_passphrase()?;
     let recipient = age::scrypt::Recipient::new(passphrase.clone());
+
     let encrypted = match age::encrypt(&recipient, json.as_bytes()) {
         Ok(encrypted) => encrypted,
         Err(err) => return Err(format!("Failed to save {}: {}", data_type, err)),
     };
-    let result = task::spawn_blocking(move || fs::write(file_path, encrypted)).await;
+
+    let file_path_clone = file_path.clone();
+    let result = task::spawn_blocking(move || {
+        if let Some(parent) = file_path_clone.parent() {
+            if !parent.exists() {
+                let _ = fs::create_dir_all(parent);
+            }
+        }
+        fs::write(file_path_clone, encrypted)
+    }).await;
+
     let result = result.map_err(|err| format!("{}", err))?;
     match result {
         Ok(()) => {
@@ -277,24 +288,9 @@ pub(crate) async fn get_data_from_local_storage(
 }
 
 async fn get_app_data_path(app_handle: &AppHandle, file_name: &str) -> Result<PathBuf, String> {
-    let data_dir = match app_handle.path().app_local_data_dir() {
-        Ok(dir) => dir,
-        Err(err) => {
-            return Err(format!(
-                "Could not resolve application data directory.\n{}",
-                err
-            ));
-        }
-    };
-    let data_dir_clone = data_dir.clone();
-    let result = task::spawn_blocking(move || fs::create_dir_all(data_dir_clone)).await;
-    let result = result.map_err(|err| format!("{}", err))?;
-    if let Err(err) = result {
-        return Err(format!(
-            "Could not create application data directory {:?}: {}",
-            data_dir, err
-        ));
-    }
-    let file_path = data_dir.join(file_name);
-    Ok(file_path)
+    let data_dir = app_handle.path().app_local_data_dir().map_err(|err| {
+        format!("Could not resolve application data directory.\n{}", err)
+    })?;
+
+    Ok(data_dir.join(file_name))
 }
