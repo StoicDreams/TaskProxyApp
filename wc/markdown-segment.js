@@ -65,6 +65,7 @@
             if (t._skipReconnect) {
                 return;
             }
+            t._options.setOptions(segmentOptions);
             let md = t.dataset.markdown;
             t.setMarkdown(md || '');
             t._inputMessage.addEventListener('input', ev => {
@@ -86,7 +87,6 @@
                     t.classList.remove('isEditing');
                 }
             });
-            t._options.setOptions(segmentOptions);
             t._options.addEventListener('change', ev => {
                 if (t._currentOption !== t._options.value) {
                     t._currentOption = t._options.value;
@@ -181,12 +181,9 @@
             const t = this;
             return t._inputType === inputTypes.DELETE ? null : t._markdown;
         },
-        render() {
+        async render() {
             const t = this;
-            if (!t._content.setHtml) {
-                setTimeout(() => t.render(), 100);
-                return;
-            }
+            await customElements.whenDefined('webui-content');
             t._content.setHtml('');
             switch (t._inputType) {
                 case inputTypes.SPECIAL:
@@ -246,7 +243,7 @@ display:none;
 </div>
 </div>
 <aside>
-<webui-button class="drag-handle" title="Click to edit, drag to move" start-icon="edit" theme="info"></webui-button>
+<webui-button class="drag-handle" title="Click to edit, drag to move" start-icon="pencil" theme="info"></webui-button>
 </aside>
 `
     });

@@ -36,6 +36,7 @@
         isLoadingDialog = null;
     }
     const messages = {};
+    const pendingWorkerRequests = new Map();
     class Tauri {
         openUrl = tauri.opener.openUrl;
         constructor() {
@@ -43,8 +44,15 @@
             worker.onmessage = (event) => {
                 if (!event.isTrusted) return;
                 let data = JSON.parse(event.data);
-                if (data.id) {
-                    messages[data.id] = data.message;
+                if (data.id && pendingWorkerRequests.has(data.id)) {
+                    const { resolve, reject, timer } = pendingWorkerRequests.get(data.id);
+                    clearTimeout(timer);
+                    pendingWorkerRequests.delete(data.id);
+                    if (data.message && data.message.ok) {
+                        resolve(data.message.msg);
+                    } else {
+                        reject(data.message ? data.message.msg : 'Unknown error');
+                    }
                 }
             };
         }
@@ -53,26 +61,18 @@
             hide: hideLoading
         }
         worker = {
-            send: (toRun, data) => {
+            send: (toRun, data, timeout = 60000) => {
                 let msg = { id: webui.uuid(), run: toRun, data: data };
                 let json = JSON.stringify(msg);
-                return new Promise(async (resolve, reject) => {
-                    worker.postMessage(json);
-                    let counter = 0;
-                    while (counter++ < 60000) {
-                        if (messages[msg.id]) {
-                            let result = messages[msg.id];
-                            delete messages[msg.id];
-                            if (result.ok) {
-                                resolve(result.msg);
-                            } else {
-                                reject(result.msg);
-                            }
-                            return;
+                return new Promise((resolve, reject) => {
+                    const timer = setTimeout(() => {
+                        if (pendingWorkerRequests.has(msg.id)) {
+                            pendingWorkerRequests.delete(msg.id);
+                            reject('Message never returned');
                         }
-                        await webui.wait(10);
-                    }
-                    reject('Message never returned');
+                    }, timeout);
+                    pendingWorkerRequests.set(msg.id, { resolve, reject, timer });
+                    worker.postMessage(json);
                 });
             }
         }
