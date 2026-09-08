@@ -17,7 +17,6 @@
         let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
         if (!md) {
             md = '';
-            await webui.proxy.saveProjectFile(myFile, md);
         }
         setMarkdown(md);
     }
@@ -149,7 +148,7 @@
         }
     }
     webui.define("app-page-handler", {
-        preload: 'app-markdown-segment dropdown input-text input-message',
+        preload: 'app:markdown-segment dropdown input-text input-message',
         constructor() {
             const t = this;
             comp = t;

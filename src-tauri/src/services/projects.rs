@@ -98,33 +98,29 @@ pub(crate) async fn get_project_file(
     state: State<'_, CurrentProject>,
     file_path: String,
 ) -> Result<String, String> {
-    let mut project_path = String::new();
-    {
-        for attempt in 1..=100 {
-            match state.lock() {
-                Ok(project_state) => {
-                    if !project_state.path.is_empty() {
-                        project_path = project_state.path.to_owned();
-                        break;
-                    }
-                }
-                Err(_) => (),
-            };
-            println!("Waiting for project state - {}", attempt);
-            sleep(Duration::from_millis(100)).await;
+    let project_path = {
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("Get Project File State failure: {}", err))?;
+        let project = project_state.to_owned();
+        if project.path.is_empty() {
+            return Err(String::from(
+                "Get Project File: Unable to load file, project not loaded.",
+            ));
         }
-    }
+        project.path
+    };
     if file_path.is_empty() {
+        return Err(String::from("Get Project File: File path is empty."));
+    }
+    let safe_file_path = PathBuf::from(&file_path);
+    if safe_file_path.is_absolute() || file_path.contains("..") {
         return Err(String::from(
-            "Get Project File: Unable to load page data, project not loaded.",
+            "Get Project File: Invalid file path. Path must be relative.",
         ));
     }
-    println!("Get project file: {} - {}", project_path, file_path);
-    if file_path.contains("./") || file_path.contains(".\\") {
-        return Err(String::from("Get Project File: Invalid file path."));
-    }
     let proj_path = PathBuf::from(project_path);
-    let file = proj_path.join(file_path);
+    let file = proj_path.join(safe_file_path);
     if !file.is_file() {
         return Err(String::from("Get Project File: File not found"));
     }
@@ -163,9 +159,10 @@ pub(crate) async fn save_project_file(
             "Save Project File Failed: File path is empty.",
         ));
     }
-    if file_path.contains("./") || file_path.contains(".\\") {
+    let safe_file_path = PathBuf::from(&file_path);
+    if safe_file_path.is_absolute() || file_path.contains("..") {
         return Err(format!(
-            "Save Project File Failed: Invalid file path:{}",
+            "Save Project File Failed: Invalid file path: {}",
             file_path
         ));
     }
@@ -341,12 +338,23 @@ async fn get_project_docs(project_path: &str) -> Vec<String> {
 }
 
 fn collect_md_files(current_path: &Path, root: &Path, docs: &mut Vec<String>) {
+    const IGNORED_DIRS: &[&str] = &[
+        ".taskproxy",
+        "target",
+        "dist",
+        "build",
+        "node_modules",
+        ".git"
+    ];
     if let Ok(entries) = fs::read_dir(current_path) {
         for entry in entries.flatten() {
             let path = entry.path();
 
             if path.is_dir() {
-                if path.file_name().map_or(false, |name| name == ".taskproxy") {
+                if path.file_name().map_or(false, |name| {
+                    let name_str = name.to_string_lossy();
+                    IGNORED_DIRS.contains(&name_str.as_ref())
+                }) {
                     continue;
                 }
                 collect_md_files(&path, root, docs);

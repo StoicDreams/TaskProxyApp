@@ -90,14 +90,14 @@
             const t = this;
             t.loadNavigation();
         },
-        loadNavigation() {
+        async loadNavigation() {
             const t = this;
-            if (!t._navPreview.setNavRoutes || webui.projectData.navigation === undefined) {
-                setTimeout(() => t.loadNavigation(), 10);
-                return;
-            }
-            t.nav = webui.clone(webui.projectData.navigation);
-            t._navPreview.setNavRoutes(t.nav);
+            await customElements.whenDefined('app-nav-preview');
+            webui.proxy.projects.runWhenLoaded(() => {
+                if (webui.projectData.navigation === undefined) return;
+                t.nav = webui.clone(webui.projectData.navigation);
+                t._navPreview.setNavRoutes(t.nav);
+            });
         },
         updateNav() {
             let t = this;

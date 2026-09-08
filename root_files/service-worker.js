@@ -18,13 +18,10 @@ const offlineAssetsInclude = [/\.wasm/, /\.html/, /\.js$/, /\.json$/, /\.css$/, 
 const offlineAssetsExclude = [/^service-worker\.js$/];
 
 async function onInstall(event) {
-    console.info(`Service worker: Install ${cacheName}`);
     self.skipWaiting();
 }
 
 async function onActivate(event) {
-    console.info(`Service worker: Activate ${cacheName}`);
-
     // Delete unused caches
     const cacheKeys = await caches.keys();
     await Promise.all(cacheKeys

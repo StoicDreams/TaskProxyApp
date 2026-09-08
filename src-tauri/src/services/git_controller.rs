@@ -131,22 +131,22 @@ pub(crate) async fn git_commit(
     let mut git_path = PathBuf::from(project_path);
     git_path.push(repo);
     let result = task::spawn_blocking(move || {
-        for file in &files {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(&git_path)
-                .arg("add")
-                .arg(file)
-                .output()
-                .map_err(|e| e.to_string())?;
+        if files.is_empty() {
+            return Err(String::from("No files provided to commit."));
+        }
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&git_path)
+            .arg("add")
+            .args(&files)
+            .output()
+            .map_err(|e| e.to_string())?;
 
-            if !output.status.success() {
-                return Err(format!(
-                    "Failed to add file '{}': {}",
-                    file,
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+        if !output.status.success() {
+            return Err(format!(
+                "Failed to add files: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
         let commit = Command::new("git")
             .arg("-C")
@@ -210,6 +210,7 @@ pub(crate) async fn get_git_changes(
             .arg(&git_root)
             .arg("status")
             .arg("--porcelain")
+            .arg("-uall")
             .output()
             .map_err(|e| e.to_string())?;
         if !output.status.success() {
@@ -217,26 +218,12 @@ pub(crate) async fn get_git_changes(
         }
         let mut files = vec![];
         for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let prefix = &line[0..3];
-            let file = line[3..].to_owned();
-            let mut path = git_path.to_owned();
-            path.push(file);
-            if path.is_dir() {
-                let sub_files = get_files_from_dir(&path);
-                for sub_file in sub_files {
-                    let sf_path = PathBuf::from(sub_file);
-                    if let Ok(sub_file) = sf_path.strip_prefix(&git_path) {
-                        let sub_file = sub_file.to_string_lossy().into_owned();
-                        files.push(format!("{}{}", prefix, sub_file));
-                    }
-                }
-            } else {
-                files.push(line.to_string());
-            }
+            files.push(line.to_string());
         }
         Ok(files)
     })
     .await;
+
     result.map_err(|err| format!("{}", err))?
 }
 
@@ -269,24 +256,6 @@ fn get_current_branch(repo_path: &str) -> Result<String, String> {
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
-}
-
-fn get_files_from_dir(path: &PathBuf) -> Vec<String> {
-    let mut files = vec![];
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if entry_path.is_dir() {
-                for sub_file in get_files_from_dir(&entry_path) {
-                    files.push(sub_file);
-                }
-            }
-            if entry_path.is_file() {
-                files.push(entry_path.as_path().to_string_lossy().to_string());
-            }
-        }
-    }
-    files
 }
 
 #[tauri::command]
@@ -336,6 +305,22 @@ fn find_git_repos(root: &str) -> Vec<String> {
 fn find_git_repos_recursive(root: &str, path: &PathBuf, results: &mut Vec<String>) {
     if !path.is_dir() {
         return;
+    }
+    // TODO: Make this extendable through a config file setting.
+    const IGNORED_DIRS: &[&str] = &[
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        ".taskproxy",
+        ".vscode",
+        ".git",
+        ".github"
+    ];
+    if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+        if IGNORED_DIRS.contains(&dir_name) {
+            return;
+        }
     }
     let git_path = path.join(".git");
     if git_path.is_dir() {

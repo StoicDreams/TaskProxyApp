@@ -30,13 +30,10 @@
             loadProjects();
         },
         disconnected() { },
-        setProjects(projects) {
+        async setProjects(projects) {
             const t = this;
             projects = projects || [];
-            if (!t._dropdown.setOptions) {
-                setTimeout(() => t.setProjects(projects), 10);
-                return;
-            }
+            await customElements.whenDefined('webui-dropdown');
             let dp = projects.map(item => { return { value: item.path, display: item.name } });
             t._dropdown.setOptions(dp);
             if (projects.length === 0) {

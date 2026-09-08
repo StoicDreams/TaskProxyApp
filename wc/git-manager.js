@@ -1,38 +1,5 @@
 "use strict"
 {
-    async function parseGitDiff(diffText) {
-        const added = {};
-        const removed = {};
-        const lines = diffText.split("\n");
-        let oldLineNum = 0;
-        let newLineNum = 0;
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            // Match hunk header like: @@ -1,5 +1,6 @@
-            const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-            if (i % 20 === 0) {
-                await webui.wait(1);
-            }
-            if (hunkMatch) {
-                oldLineNum = parseInt(hunkMatch[1], 10);
-                newLineNum = parseInt(hunkMatch[2], 10);
-                continue;
-            }
-            if (line.startsWith("+") && !line.startsWith("+++")) {
-                added[newLineNum] = line.slice(1);
-                newLineNum++;
-            } else if (line.startsWith("-") && !line.startsWith("---")) {
-                removed[oldLineNum] = line.slice(1);
-                oldLineNum++;
-            } else {
-                // Context line, increment both
-                oldLineNum++;
-                newLineNum++;
-            }
-        }
-        return { added, removed };
-    }
-
     webui.define("app-git-manager", {
         linkCss: true,
         watchVisibility: false,
@@ -71,6 +38,7 @@
         },
         async loadFileDiff(changeDetail) {
             let t = this;
+            await customElements.whenDefined('webui-canvas');
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
             t._viewOld.setLines([]);
             t._viewNew.setLines([]);
@@ -80,7 +48,6 @@
             let data = { change: changeDetail.change, isCompare: false };
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
             data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName) : '';
-
             switch (changeDetail.change) {
                 case "Add":
                     t._viewOld.classList.add('hidden');
@@ -96,10 +63,9 @@
                     t._viewNew.style.removeProperty('grid-column');
                     break;
             }
-
             if (changeDetail.change === 'Delete') {
-                let a = fileDiff.split('@@');
-                data.fileContent = a[a.length - 1].substring(1);
+                let a = data.fileDiff.split('@@');
+                data.fileContent = a.length > 1 ? a[a.length - 1].substring(1) : '';
             } else {
                 data.fileContent = await webui.proxy.getProjectFile(fullFilePath);
             }
@@ -117,6 +83,7 @@
             if (repo === undefined) return;
             let changes = await webui.proxy.git.getChanges(repo);
             t._fileName.innerHTML = '';
+            await customElements.whenDefined('webui-canvas');
             t._viewOld.setLines([]);
             t._viewNew.setLines([]);
             let first = null;
@@ -216,10 +183,12 @@
                 t.loadRepoChanges();
             });
             t._viewNew.addEventListener('change', _ => {
+                if (typeof t._viewNew.getScroll !== 'function' || typeof t._viewOld.setScroll !== 'function') return;
                 if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
                 t._viewOld.setScroll(t._viewNew.getScroll());
             });
             t._viewOld.addEventListener('change', _ => {
+                if (typeof t._viewOld.getScroll !== 'function' || typeof t._viewNew.setScroll !== 'function') return;
                 if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
                 t._viewNew.setScroll(t._viewOld.getScroll());
             });

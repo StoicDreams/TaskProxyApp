@@ -18,40 +18,35 @@
             switch (property) {
             }
         },
-        async loadFiles() {
+        loadFiles() {
             let t = this;
-            let counter = 0;
-            while (webui.projectData.docs === undefined && counter++ < 1000) {
-                await webui.wait(10);
-            }
-            t._files = webui.projectData.docs || [];
-            let options = [];
-            t._files.forEach(fileName => {
-                let item = {
-                    id: fileName,
-                    value: fileName,
-                    display: fileName
-                };
-                if (['readme.md', 'docs\\readme.md'].indexOf(fileName.toLowerCase()) !== -1) {
-                    options.unshift(item);
-                } else {
-                    options.push(item);
+            webui.proxy.projects.runWhenLoaded(() => {
+                t._files = webui.projectData.docs || [];
+                let options = [];
+                t._files.forEach(fileName => {
+                    let item = {
+                        id: fileName,
+                        value: fileName,
+                        display: fileName
+                    };
+                    if (['readme.md', 'docs\\readme.md'].indexOf(fileName.toLowerCase()) !== -1) {
+                        options.unshift(item);
+                    } else {
+                        options.push(item);
+                    }
+                });
+                t._fileSelector.setOptions(options);
+                if (options.length > 0) {
+                    t.loadFile(t._fileSelector.value);
                 }
             });
-            t._fileSelector.setOptions(options);
-            if (options.length > 0) {
-                t.loadFile(t._fileSelector.value);
-            }
         },
         async loadFile(file) {
             let t = this;
             t._message.value = '';
             if (!file) return;
             let fileContent = await webui.proxy.getProjectFile(file);
-            let counter = 0;
-            while (!t._content.setHtml && counter++ < 1000) {
-                await webui.wait(10);
-            }
+            await customElements.whenDefined('webui-content');
             if (fileContent !== undefined) {
                 t._content.setHtml(webui.parseMarkdown(fileContent));
                 t._message.value = fileContent;
