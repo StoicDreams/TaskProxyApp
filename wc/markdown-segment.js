@@ -105,12 +105,16 @@
             t._inputType = inputType;
             switch (inputType) {
                 case inputTypes.MULTI_LINE:
-                    t._inputMessage.value = t._inputValue;
+                    if (t._inputMessage.value !== t._inputValue) {
+                        t._inputMessage.value = t._inputValue;
+                    }
                     t._inputOptions.classList.remove('it-single');
                     t._inputOptions.classList.add('it-multi');
                     break;
                 case inputTypes.SINGLE_LINE:
-                    t._inputText.value = t._inputValue;
+                    if (t._inputMessage.value !== t._inputValue) {
+                        t._inputMessage.value = t._inputValue;
+                    }
                     t._inputOptions.classList.remove('it-multi');
                     t._inputOptions.classList.add('it-single');
                     break;
