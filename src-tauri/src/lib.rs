@@ -43,7 +43,8 @@ pub fn run() {
     builder = builder
         .manage(Arc::new(Mutex::new(Vec::<Project>::new())))
         .manage(Arc::new(Mutex::new(TaskProxyData::new())))
-        .manage(Arc::new(Mutex::new(ProjectData::new())));
+        .manage(Arc::new(Mutex::new(ProjectData::new())))
+        .manage(Arc::new(Mutex::new(crate::services::EmojiState::default())));
 
     // Setup window positioner
     builder = builder.setup(|app| {
@@ -162,7 +163,9 @@ pub fn run() {
             services::projects::load_projects,
             services::projects::save_project_data,
             services::projects::save_project_file,
-            services::projects::sync_project_data
+            services::projects::sync_project_data,
+            services::init_emoji_search,
+            services::search_emojis
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

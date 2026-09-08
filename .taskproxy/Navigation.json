@@ -1,18 +1,18 @@
 [
   {
     "name": "Tasks",
-    "icon": "star|backing|theme:primary|shape:circle",
+    "icon": "emoji-hammer_and_wrench|backing|theme:primary|shape:circle",
     "url": "/8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920",
     "children": null
   },
   {
     "name": "Folder",
-    "icon": "diamond|shape:badge|backing|inverted|theme:success|bordered",
+    "icon": "emoji-file_folder|shape:badge|backing|inverted|theme:success|bordered",
     "url": null,
     "children": [
       {
         "name": "Page",
-        "icon": "bell|theme:warning|backing|inverted|shape:badge|shade:duo",
+        "icon": "emoji-page_facing_up|theme:warning|backing|inverted|shape:badge|shade:duo",
         "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
         "children": null
       }
@@ -20,7 +20,7 @@
   },
   {
     "name": "New Page",
-    "icon": "hierarchy|fill|bordered|inverted|theme:info",
+    "icon": "emoji-new|fill|bordered|inverted|theme:info",
     "url": "/901091c2-ba23-481a-8fd2-534467758277",
     "children": null
   }

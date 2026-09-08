@@ -196,6 +196,14 @@
             webui.setData('app-nav-routes', webui.projectData.navigation);
             return tauri.core.invoke('save_project_data', { data: webui.projectData }).catch(errHandler);
         }
+        initEmojiSearch(supportedEmojis, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('init_emoji_search', { supportedEmojis: supportedEmojis }).catch(errHandler);
+        }
+        searchEmojis(query, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('search_emojis', { query: query }).catch(errHandler);
+        }
         setSecurityKey(secKey, errHandler) {
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('set_securitykey', { securityKey: secKey }).catch(errHandler);

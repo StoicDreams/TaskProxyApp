@@ -43,10 +43,11 @@
                 t._navIcon.value = ev.detail;
                 link.icon = ev.detail;
             });
-            t._navPreview.addEventListener('nav-preview-click', ev => {
+            t._navPreview.addEventListener('nav-preview-click', async ev => {
                 ev.preventDefault();
                 ev.stopPropagation();
                 link = ev.detail;
+                await customElements.whenDefined('webui-icon-search');
                 t._iconSearch.setIconFromCode(ev.detail.icon);
                 t._navName.value = ev.detail.name;
             });

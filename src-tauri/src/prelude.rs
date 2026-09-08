@@ -1,3 +1,4 @@
+#![allow(unused)]
 pub(crate) use crate::appdata::*;
 pub(crate) use crate::common::*;
 pub(crate) use crate::datatypes::*;
