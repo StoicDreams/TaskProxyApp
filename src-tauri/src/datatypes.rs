@@ -57,6 +57,7 @@ pub(crate) struct ProjectNavItem {
 pub(crate) struct TaskProxyData {
     pub is_saved: bool,
     pub save_interval_minutes: u64,
+    pub variables: Vec<String>,
     pub data: HashMap<String, Value>,
 }
 
@@ -106,6 +107,7 @@ impl TaskProxyData {
         TaskProxyData {
             is_saved: false,
             save_interval_minutes: 20,
+            variables: Vec::new(),
             data: HashMap::new(),
         }
     }

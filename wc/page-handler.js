@@ -11,6 +11,7 @@
     let myFile = '';
     let dragNDrop = getDragNDropSetup((_) => segments);
     let segments = [];
+    webui.currentPageVariables = [];
     async function loadProject() {
         myId = location.pathname.substring(1);
         myFile = `.taskproxy/pages/${myId}.md`;
@@ -67,8 +68,23 @@
     let topBar = setupBar(false);
     let bottomBar = setupBar(true);
     function setMarkdown(md) {
+        if (!comp) return;
         markdown = md;
         comp.innerHTML = '';
+        webui.currentPageVariables.forEach(key => webui.setData(key, undefined));
+        webui.currentPageVariables = [];
+        const dataRegex = /data-([a-zA-Z0-9-]+)="([^"]*)"/g;
+        let match;
+        while ((match = dataRegex.exec(md)) !== null) {
+            const key = match[1];
+            const value = match[2];
+            // Prevent overwriting internal webui-data routing properties like page-title
+            if (!key.startsWith('page-') || !key.startsWith('app-') || !key.startsWith('session-')) continue;
+            if (!webui.currentPageVariables.includes(key)) {
+                webui.currentPageVariables.push(key);
+            }
+            webui.setData(key, value);
+        }
         convertMarkdownToSegments(markdown);
         comp.appendChild(topBar);
         segments.forEach(segment => {
@@ -164,7 +180,7 @@
         },
         disconnected() {
             const t = this;
-            comp = null;
+            //comp = null;
             markdown = '';
             myId = '';
             myFile = '';
