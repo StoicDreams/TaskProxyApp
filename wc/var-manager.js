@@ -74,24 +74,35 @@
             value: webui.getData(k) || ''
         }));
         container.innerHTML = `
-            <webui-flex column gap="var(--padding)">
-                <div class="scope-section">
-                    <h3>Page Scope</h3>
-                    <webui-toggle-icon label="Null Page Variables (Use Higher Scope)" theme-on="primary"></webui-toggle-icon>
-                    <div id="var-page-list"></div>
-                </div>
-                <webui-line></webui-line>
-                <div class="scope-section">
-                    <h3>Project Scope</h3>
-                    <div id="var-project-list"></div>
-                </div>
-                <webui-line></webui-line>
-                <div class="scope-section">
-                    <h3>Global Scope (Secrets)</h3>
-                    <div id="var-global-list"></div>
-                </div>
-            </webui-flex>
-        `;
+<webui-flex align="center" justify="start">
+    <label>Enabled</label>
+    <webui-toggle-icon data-bind="app-env-page-enabled" data-default="true" label="Page" theme-on="primary"></webui-toggle-icon>
+    <webui-toggle-icon data-bind="app-env-project-enabled" data-default="true" label="Project" theme-on="primary"></webui-toggle-icon>
+    <webui-toggle-icon data-bind="app-env-global-enabled" data-default="true" label="Global" theme-on="primary"></webui-toggle-icon>
+</webui-flex>
+<webui-tabs theme="secondary" index="1" transition-timing="200">
+    <webui-button slot="tabs">Page</webui-button>
+    <webui-content slot="content">
+        <div id="var-page-list"></div>
+    </webui-content>
+    <webui-button slot="tabs">Project</webui-button>
+    <webui-content slot="content">
+        <webui-flex justify="center">
+            <webui-input-text data-bind="proj-var-name" label="Key"></webui-input-text>
+            <webui-button label="Add" theme="success"></webui-button>
+        </webui-flex>
+        <div id="var-project-list"></div>
+    </webui-content>
+    <webui-button slot="tabs">Global</webui-button>
+    <webui-content slot="content">
+        <webui-flex justify="center">
+            <webui-input-text data-bind="glob-var-name" label="Key"></webui-input-text>
+            <webui-button label="Add" theme="success"></webui-button>
+        </webui-flex>
+        <div id="var-global-list"></div>
+    </webui-content>
+</webui-tabs>
+`;
         setTimeout(() => {
             renderVariableList(container.querySelector('#var-page-list'), 'Page', pageVars, false);
             renderVariableList(container.querySelector('#var-project-list'), 'Project', projectVars, false);
