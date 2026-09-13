@@ -221,6 +221,7 @@
                     first = true;
                     t.loadFileDiff(details);
                 }
+                t.loadRemoteStatus();
             });
         },
         setAlert(msg, severity) {
@@ -412,6 +413,7 @@
             });
             t._btnRefresh.addEventListener('click', async _ => {
                 t.loadRepos();
+                t.loadRemoteStatus();
             });
             t._btnPush.addEventListener('click', async _ => {
                 t.setAlert();
@@ -424,6 +426,7 @@
                 if (result) {
                     t.setAlert(result, 'success');
                 }
+                t.loadRemoteStatus();
             });
             t._btnSync.addEventListener('click', async _ => {
                 t.setAlert();

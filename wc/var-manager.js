@@ -41,7 +41,7 @@
                                 if (!activeEnv.pageVariables) activeEnv.pageVariables = {};
                                 if (!activeEnv.pageVariables[currentPage]) activeEnv.pageVariables[currentPage] = {};
                                 activeEnv.pageVariables[currentPage][v.key] = ev.target.value;
-                                if (webui.proxy && webui.proxy.syncProjectData) webui.proxy.syncProjectData();
+                                webui.proxy.syncProjectData();
                             }
                         }
                     }
@@ -57,7 +57,7 @@
         if (!webui.projectData.environments || webui.projectData.environments.length === 0) {
             webui.projectData.environments = [{ name: 'dev', pageVariables: {} }];
             webui.projectData.activeEnvironment = 'dev';
-            if (webui.proxy && webui.proxy.syncProjectData) webui.proxy.syncProjectData();
+            webui.proxy.syncProjectData();
         }
         const environments = webui.projectData.environments;
         let activeEnvName = webui.projectData.activeEnvironment || 'dev';
