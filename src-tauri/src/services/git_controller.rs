@@ -491,3 +491,83 @@ pub(crate) async fn git_merge_branch(
     }).await;
     result.map_err(|err| format!("{}", err))?
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitRemoteStatus {
+    pub has_upstream: bool,
+    pub upstream_name: String,
+    pub ahead: u32,
+    pub behind: u32,
+    pub remote_url: String,
+}
+
+#[tauri::command]
+pub(crate) async fn get_git_remote_status(
+    repo: String,
+    state: State<'_, CurrentProject>,
+) -> Result<GitRemoteStatus, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+    let result = task::spawn_blocking(move || -> Result<GitRemoteStatus, String> {
+        let git_path_str = git_path.to_string_lossy().into_owned();
+        let mut remote_url = String::new();
+        if let Ok(output) = Command::new("git").arg("-C").arg(&git_path_str).arg("config").arg("--get").arg("remote.origin.url").output() {
+            remote_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        let mut upstream_name = String::new();
+        if let Ok(output) = Command::new("git").arg("-C").arg(&git_path_str).arg("rev-parse").arg("--abbrev-ref").arg("--symbolic-full-name").arg("@{u}").output() {
+            if output.status.success() {
+                upstream_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            }
+        }
+        let has_upstream = !upstream_name.is_empty();
+        let mut ahead = 0;
+        let mut behind = 0;
+        if has_upstream {
+            if let Ok(output) = Command::new("git").arg("-C").arg(&git_path_str).arg("rev-list").arg("--left-right").arg("--count").arg("HEAD...@{u}").output() {
+                if output.status.success() {
+                    let counts = String::from_utf8_lossy(&output.stdout);
+                    let parts: Vec<&str> = counts.trim().split_whitespace().collect();
+                    if parts.len() == 2 {
+                        ahead = parts[0].parse().unwrap_or(0);
+                        behind = parts[1].parse().unwrap_or(0);
+                    }
+                }
+            }
+        }
+        Ok(GitRemoteStatus { has_upstream, upstream_name, ahead, behind, remote_url })
+    }).await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+#[tauri::command]
+pub(crate) async fn git_fetch(
+    repo: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+    let result = task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .arg("-C").arg(&git_path)
+            .arg("fetch")
+            .output().map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(String::from("Fetch successful. Remote data is up to date."))
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).into_owned())
+        }
+    }).await;
+    result.map_err(|err| format!("{}", err))?
+}

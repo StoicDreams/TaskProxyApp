@@ -20,10 +20,13 @@
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
+            t._btnFetch = t.template.querySelector('#btn-fetch');
             t._btnCreateBranch = t.template.querySelector('webui-button[label="New Branch"]');
             t._btnMergeBranch = t.template.querySelector('webui-button[label="Merge"]');
             t._btnDeleteBranch = t.template.querySelector('webui-button[label="Delete"]');
             t._instructions = t.template.querySelector('.instructions');
+            t._btnRemoteTab = t.template.querySelector('#tab-remote');
+            t._remoteStatusContainer = t.template.querySelector('#remote-status-container');
             t._isSwitchingBranch = false;
         },
         async loadRepos() {
@@ -58,6 +61,34 @@
             } else {
                 t._branches.classList.add('hidden');
             }
+        },
+        async loadRemoteStatus() {
+            let t = this;
+            let repo = t._repos.value;
+            if (repo === undefined) return;
+            t._remoteStatusContainer.innerHTML = '<em>Checking remote sync status...</em>';
+            let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
+            if (!status) {
+                t._remoteStatusContainer.innerHTML = '<em style="color: var(--color-danger);">Failed to retrieve remote status.</em>';
+                return;
+            }
+            let html = `<webui-flex column gap="0.5rem">`;
+            html += `<div><strong>Remote URL:</strong> ${status.remoteUrl || 'No origin defined'}</div>`;
+            if (status.hasUpstream) {
+                html += `<div><strong>Tracking Branch:</strong> ${status.upstreamName}</div>`;
+                html += `<div><strong>Sync Status:</strong> `;
+                if (status.ahead === 0 && status.behind === 0) {
+                    html += `<span style="color: var(--color-success);">Up to date with remote</span>`;
+                } else {
+                    if (status.ahead > 0) html += `<span style="color: var(--color-secondary); margin-right: 1rem;">${status.ahead} Commits Ahead (Pending Push)</span> `;
+                    if (status.behind > 0) html += `<span style="color: var(--color-warning);">${status.behind} Commits Behind (Pending Pull)</span>`;
+                }
+                html += `</div>`;
+            } else {
+                html += `<div><span style="color: var(--color-danger);">No remote tracking branch set. Publish this branch to synchronize.</span></div>`;
+            }
+            html += `</webui-flex>`;
+            t._remoteStatusContainer.innerHTML = html;
         },
         async loadFileDiff(changeDetail) {
             let t = this;
@@ -205,6 +236,7 @@
                 webui.projectData.data.selectedGitRepo = t._repos.value;
                 await t.loadBranches();
                 t.loadRepoChanges();
+                if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
             });
             t._branches.addEventListener('change', async _ => {
                 if (t._isSwitchingBranch) return;
@@ -219,14 +251,28 @@
                 if (result) {
                     t.setAlert(result, 'success');
                     t.loadRepoChanges();
+                    if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
                 }
+            });
+            t._btnFetch.addEventListener('click', async _ => {
+                let repo = t._repos.value;
+                if (!repo) return t.setAlert('No repo is set!');
+                t.setAlert('Fetching updates from remote...', 'info');
+                let result = await webui.proxy.git.fetch(repo, msg => t.setAlert(msg));
+                if (result) {
+                    t.setAlert(result, 'success');
+                    await t.loadRemoteStatus();
+                }
+            });
+            t._btnRemoteTab.addEventListener('click', _ => {
+                t.loadRemoteStatus();
             });
             t._btnCreateBranch.addEventListener('click', async _ => {
                 let repo = t._repos.value;
                 if (repo === undefined) return t.setAlert('No repo is set!');
                 await webui.dialog({
                     title: 'Create New Branch',
-                    content: `<webui-flex direction="column"><webui-input-text name="branchName" label="Branch Name"></webui-input-text></webui-flex>`,
+                    content: `<webui-flex column><webui-input-text name="branchName" label="Branch Name"></webui-input-text></webui-flex>`,
                     confirm: 'Create',
                     cancel: 'Cancel',
                     onconfirm: async (data, content) => {
@@ -259,7 +305,7 @@
                 await webui.dialog({
                     title: 'Delete Branch',
                     content: `
-                        <webui-flex direction="column">
+                        <webui-flex column>
                             <label>Select branch to delete:</label>
                             <webui-dropdown id="${dpId}" name="branchName" style="margin-top: 0.5rem;"></webui-dropdown>
                         </webui-flex>`,
@@ -294,7 +340,7 @@
                 await webui.dialog({
                     title: 'Merge Branch',
                     content: `
-                        <webui-flex direction="column">
+                        <webui-flex column>
                             <label>Select branch to merge into current (${t._branches.value}):</label>
                             <webui-dropdown id="${dpId}" name="branchName" style="margin-top: 0.5rem;"></webui-dropdown>
                         </webui-flex>`,
@@ -452,12 +498,18 @@ pre {
             <webui-button theme="danger" label="Delete"></webui-button>
         </webui-flex>
     </webui-content>
-    <webui-button slot="tabs">Remote</webui-button>
+    <webui-button slot="tabs" id="tab-remote">Remote</webui-button>
     <webui-content slot="content" nodetach>
-        <webui-flex gap="var(--padding)" align="center" style="margin-top: var(--padding);">
-            <webui-button theme="tertiary" label="Pull"></webui-button>
-            <webui-button theme="secondary" label="Push"></webui-button>
-            <webui-button theme="info" label="Sync"></webui-button>
+        <webui-flex column gap="var(--padding)" style="margin-top: var(--padding);">
+            <div id="remote-status-container" style="padding: var(--padding); background: var(--site-background-color); color: var(--site-background-offset); border: 1px solid var(--color-info); border-radius: 4px;">
+                <!-- Dynamically populated -->
+            </div>
+            <webui-flex gap="var(--padding)" align="center">
+                <webui-button theme="info" label="Fetch" id="btn-fetch"></webui-button>
+                <webui-button theme="tertiary" label="Pull"></webui-button>
+                <webui-button theme="secondary" label="Push"></webui-button>
+                <webui-button theme="success" label="Sync"></webui-button>
+            </webui-flex>
         </webui-flex>
     </webui-content>
 </webui-tabs>

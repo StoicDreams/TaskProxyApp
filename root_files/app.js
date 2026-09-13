@@ -148,7 +148,19 @@
                 let result = await tauri.core.invoke('git_sync', { repo: repo }).catch(errHandler);
                 if (!result) return;
                 return result;
-            }
+            },
+            getRemoteStatus: async (repo, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('get_git_remote_status', { repo: repo }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            fetch: async (repo, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_fetch', { repo: repo }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
         }
         projects = {
             isLoaded: false,

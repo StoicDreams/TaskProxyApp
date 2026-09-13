@@ -160,6 +160,8 @@ pub fn run() {
             services::git_controller::git_create_branch,
             services::git_controller::git_delete_branch,
             services::git_controller::git_merge_branch,
+            services::git_controller::get_git_remote_status,
+            services::git_controller::git_fetch,
             services::projects::greet,
             services::projects::add_project,
             services::projects::get_project_data,

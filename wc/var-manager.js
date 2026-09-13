@@ -145,7 +145,7 @@
                         await webui.dialog({
                             title: 'New Environment',
                             content: `
-                                <webui-flex direction="column" gap="var(--padding)">
+                                <webui-flex column gap="var(--padding)">
                                     <webui-input-text id="new-env-input" name="envName" maxlength="20" label="Environment Name"></webui-input-text>
                                 </webui-flex>
                             `,
