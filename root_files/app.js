@@ -113,9 +113,9 @@
                 if (!result) return;
                 return result;
             },
-            createBranch: async (repo, branch, errHandler) => {
+            createBranch: async (repo, branch, baseBranch, errHandler) => {
                 errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_create_branch', { repo: repo, branch: branch }).catch(errHandler);
+                let result = await tauri.core.invoke('git_create_branch', { repo: repo, branch: branch, baseBranch: baseBranch }).catch(errHandler);
                 if (!result) return;
                 return result;
             },

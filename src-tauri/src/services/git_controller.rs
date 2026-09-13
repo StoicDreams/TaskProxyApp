@@ -1,5 +1,21 @@
 use crate::prelude::*;
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitBranchDetail {
+    pub name: String,
+    pub is_current: bool,
+    pub created_date: String,
+    pub updated_date: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitBranchInfo {
+    pub branches: Vec<GitBranchDetail>,
+    pub current_branch: String,
+}
+
 #[tauri::command]
 pub(crate) async fn git_push(
     repo: String,
@@ -338,12 +354,6 @@ fn find_git_repos_recursive(root: &str, path: &PathBuf, results: &mut Vec<String
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GitBranchInfo {
-    pub branches: Vec<String>,
-    pub current_branch: String,
-}
 
 #[tauri::command]
 pub(crate) async fn get_git_branches(
@@ -360,31 +370,50 @@ pub(crate) async fn get_git_branches(
         }
         project.path
     };
+
     let mut git_path = PathBuf::from(project_path);
     if !repo.is_empty() { git_path.push(repo); }
+
     let result = task::spawn_blocking(move || {
         let output = Command::new("git")
             .arg("-C").arg(&git_path)
-            .arg("branch")
+            .arg("for-each-ref")
+            .arg("--format=%(HEAD)|%(refname:short)|%(authordate:short)|%(committerdate:short)")
+            .arg("refs/heads/")
             .output().map_err(|e| e.to_string())?;
+
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
+
         let mut branches = Vec::new();
         let mut current_branch = String::new();
+
         for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('*') {
-                let b = trimmed[1..].trim().to_string();
-                current_branch = b.clone();
-                branches.push(b);
-            } else {
-                branches.push(trimmed.to_string());
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() == 4 {
+                let is_current = parts[0].trim() == "*";
+                let name = parts[1].trim().to_string();
+                let created_date = parts[2].trim().to_string();
+                let updated_date = parts[3].trim().to_string();
+
+                if is_current {
+                    current_branch = name.clone();
+                }
+
+                branches.push(GitBranchDetail {
+                    name,
+                    is_current,
+                    created_date,
+                    updated_date,
+                });
             }
         }
+
         Ok(GitBranchInfo { branches, current_branch })
     })
     .await;
+
     result.map_err(|err| format!("{}", err))?
 }
 
@@ -418,6 +447,7 @@ pub(crate) async fn git_switch_branch(
 pub(crate) async fn git_create_branch(
     repo: String,
     branch: String,
+    base_branch: String,
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
@@ -427,16 +457,23 @@ pub(crate) async fn git_create_branch(
     };
     let mut git_path = PathBuf::from(project_path);
     if !repo.is_empty() { git_path.push(repo); }
+
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("checkout").arg("-b").arg(&branch)
-            .output().map_err(|e| e.to_string())?;
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(&git_path).arg("checkout").arg("-b").arg(&branch);
+
+        if !base_branch.is_empty() {
+            cmd.arg(&base_branch);
+        }
+
+        let output = cmd.output().map_err(|e| e.to_string())?;
+
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         Ok(format!("Branch '{}' created.", branch))
     }).await;
+
     result.map_err(|err| format!("{}", err))?
 }
 

@@ -4,11 +4,10 @@
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: 'tabs',
+        preload: 'tabs table',
         constructor() {
             const t = this;
             t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
-            t._branches = t.template.querySelector('webui-dropdown[label="Branch"]');
             t._fileName = t.template.querySelector('h3');
             t._filesContainer = t.template.querySelector('.files');
             t._viewNew = t.template.querySelector('.view-new');
@@ -22,20 +21,19 @@
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
             t._btnFetch = t.template.querySelector('#btn-fetch');
-            t._btnCreateBranch = t.template.querySelector('webui-button[label="New Branch"]');
-            t._btnMergeBranch = t.template.querySelector('webui-button[label="Merge"]');
-            t._btnDeleteBranch = t.template.querySelector('webui-button[label="Delete"]');
             t._instructions = t.template.querySelector('.instructions');
             t._btnRemoteTab = t.template.querySelector('#tab-remote');
             t._remoteStatusContainer = t.template.querySelector('#remote-status-container');
-            t._isSwitchingBranch = false;
+            t._branchTable = t.template.querySelector('#branch-table');
+            t._branchList = [];
+            t._currentBranch = '';
         },
         async loadRepos() {
             let t = this;
             let repos = await webui.proxy.git.getRepos();
             if (repos.length === 0) {
                 t._repos.classList.add('hidden');
-                t._branches.classList.add('hidden');
+                webui.setData('git-branches', []);
             } else {
                 let options = repos.map(item => { return { id: item, value: item, display: item === '' ? 'Root' : item } });
                 t._repos.setOptions(options);
@@ -52,16 +50,33 @@
             if (repo === undefined) return;
             let branchInfo = await webui.proxy.git.getBranches(repo, msg => t.setAlert(msg));
             if (branchInfo && branchInfo.branches) {
-                t._branches.classList.remove('hidden');
                 t._branchList = branchInfo.branches;
-                let options = branchInfo.branches.map(b => { return { id: b, value: b, display: b } });
-                t._branches.setOptions(options);
-                t._isSwitchingBranch = true;
-                t._branches.value = branchInfo.current_branch;
-                t._isSwitchingBranch = false;
+                t._currentBranch = branchInfo.currentBranch;
             } else {
-                t._branches.classList.add('hidden');
+                t._branchList = [];
+                t._currentBranch = '';
             }
+            t.renderBranchesTable();
+        },
+        renderBranchesTable() {
+            let t = this;
+            if (!t._branchTable) return;
+            let tableData = (t._branchList || []).map(b => {
+                let isCurrent = b.isCurrent;
+                return {
+                    ...b,
+                    nameHtml: `${isCurrent ? '<webui-icon icon="star|fill|theme:warning" style="margin-right: 0.5rem;"></webui-icon>' : ''}${b.name}`,
+                    actionsHtml: `
+                        <webui-flex gap="0.5rem" justify="right" align="center">
+                            ${!isCurrent ? `<webui-button theme="info" class="btn-switch" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Switch</webui-button>` : `<span style="padding: 0.25rem 0.5rem; font-size: 0.85rem; color: var(--color-success); font-weight: bold;">Active</span>`}
+                            <webui-button theme="secondary" class="btn-new" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">New</webui-button>
+                            ${!isCurrent ? `<webui-button theme="warning" class="btn-merge" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Merge</webui-button>` : ''}
+                            ${!isCurrent ? `<webui-button theme="danger" class="btn-delete" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Delete</webui-button>` : ''}
+                        </webui-flex>
+                    `
+                };
+            });
+            webui.setData('git-branches', tableData);
         },
         async loadRemoteStatus() {
             let t = this;
@@ -240,20 +255,71 @@
                 t.loadRepoChanges();
                 if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
             });
-            t._branches.addEventListener('change', async _ => {
-                if (t._isSwitchingBranch) return;
-                t.setAlert();
+            t._branchTable.addEventListener('click', async ev => {
+                let btn = webui.closest(ev, 'webui-button');
+                if (!btn) return;
+                let targetBranch = btn.getAttribute('data-branch');
+                if (!targetBranch) return;
                 let repo = t._repos.value;
-                let targetBranch = t._branches.value;
-                if (!repo || !targetBranch) return;
-                let result = await webui.proxy.git.switchBranch(repo, targetBranch, msg => {
-                    t.setAlert(msg);
-                    t.loadBranches();
-                });
-                if (result) {
-                    t.setAlert(result, 'success');
-                    t.loadRepoChanges();
-                    if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
+                if (btn.classList.contains('btn-switch')) {
+                    t.setAlert();
+                    let result = await webui.proxy.git.switchBranch(repo, targetBranch, msg => {
+                        t.setAlert(msg);
+                        t.loadBranches();
+                    });
+                    if (result) {
+                        t.setAlert(result, 'success');
+                        t.loadRepoChanges();
+                        if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
+                    }
+                } else if (btn.classList.contains('btn-new')) {
+                    await webui.dialog({
+                        title: `Create New Branch from '${targetBranch}'`,
+                        content: `<webui-flex column><webui-input-text name="branchName" label="New Branch Name"></webui-input-text></webui-flex>`,
+                        confirm: 'Create',
+                        cancel: 'Cancel',
+                        onconfirm: async (data, content) => {
+                            let branchName = Object.fromEntries(data).branchName.trim();
+                            if (!branchName) return content.alert('Branch name cannot be empty.');
+                            let result = await webui.proxy.git.createBranch(repo, branchName, targetBranch, msg => content.alert(msg));
+                            if (result) {
+                                t.setAlert(result, 'success');
+                                await t.loadBranches();
+                                return true;
+                            }
+                        }
+                    });
+                } else if (btn.classList.contains('btn-merge')) {
+                    await webui.dialog({
+                        title: 'Merge Branch',
+                        content: `<p>Are you sure you want to merge <strong>${targetBranch}</strong> into the current branch (<strong>${t._currentBranch}</strong>)?</p>`,
+                        confirm: 'Merge',
+                        cancel: 'Cancel',
+                        onconfirm: async (data, content) => {
+                            let result = await webui.proxy.git.mergeBranch(repo, targetBranch, msg => content.alert(msg));
+                            if (result) {
+                                t.setAlert(result, 'success');
+                                await t.loadBranches();
+                                t.loadRepoChanges();
+                                return true;
+                            }
+                        }
+                    });
+                } else if (btn.classList.contains('btn-delete')) {
+                    await webui.dialog({
+                        title: 'Delete Branch',
+                        content: `<p>Are you sure you want to delete the branch <strong>${targetBranch}</strong>?</p>`,
+                        confirm: 'Delete',
+                        cancel: 'Cancel',
+                        onconfirm: async (data, content) => {
+                            let result = await webui.proxy.git.deleteBranch(repo, targetBranch, msg => content.alert(msg));
+                            if (result) {
+                                t.setAlert(result, 'success');
+                                await t.loadBranches();
+                                return true;
+                            }
+                        }
+                    });
                 }
             });
             t._btnFetch.addEventListener('click', async _ => {
@@ -268,98 +334,6 @@
             });
             t._btnRemoteTab.addEventListener('click', _ => {
                 t.loadRemoteStatus();
-            });
-            t._btnCreateBranch.addEventListener('click', async _ => {
-                let repo = t._repos.value;
-                if (repo === undefined) return t.setAlert('No repo is set!');
-                await webui.dialog({
-                    title: 'Create New Branch',
-                    content: `<webui-flex column><webui-input-text name="branchName" label="Branch Name"></webui-input-text></webui-flex>`,
-                    confirm: 'Create',
-                    cancel: 'Cancel',
-                    onconfirm: async (data, content) => {
-                        let branchName = Object.fromEntries(data).branchName.trim();
-                        if (!branchName) return content.alert('Branch name cannot be empty.');
-                        let result = await webui.proxy.git.createBranch(repo, branchName, msg => content.alert(msg));
-                        if (result) {
-                            t.setAlert(result, 'success');
-                            await t.loadBranches();
-                            t.loadRepoChanges();
-                            return true;
-                        }
-                    }
-                });
-            });
-            t._btnDeleteBranch.addEventListener('click', async _ => {
-                let repo = t._repos.value;
-                if (repo === undefined) return t.setAlert('No repo is set!');
-                let branchOptions = (t._branchList || []).filter(b => b !== t._branches.value)
-                    .map(b => ({ id: b, value: b, display: b }));
-                let dpId = `dp-delete-${webui.uuid()}`;
-                setTimeout(async () => {
-                    let dp = document.getElementById(dpId);
-                    if (dp) {
-                        await customElements.whenDefined('webui-dropdown');
-                        dp.setOptions(branchOptions);
-                        if(branchOptions.length > 0) dp.value = branchOptions[0].value;
-                    }
-                }, 50);
-                await webui.dialog({
-                    title: 'Delete Branch',
-                    content: `
-                        <webui-flex column>
-                            <label>Select branch to delete:</label>
-                            <webui-dropdown id="${dpId}" name="branchName" style="margin-top: 0.5rem;"></webui-dropdown>
-                        </webui-flex>`,
-                    confirm: 'Delete',
-                    cancel: 'Cancel',
-                    onconfirm: async (data, content) => {
-                        let branchName = Object.fromEntries(data).branchName;
-                        if (!branchName) return content.alert('No branch selected.');
-                        let result = await webui.proxy.git.deleteBranch(repo, branchName, msg => content.alert(msg));
-                        if (result) {
-                            t.setAlert(result, 'success');
-                            await t.loadBranches();
-                            return true;
-                        }
-                    }
-                });
-            });
-            t._btnMergeBranch.addEventListener('click', async _ => {
-                let repo = t._repos.value;
-                if (repo === undefined) return t.setAlert('No repo is set!');
-                let branchOptions = (t._branchList || []).filter(b => b !== t._branches.value)
-                    .map(b => ({ id: b, value: b, display: b }));
-                let dpId = `dp-merge-${webui.uuid()}`;
-                setTimeout(async () => {
-                    let dp = document.getElementById(dpId);
-                    if (dp) {
-                        await customElements.whenDefined('webui-dropdown');
-                        dp.setOptions(branchOptions);
-                        if(branchOptions.length > 0) dp.value = branchOptions[0].value;
-                    }
-                }, 50);
-                await webui.dialog({
-                    title: 'Merge Branch',
-                    content: `
-                        <webui-flex column>
-                            <label>Select branch to merge into current (${t._branches.value}):</label>
-                            <webui-dropdown id="${dpId}" name="branchName" style="margin-top: 0.5rem;"></webui-dropdown>
-                        </webui-flex>`,
-                    confirm: 'Merge',
-                    cancel: 'Cancel',
-                    onconfirm: async (data, content) => {
-                        let branchName = Object.fromEntries(data).branchName;
-                        if (!branchName) return content.alert('No branch selected.');
-                        let result = await webui.proxy.git.mergeBranch(repo, branchName, msg => content.alert(msg));
-                        if (result) {
-                            t.setAlert(result, 'success');
-                            await t.loadBranches();
-                            t.loadRepoChanges();
-                            return true;
-                        }
-                    }
-                });
             });
             t._viewNew.addEventListener('change', _ => {
                 if (typeof t._viewNew.getScroll !== 'function' || typeof t._viewOld.setScroll !== 'function') return;
@@ -504,12 +478,17 @@ pre {
     </webui-content>
     <webui-button slot="tabs">Branches</webui-button>
     <webui-content slot="content" nodetach>
-        <webui-flex gap="var(--padding)" align="center" style="margin-top: var(--padding);">
-            <webui-dropdown class="hidden" label="Branch"></webui-dropdown>
-            <webui-button theme="secondary" label="New Branch"></webui-button>
-            <webui-button theme="warning" label="Merge"></webui-button>
-            <webui-button theme="danger" label="Delete"></webui-button>
-        </webui-flex>
+        <div style="margin-top: var(--padding); overflow-x: auto;">
+            <webui-table
+                id="branch-table"
+                theme="secondary"
+                columns="Branch|nameHtml;Created|createdDate;Updated|updatedDate;:Actions:|actionsHtml"
+                column-formats="nameHtml:html;actionsHtml:html"
+                sortable="nameHtml;createdDate;updatedDate"
+                data-subscribe="git-branches:setData"
+                bordered>
+            </webui-table>
+        </div>
     </webui-content>
     <webui-button slot="tabs" id="tab-remote">Remote</webui-button>
     <webui-content slot="content" nodetach>
