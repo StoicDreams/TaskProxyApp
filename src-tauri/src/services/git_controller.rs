@@ -338,3 +338,156 @@ fn find_git_repos_recursive(root: &str, path: &PathBuf, results: &mut Vec<String
         }
     }
 }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitBranchInfo {
+    pub branches: Vec<String>,
+    pub current_branch: String,
+}
+
+#[tauri::command]
+pub(crate) async fn get_git_branches(
+    repo: String,
+    state: State<'_, CurrentProject>,
+) -> Result<GitBranchInfo, String> {
+    let project_path = {
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("get_git_branches State failure: {}", err))?;
+        let project = project_state.to_owned();
+        if project.path.is_empty() {
+            return Err(String::from("get_git_branches path failure: Project not loaded."));
+        }
+        project.path
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+    let result = task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .arg("-C").arg(&git_path)
+            .arg("branch")
+            .output().map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        let mut branches = Vec::new();
+        let mut current_branch = String::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('*') {
+                let b = trimmed[1..].trim().to_string();
+                current_branch = b.clone();
+                branches.push(b);
+            } else {
+                branches.push(trimmed.to_string());
+            }
+        }
+        Ok(GitBranchInfo { branches, current_branch })
+    })
+    .await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+#[tauri::command]
+pub(crate) async fn git_switch_branch(
+    repo: String,
+    branch: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("git_switch_branch State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+    let result = task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .arg("-C").arg(&git_path)
+            .arg("switch").arg(&branch)
+            .output().map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        Ok(String::from("Branch switched successfully."))
+    }).await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+#[tauri::command]
+pub(crate) async fn git_create_branch(
+    repo: String,
+    branch: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("git_create_branch State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+    let result = task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .arg("-C").arg(&git_path)
+            .arg("checkout").arg("-b").arg(&branch)
+            .output().map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        Ok(format!("Branch '{}' created.", branch))
+    }).await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+#[tauri::command]
+pub(crate) async fn git_delete_branch(
+    repo: String,
+    branch: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("git_delete_branch State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+    let result = task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .arg("-C").arg(&git_path)
+            .arg("branch").arg("-D").arg(&branch)
+            .output().map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        Ok(format!("Branch '{}' deleted.", branch))
+    }).await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+#[tauri::command]
+pub(crate) async fn git_merge_branch(
+    repo: String,
+    branch: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("git_merge_branch State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+    let result = task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .arg("-C").arg(&git_path)
+            .arg("merge").arg(&branch)
+            .output().map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }).await;
+    result.map_err(|err| format!("{}", err))?
+}

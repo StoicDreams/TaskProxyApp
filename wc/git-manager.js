@@ -4,10 +4,11 @@
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: '',
+        preload: 'tabs',
         constructor() {
             const t = this;
             t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
+            t._branches = t.template.querySelector('webui-dropdown[label="Branch"]');
             t._fileName = t.template.querySelector('h3');
             t._filesContainer = t.template.querySelector('.files');
             t._viewNew = t.template.querySelector('.view-new');
@@ -19,13 +20,18 @@
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
+            t._btnCreateBranch = t.template.querySelector('webui-button[label="New Branch"]');
+            t._btnMergeBranch = t.template.querySelector('webui-button[label="Merge"]');
+            t._btnDeleteBranch = t.template.querySelector('webui-button[label="Delete"]');
             t._instructions = t.template.querySelector('.instructions');
+            t._isSwitchingBranch = false;
         },
         async loadRepos() {
             let t = this;
             let repos = await webui.proxy.git.getRepos();
             if (repos.length === 0) {
                 t._repos.classList.add('hidden');
+                t._branches.classList.add('hidden');
             } else {
                 let options = repos.map(item => { return { id: item, value: item, display: item === '' ? 'Root' : item } });
                 t._repos.setOptions(options);
@@ -33,8 +39,25 @@
                 if (webui.projectData.data.selectedGitRepo) {
                     t._repos.value = webui.projectData.data.selectedGitRepo;
                 }
+                await t.loadBranches();
             }
-
+        },
+        async loadBranches() {
+            let t = this;
+            let repo = t._repos.value;
+            if (repo === undefined) return;
+            let branchInfo = await webui.proxy.git.getBranches(repo, msg => t.setAlert(msg));
+            if (branchInfo && branchInfo.branches) {
+                t._branches.classList.remove('hidden');
+                t._branchList = branchInfo.branches;
+                let options = branchInfo.branches.map(b => { return { id: b, value: b, display: b } });
+                t._branches.setOptions(options);
+                t._isSwitchingBranch = true;
+                t._branches.value = branchInfo.current_branch;
+                t._isSwitchingBranch = false;
+            } else {
+                t._branches.classList.add('hidden');
+            }
         },
         async loadFileDiff(changeDetail) {
             let t = this;
@@ -178,9 +201,117 @@
             webui.proxy.projects.runWhenLoaded(() => {
                 t.loadRepos();
             });
-            t._repos.addEventListener('change', _ => {
+            t._repos.addEventListener('change', async _ => {
                 webui.projectData.data.selectedGitRepo = t._repos.value;
+                await t.loadBranches();
                 t.loadRepoChanges();
+            });
+            t._branches.addEventListener('change', async _ => {
+                if (t._isSwitchingBranch) return;
+                t.setAlert();
+                let repo = t._repos.value;
+                let targetBranch = t._branches.value;
+                if (!repo || !targetBranch) return;
+                let result = await webui.proxy.git.switchBranch(repo, targetBranch, msg => {
+                    t.setAlert(msg);
+                    t.loadBranches();
+                });
+                if (result) {
+                    t.setAlert(result, 'success');
+                    t.loadRepoChanges();
+                }
+            });
+            t._btnCreateBranch.addEventListener('click', async _ => {
+                let repo = t._repos.value;
+                if (repo === undefined) return t.setAlert('No repo is set!');
+                await webui.dialog({
+                    title: 'Create New Branch',
+                    content: `<webui-flex direction="column"><webui-input-text name="branchName" label="Branch Name"></webui-input-text></webui-flex>`,
+                    confirm: 'Create',
+                    cancel: 'Cancel',
+                    onconfirm: async (data, content) => {
+                        let branchName = Object.fromEntries(data).branchName.trim();
+                        if (!branchName) return content.alert('Branch name cannot be empty.');
+                        let result = await webui.proxy.git.createBranch(repo, branchName, msg => content.alert(msg));
+                        if (result) {
+                            t.setAlert(result, 'success');
+                            await t.loadBranches();
+                            t.loadRepoChanges();
+                            return true;
+                        }
+                    }
+                });
+            });
+            t._btnDeleteBranch.addEventListener('click', async _ => {
+                let repo = t._repos.value;
+                if (repo === undefined) return t.setAlert('No repo is set!');
+                let branchOptions = (t._branchList || []).filter(b => b !== t._branches.value)
+                    .map(b => ({ id: b, value: b, display: b }));
+                let dpId = `dp-delete-${webui.uuid()}`;
+                setTimeout(async () => {
+                    let dp = document.getElementById(dpId);
+                    if (dp) {
+                        await customElements.whenDefined('webui-dropdown');
+                        dp.setOptions(branchOptions);
+                        if(branchOptions.length > 0) dp.value = branchOptions[0].value;
+                    }
+                }, 50);
+                await webui.dialog({
+                    title: 'Delete Branch',
+                    content: `
+                        <webui-flex direction="column">
+                            <label>Select branch to delete:</label>
+                            <webui-dropdown id="${dpId}" name="branchName" style="margin-top: 0.5rem;"></webui-dropdown>
+                        </webui-flex>`,
+                    confirm: 'Delete',
+                    cancel: 'Cancel',
+                    onconfirm: async (data, content) => {
+                        let branchName = Object.fromEntries(data).branchName;
+                        if (!branchName) return content.alert('No branch selected.');
+                        let result = await webui.proxy.git.deleteBranch(repo, branchName, msg => content.alert(msg));
+                        if (result) {
+                            t.setAlert(result, 'success');
+                            await t.loadBranches();
+                            return true;
+                        }
+                    }
+                });
+            });
+            t._btnMergeBranch.addEventListener('click', async _ => {
+                let repo = t._repos.value;
+                if (repo === undefined) return t.setAlert('No repo is set!');
+                let branchOptions = (t._branchList || []).filter(b => b !== t._branches.value)
+                    .map(b => ({ id: b, value: b, display: b }));
+                let dpId = `dp-merge-${webui.uuid()}`;
+                setTimeout(async () => {
+                    let dp = document.getElementById(dpId);
+                    if (dp) {
+                        await customElements.whenDefined('webui-dropdown');
+                        dp.setOptions(branchOptions);
+                        if(branchOptions.length > 0) dp.value = branchOptions[0].value;
+                    }
+                }, 50);
+                await webui.dialog({
+                    title: 'Merge Branch',
+                    content: `
+                        <webui-flex direction="column">
+                            <label>Select branch to merge into current (${t._branches.value}):</label>
+                            <webui-dropdown id="${dpId}" name="branchName" style="margin-top: 0.5rem;"></webui-dropdown>
+                        </webui-flex>`,
+                    confirm: 'Merge',
+                    cancel: 'Cancel',
+                    onconfirm: async (data, content) => {
+                        let branchName = Object.fromEntries(data).branchName;
+                        if (!branchName) return content.alert('No branch selected.');
+                        let result = await webui.proxy.git.mergeBranch(repo, branchName, msg => content.alert(msg));
+                        if (result) {
+                            t.setAlert(result, 'success');
+                            await t.loadBranches();
+                            t.loadRepoChanges();
+                            return true;
+                        }
+                    }
+                });
             });
             t._viewNew.addEventListener('change', _ => {
                 if (typeof t._viewNew.getScroll !== 'function' || typeof t._viewOld.setScroll !== 'function') return;
@@ -273,39 +404,63 @@ Select which files you want to commit, create your commit message, and press Com
         },
         disconnected() { },
         shadowTemplate: `
-<webui-flex>
-<webui-button theme="info" label="Refresh"></webui-button>
-<webui-dropdown class="hidden" label="Repo"></webui-dropdown>
-<webui-button theme="info" label="Sync"></webui-button>
-<webui-button theme="tertiary" label="Pull"></webui-button>
-<webui-button theme="secondary" label="Push"></webui-button>
-<webui-button theme="primary" label="Commit"></webui-button>
-</webui-flex>
-<webui-alert></webui-alert>
-<webui-grid columns="2fr 3fr">
-<webui-quote theme="title" class="instructions"></webui-quote>
-<webui-input-message class="h-fill" theme="title" label="Commit Message"></webui-input-message>
-</webui-grid>
-<webui-grid columns="max-content 1fr">
-<webui-grid columns="max-content 1fr" class="files"></webui-grid>
-<webui-flex column>
-<h3></h3>
-<webui-grid columns="1fr 1fr">
-<webui-canvas height="60vh" theme="black" line-numbers class="view-old" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
-<webui-canvas height="60vh" theme="black" line-numbers class="view-new" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
-<webui-grid gap="0" columns="max-content 1fr" class="view-olds"></webui-grid>
-<webui-grid gap="0" columns="max-content 1fr" class="view-news"></webui-grid>
-</webui-grid>
-</webui-flex>
-</webui-grid>
 <style type="text/css">
 :host {
+    display: flex;
+    flex-direction: column;
+    gap: var(--padding);
 }
 pre {
-margin:0;
-padding:0;
+    margin:0;
+    padding:0;
 }
 </style>
+<webui-flex align="center">
+    <webui-button theme="info" label="Refresh"></webui-button>
+    <webui-dropdown class="hidden" label="Repo"></webui-dropdown>
+</webui-flex>
+<webui-alert></webui-alert>
+<webui-tabs theme="secondary" index="0" transition-timing="200">
+    <webui-button slot="tabs">Commit</webui-button>
+    <webui-content slot="content" nodetach>
+        <webui-flex justify="flex-end" style="margin-bottom: var(--padding);">
+            <webui-button theme="primary" label="Commit"></webui-button>
+        </webui-flex>
+        <webui-grid columns="2fr 3fr" gap="var(--padding)">
+            <webui-quote theme="title" class="instructions"></webui-quote>
+            <webui-input-message class="h-fill" theme="title" label="Commit Message"></webui-input-message>
+        </webui-grid>
+        <webui-grid columns="max-content 1fr" gap="var(--padding)" style="margin-top: var(--padding);">
+            <webui-grid columns="max-content 1fr" class="files"></webui-grid>
+            <webui-flex column>
+                <h3></h3>
+                <webui-grid columns="1fr 1fr">
+                    <webui-canvas height="60vh" theme="black" line-numbers class="view-old" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
+                    <webui-canvas height="60vh" theme="black" line-numbers class="view-new" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
+                    <webui-grid gap="0" columns="max-content 1fr" class="view-olds"></webui-grid>
+                    <webui-grid gap="0" columns="max-content 1fr" class="view-news"></webui-grid>
+                </webui-grid>
+            </webui-flex>
+        </webui-grid>
+    </webui-content>
+    <webui-button slot="tabs">Branches</webui-button>
+    <webui-content slot="content" nodetach>
+        <webui-flex gap="var(--padding)" align="center" style="margin-top: var(--padding);">
+            <webui-dropdown class="hidden" label="Branch"></webui-dropdown>
+            <webui-button theme="secondary" label="New Branch"></webui-button>
+            <webui-button theme="warning" label="Merge"></webui-button>
+            <webui-button theme="danger" label="Delete"></webui-button>
+        </webui-flex>
+    </webui-content>
+    <webui-button slot="tabs">Remote</webui-button>
+    <webui-content slot="content" nodetach>
+        <webui-flex gap="var(--padding)" align="center" style="margin-top: var(--padding);">
+            <webui-button theme="tertiary" label="Pull"></webui-button>
+            <webui-button theme="secondary" label="Push"></webui-button>
+            <webui-button theme="info" label="Sync"></webui-button>
+        </webui-flex>
+    </webui-content>
+</webui-tabs>
 `
     });
 }

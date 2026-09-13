@@ -101,6 +101,36 @@
                 if (!result) return;
                 return result;
             },
+            getBranches: async (repo, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('get_git_branches', { repo: repo }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            switchBranch: async (repo, branch, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_switch_branch', { repo: repo, branch: branch }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            createBranch: async (repo, branch, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_create_branch', { repo: repo, branch: branch }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            deleteBranch: async (repo, branch, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_delete_branch', { repo: repo, branch: branch }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
+            mergeBranch: async (repo, branch, errHandler) => {
+                errHandler ??= defaultErrHandler;
+                let result = await tauri.core.invoke('git_merge_branch', { repo: repo, branch: branch }).catch(errHandler);
+                if (!result) return;
+                return result;
+            },
             pull: async (repo, errHandler) => {
                 errHandler ??= defaultErrHandler;
                 let result = await tauri.core.invoke('git_pull', { repo: repo }).catch(errHandler);
