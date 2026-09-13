@@ -221,8 +221,8 @@
                     first = true;
                     t.loadFileDiff(details);
                 }
-                t.loadRemoteStatus();
             });
+            t.loadRemoteStatus();
         },
         setAlert(msg, severity) {
             let t = this;
