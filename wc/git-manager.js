@@ -17,6 +17,7 @@
             t._alert = t.template.querySelector('webui-alert');
             t._btnRefresh = t.template.querySelector('webui-button[label="Refresh"]');
             t._btnCommit = t.template.querySelector('webui-button[label="Commit"]');
+            t._toggleSync = t.template.querySelector('#toggle-sync');
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
@@ -395,8 +396,16 @@
                 let result = await webui.proxy.git.commit(repo, files, message, msg => t.setAlert(msg));
                 if (result) {
                     t.setAlert(result, 'success');
+                    if (t._toggleSync.value === true || t._toggleSync.value === 'true') {
+                        t.setAlert('Commit successful. Syncing with remote...', 'info');
+                        let syncResult = await webui.proxy.git.sync(repo, msg => t.setAlert(msg));
+                        if (syncResult) {
+                            t.setAlert('Commit and Sync successful!', 'success');
+                        }
+                    }
                 }
                 t.loadRepoChanges();
+                if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
             });
             t._btnPull.addEventListener('click', async _ => {
                 t.setAlert();
@@ -472,7 +481,8 @@ pre {
 <webui-tabs theme="secondary" index="0" transition-timing="200">
     <webui-button slot="tabs">Commit</webui-button>
     <webui-content slot="content" nodetach>
-        <webui-flex justify="flex-end" style="margin-bottom: var(--padding);">
+        <webui-flex justify="flex-end" align="center" gap="var(--padding)" style="margin-bottom: var(--padding);">
+            <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" data-default="true" theme-on="primary"></webui-toggle-icon>
             <webui-button theme="primary" label="Commit"></webui-button>
         </webui-flex>
         <webui-grid columns="2fr 3fr" gap="var(--padding)">
