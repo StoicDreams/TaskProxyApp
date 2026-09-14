@@ -423,6 +423,7 @@
                 let result = await webui.proxy.git.commit(repo, files, message, msg => t.setAlert(msg));
                 if (result) {
                     t.setAlert(result, 'success');
+                    t._message.value = '';
                     if (t._toggleSync.value === true || t._toggleSync.value === 'true') {
                         t.setAlert('Commit successful. Syncing with remote...', 'info');
                         let syncResult = await webui.proxy.git.sync(repo, msg => t.setAlert(msg));
