@@ -96,7 +96,9 @@
             getRemoteStatus: (repo, err) => invokeGit('get_git_remote_status', { repo }, err),
             fetch: (repo, err) => invokeGit('git_fetch', { repo }, err),
             stash: (repo, message, err) => invokeGit('git_stash', { repo, message }, err),
-            stashPop: (repo, err) => invokeGit('git_stash_pop', { repo }, err)
+            stashPop: (repo, err) => invokeGit('git_stash_pop', { repo }, err),
+            restoreFile: (repo, file, err) => invokeGit('git_restore_file', { repo, file }, err),
+            restoreAll: (repo, err) => invokeGit('git_restore_all', { repo }, err),
         }
         projects = {
             isLoaded: false,

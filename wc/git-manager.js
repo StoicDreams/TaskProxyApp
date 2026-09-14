@@ -15,6 +15,7 @@
             t._message = t.template.querySelector('webui-input-message[label="Commit Message"]');
             t._alert = t.template.querySelector('webui-alert');
             t._btnRefresh = t.template.querySelector('webui-button[label="Refresh"]');
+            t._btnRevertAll = t.template.querySelector('#btn-revert-all');
             t._btnStash = t.template.querySelector('#btn-stash');
             t._btnStashPop = t.template.querySelector('#btn-stash-pop');
             t._btnCommit = t.template.querySelector('webui-button[label="Commit"]');
@@ -196,8 +197,12 @@
                     { value: '2', display: `Ignore` }
                 ];
                 let include = webui.create('webui-dropdown', {});
+                let btnRevert = webui.create('webui-button', { theme: 'danger', title: 'Revert changes to this file' });
+                btnRevert.innerHTML = `<webui-icon icon="emoji-wastebasket"></webui-icon>`;
+                btnRevert.style.padding = "0 0.5rem";
                 t._filesContainer.appendChild(include);
                 t._filesContainer.appendChild(btn);
+                t._filesContainer.appendChild(btnRevert);
                 include.setOptions(options);
                 const fullPath = `${details.repo}/${details.fileName}`;
                 function setTheme() {
@@ -229,6 +234,22 @@
                     }
                     webui.proxy.syncProjectData();
                     setTheme();
+                });
+                btnRevert.addEventListener('click', async _ => {
+                    await webui.dialog({
+                        title: 'Revert File',
+                        content: `<p>Are you sure you want to discard all uncommitted changes in <strong>${display}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                        confirm: 'Revert',
+                        cancel: 'Cancel',
+                        onconfirm: async (data, content) => {
+                            let result = await webui.proxy.git.restoreFile(repo, details.fileName, msg => content.alert(msg));
+                            if (result) {
+                                t.setAlert(result, 'success');
+                                t.loadRepoChanges();
+                                return true;
+                            }
+                        }
+                    });
                 });
                 if (webui.projectData.data.gitIgnoreFiles && webui.projectData.data.gitIgnoreFiles.indexOf(fullPath) !== -1) {
                     include.value = 2;
@@ -333,6 +354,28 @@
                         }
                     });
                 }
+            });
+            t._btnRevertAll.addEventListener('click', async _ => {
+                let repo = t._repos.value;
+                if (repo === undefined) return t.setAlert('No repo is set!');
+                if (!t._hasPendingChanges) return t.setAlert('No pending changes to revert.', 'info');
+                await webui.dialog({
+                    title: 'Revert All Changes',
+                    content: `
+                        <p>Are you sure you want to discard <strong>all</strong> uncommitted changes in this repository?</p>
+                        <p style="color: var(--color-danger); font-weight: bold;">This action cannot be undone. All modified tracked files and untracked additions will be deleted.</p>
+                    `,
+                    confirm: 'Revert All',
+                    cancel: 'Cancel',
+                    onconfirm: async (data, content) => {
+                        let result = await webui.proxy.git.restoreAll(repo, msg => content.alert(msg));
+                        if (result) {
+                            t.setAlert(result, 'success');
+                            await t.loadRepoChanges();
+                            return true;
+                        }
+                    }
+                });
             });
             t._btnStash.addEventListener('click', async _ => {
                 let repo = t._repos.value;
@@ -486,6 +529,7 @@ pre {
     <webui-button theme="info" label="Refresh"></webui-button>
     <webui-dropdown class="hidden" label="Repo"></webui-dropdown>
     <webui-flex align="center" gap="0.5rem" style="margin-left: auto;">
+        <webui-button id="btn-revert-all" theme="danger" label="Revert All"></webui-button>
         <webui-button id="btn-stash" theme="warning" label="Stash"></webui-button>
         <webui-button id="btn-stash-pop" theme="secondary" label="Pop Stash"></webui-button>
     </webui-flex>
@@ -503,7 +547,7 @@ pre {
             <webui-input-message class="h-fill" theme="title" label="Commit Message"></webui-input-message>
         </webui-grid>
         <webui-grid columns="max-content 1fr" gap="var(--padding)" style="margin-top: var(--padding);">
-            <webui-grid columns="max-content 1fr" class="files"></webui-grid>
+            <webui-grid columns="max-content 1fr max-content" style="--min:3ch;" class="files"></webui-grid>
             <webui-flex column>
                 <h3></h3>
                 <webui-grid columns="1fr 1fr">

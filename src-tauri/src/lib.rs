@@ -164,6 +164,8 @@ pub fn run() {
             services::git_controller::git_fetch,
             services::git_controller::git_stash,
             services::git_controller::git_stash_pop,
+            services::git_controller::git_restore_file,
+            services::git_controller::git_restore_all,
             services::projects::greet,
             services::projects::add_project,
             services::projects::get_project_data,
