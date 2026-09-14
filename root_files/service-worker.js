@@ -30,6 +30,12 @@ async function onActivate(event) {
 }
 
 async function onFetch(event) {
+    if (event.request.url.startsWith('ipc://') || event.request.url.startsWith('http://ipc.localhost')) {
+        return;
+    }
+    if (!event.request.url.startsWith('http')) {
+        return;
+    }
     let cachedResponse = null;
     let request = applyCacheBusting(event.request);
     if (allowCache(request)) {

@@ -10,8 +10,7 @@
             t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
             t._fileName = t.template.querySelector('h3');
             t._filesContainer = t.template.querySelector('.files');
-            t._viewNew = t.template.querySelector('.view-new');
-            t._viewOld = t.template.querySelector('.view-old');
+            t._diffViewer = t.template.querySelector('webui-content-compare');
             t._message = t.template.querySelector('webui-input-message[label="Commit Message"]');
             t._alert = t.template.querySelector('webui-alert');
             t._btnRefresh = t.template.querySelector('webui-button[label="Refresh"]');
@@ -112,31 +111,16 @@
         },
         async loadFileDiff(changeDetail) {
             let t = this;
-            await customElements.whenDefined('webui-canvas');
+            await customElements.whenDefined('webui-content-compare');
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
-            t._viewOld.setLines?.([]);
-            t._viewNew.setLines?.([]);
+            t._diffViewer.clear?.();
             if (changeDetail.fileName.endsWith('/')) {
                 return;
             }
             let data = { change: changeDetail.change, isCompare: false };
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
             data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName) : '';
-            switch (changeDetail.change) {
-                case "Add":
-                    t._viewOld.classList.add('hidden');
-                    t._viewNew.style.setProperty('grid-column', '1/3');
-                    break;
-                case "Delete":
-                    t._viewOld.classList.add('hidden');
-                    t._viewNew.style.setProperty('grid-column', '1/3');
-                    break;
-                default:
-                    data.isCompare = data.fileDiff !== undefined;
-                    t._viewOld.classList.remove('hidden');
-                    t._viewNew.style.removeProperty('grid-column');
-                    break;
-            }
+            data.isCompare = data.fileDiff !== undefined && changeDetail.change !== 'Add' && changeDetail.change !== 'Delete';
             if (changeDetail.change === 'Delete') {
                 let a = data.fileDiff.split('@@');
                 data.fileContent = a.length > 1 ? a[a.length - 1].substring(1) : '';
@@ -145,8 +129,10 @@
             }
             if (data.fileContent !== undefined) {
                 let result = await webui.proxy.worker.send('processFileDiff', data);
-                t._viewOld.setLines(result.old);
-                t._viewNew.setLines(result.new);
+                if (typeof t._diffViewer.setDiff !== 'function') {
+                    customElements.upgrade(t._diffViewer);
+                }
+                t._diffViewer.setDiff?.(result.old, result.new, changeDetail.change);
             }
             t._fileName.innerHTML = changeDetail.display;
         },
@@ -158,9 +144,8 @@
             let changes = await webui.proxy.git.getChanges(repo);
             t._hasPendingChanges = changes && changes.length > 0;
             t._fileName.innerHTML = '';
-            await customElements.whenDefined('webui-canvas');
-            t._viewOld.setLines?.([]);
-            t._viewNew.setLines?.([]);
+            await customElements.whenDefined('webui-content-compare');
+            t._diffViewer.clear?.();
             let first = null;
             t._files = [];
             changes.forEach(fileName => {
@@ -413,16 +398,6 @@
             t._btnRemoteTab.addEventListener('click', _ => {
                 t.loadRemoteStatus();
             });
-            t._viewNew.addEventListener('change', _ => {
-                if (typeof t._viewNew.getScroll !== 'function' || typeof t._viewOld.setScroll !== 'function') return;
-                if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
-                t._viewOld.setScroll(t._viewNew.getScroll());
-            });
-            t._viewOld.addEventListener('change', _ => {
-                if (typeof t._viewOld.getScroll !== 'function' || typeof t._viewNew.setScroll !== 'function') return;
-                if (t._viewOld.getScroll() === t._viewNew.getScroll()) return;
-                t._viewNew.setScroll(t._viewOld.getScroll());
-            });
             t._btnCommit.addEventListener('click', async _ => {
                 let message = t._message.value.trim();
                 t.setAlert();
@@ -550,12 +525,7 @@ pre {
             <webui-grid columns="max-content 1fr max-content" style="--min:3ch;" class="files"></webui-grid>
             <webui-flex column>
                 <h3></h3>
-                <webui-grid columns="1fr 1fr">
-                    <webui-canvas height="60vh" theme="black" line-numbers class="view-old" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
-                    <webui-canvas height="60vh" theme="black" line-numbers class="view-new" data-subscribe="git-canvas-scroll:setScroll" data-trigger="git-canvas-scroll:getScroll"></webui-canvas>
-                    <webui-grid gap="0" columns="max-content 1fr" class="view-olds"></webui-grid>
-                    <webui-grid gap="0" columns="max-content 1fr" class="view-news"></webui-grid>
-                </webui-grid>
+                <webui-content-compare style="height: 60vh;"></webui-content-compare>
             </webui-flex>
         </webui-grid>
     </webui-content>
