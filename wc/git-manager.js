@@ -113,8 +113,8 @@
             let t = this;
             await customElements.whenDefined('webui-canvas');
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
-            t._viewOld.setLines([]);
-            t._viewNew.setLines([]);
+            t._viewOld.setLines?.([]);
+            t._viewNew.setLines?.([]);
             if (changeDetail.fileName.endsWith('/')) {
                 return;
             }
@@ -336,7 +336,7 @@
             });
             t._btnStash.addEventListener('click', async _ => {
                 let repo = t._repos.value;
-                if (!repo) return t.setAlert('No repo is set!');
+                if (repo === undefined) return t.setAlert('No repo is set!');
                 if (!t._hasPendingChanges) return t.setAlert('No pending changes to stash.', 'info');
                 t.setAlert('Stashing changes...', 'info');
                 let message = t._message.value.trim() || '';
@@ -349,7 +349,7 @@
             });
             t._btnStashPop.addEventListener('click', async _ => {
                 let repo = t._repos.value;
-                if (!repo) return t.setAlert('No repo is set!');
+                if (repo === undefined) return t.setAlert('No repo is set!');
                 t.setAlert('Popping stash...', 'info');
                 let result = await webui.proxy.git.stashPop(repo, msg => t.setAlert(msg));
                 if (result) {
@@ -359,7 +359,7 @@
             });
             t._btnFetch.addEventListener('click', async _ => {
                 let repo = t._repos.value;
-                if (!repo) return t.setAlert('No repo is set!');
+                if (repo === undefined) return t.setAlert('No repo is set!');
                 t.setAlert('Fetching updates from remote...', 'info');
                 let result = await webui.proxy.git.fetch(repo, msg => t.setAlert(msg));
                 if (result) {
