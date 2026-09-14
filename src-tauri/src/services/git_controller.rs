@@ -1,5 +1,9 @@
 use crate::prelude::*;
 
+fn create_git_command() -> Command {
+    create_command("git")
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GitBranchDetail {
@@ -35,10 +39,10 @@ pub(crate) async fn git_push(
     git_path.push(repo);
     let result = task::spawn_blocking(move || {
         let repo_path = &git_path.to_string_lossy();
-        let mut cmd = Command::new("git");
+        let mut cmd = create_git_command();
         cmd.arg("-C").arg(&git_path).arg("push");
         if !has_upstream(repo_path) {
-            let branch = Command::new("git")
+            let branch = create_git_command()
                 .arg("-C")
                 .arg(&git_path)
                 .arg("rev-parse")
@@ -94,7 +98,7 @@ pub(crate) async fn git_pull(
     let result = task::spawn_blocking(move || {
         let repo_path = &git_path.to_string_lossy();
         let current_branch = get_current_branch(repo_path)?;
-        let output = Command::new("git")
+        let output = create_git_command()
             .arg("-C")
             .arg(&git_path)
             .arg("pull")
@@ -145,7 +149,7 @@ pub(crate) async fn git_commit(
         if files.is_empty() {
             return Err(String::from("No files provided to commit."));
         }
-        let output = Command::new("git")
+        let output = create_git_command()
             .arg("-C")
             .arg(&git_path)
             .arg("add")
@@ -158,7 +162,7 @@ pub(crate) async fn git_commit(
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        let commit = Command::new("git")
+        let commit = create_git_command()
             .arg("-C")
             .arg(&git_path)
             .arg("commit")
@@ -213,7 +217,7 @@ pub(crate) async fn get_git_changes(
     git_path.push(path);
     let git_root = git_path.to_string_lossy().into_owned();
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
+        let output = create_git_command()
             .arg("-C")
             .arg(&git_root)
             .arg("status")
@@ -234,7 +238,7 @@ pub(crate) async fn get_git_changes(
     result.map_err(|err| format!("{}", err))?
 }
 fn has_upstream(repo_path: &str) -> bool {
-    let output = Command::new("git")
+    let output = create_git_command()
         .arg("-C")
         .arg(repo_path)
         .arg("rev-parse")
@@ -249,7 +253,7 @@ fn has_upstream(repo_path: &str) -> bool {
     }
 }
 fn get_current_branch(repo_path: &str) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = create_git_command()
         .arg("-C")
         .arg(repo_path)
         .arg("branch")
@@ -285,7 +289,7 @@ pub(crate) fn get_git_file_diff(
         git_path.push(repo);
     }
     let git_path = git_path.to_string_lossy().into_owned();
-    let output = Command::new("git")
+    let output = create_git_command()
         .arg("-C")
         .arg(git_path)
         .arg("diff")
@@ -317,7 +321,7 @@ fn find_git_repos_recursive(root: &str, path: &PathBuf, results: &mut Vec<String
         ".taskproxy",
         ".vscode",
         ".git",
-        ".github"
+        ".github",
     ];
     if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
         if IGNORED_DIRS.contains(&dir_name) {
@@ -351,19 +355,25 @@ pub(crate) async fn get_git_branches(
             .map_err(|err| format!("get_git_branches State failure: {}", err))?;
         let project = project_state.to_owned();
         if project.path.is_empty() {
-            return Err(String::from("get_git_branches path failure: Project not loaded."));
+            return Err(String::from(
+                "get_git_branches path failure: Project not loaded.",
+            ));
         }
         project.path
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
+        let output = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
             .arg("for-each-ref")
             .arg("--format=%(HEAD)|%(refname:short)|%(authordate:short)|%(committerdate:short)")
             .arg("refs/heads/")
-            .output().map_err(|e| e.to_string())?;
+            .output()
+            .map_err(|e| e.to_string())?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
@@ -387,7 +397,10 @@ pub(crate) async fn get_git_branches(
                 });
             }
         }
-        Ok(GitBranchInfo { branches, current_branch })
+        Ok(GitBranchInfo {
+            branches,
+            current_branch,
+        })
     })
     .await;
     result.map_err(|err| format!("{}", err))?
@@ -399,22 +412,32 @@ pub(crate) async fn git_switch_branch(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_switch_branch State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_switch_branch State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("switch").arg(&branch)
-            .output().map_err(|e| e.to_string())?;
+        let output = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("switch")
+            .arg(&branch)
+            .output()
+            .map_err(|e| e.to_string())?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         Ok(String::from("Branch switched successfully."))
-    }).await;
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
@@ -425,15 +448,25 @@ pub(crate) async fn git_create_branch(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_create_branch State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_create_branch State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(&git_path).arg("checkout").arg("-b").arg(&branch);
+        let mut cmd = create_git_command();
+        cmd.arg("-C")
+            .arg(&git_path)
+            .arg("checkout")
+            .arg("-b")
+            .arg(&branch);
         if !base_branch.is_empty() {
             cmd.arg(&base_branch);
         }
@@ -442,7 +475,8 @@ pub(crate) async fn git_create_branch(
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         Ok(format!("Branch '{}' created.", branch))
-    }).await;
+    })
+    .await;
 
     result.map_err(|err| format!("{}", err))?
 }
@@ -453,22 +487,33 @@ pub(crate) async fn git_delete_branch(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_delete_branch State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_delete_branch State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("branch").arg("-D").arg(&branch)
-            .output().map_err(|e| e.to_string())?;
+        let output = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("branch")
+            .arg("-D")
+            .arg(&branch)
+            .output()
+            .map_err(|e| e.to_string())?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         Ok(format!("Branch '{}' deleted.", branch))
-    }).await;
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
@@ -478,22 +523,32 @@ pub(crate) async fn git_merge_branch(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_merge_branch State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_merge_branch State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("merge").arg(&branch)
-            .output().map_err(|e| e.to_string())?;
+        let output = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("merge")
+            .arg(&branch)
+            .output()
+            .map_err(|e| e.to_string())?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }).await;
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -511,20 +566,41 @@ pub(crate) async fn get_git_remote_status(
     state: State<'_, CurrentProject>,
 ) -> Result<GitRemoteStatus, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || -> Result<GitRemoteStatus, String> {
         let git_path_str = git_path.to_string_lossy().into_owned();
         let mut remote_url = String::new();
-        if let Ok(output) = Command::new("git").arg("-C").arg(&git_path_str).arg("config").arg("--get").arg("remote.origin.url").output() {
+        if let Ok(output) = create_git_command()
+            .arg("-C")
+            .arg(&git_path_str)
+            .arg("config")
+            .arg("--get")
+            .arg("remote.origin.url")
+            .output()
+        {
             remote_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
         }
         let mut upstream_name = String::new();
-        if let Ok(output) = Command::new("git").arg("-C").arg(&git_path_str).arg("rev-parse").arg("--abbrev-ref").arg("--symbolic-full-name").arg("@{u}").output() {
+        if let Ok(output) = create_git_command()
+            .arg("-C")
+            .arg(&git_path_str)
+            .arg("rev-parse")
+            .arg("--abbrev-ref")
+            .arg("--symbolic-full-name")
+            .arg("@{u}")
+            .output()
+        {
             if output.status.success() {
                 upstream_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
             }
@@ -533,7 +609,15 @@ pub(crate) async fn get_git_remote_status(
         let mut ahead = 0;
         let mut behind = 0;
         if has_upstream {
-            if let Ok(output) = Command::new("git").arg("-C").arg(&git_path_str).arg("rev-list").arg("--left-right").arg("--count").arg("HEAD...@{u}").output() {
+            if let Ok(output) = create_git_command()
+                .arg("-C")
+                .arg(&git_path_str)
+                .arg("rev-list")
+                .arg("--left-right")
+                .arg("--count")
+                .arg("HEAD...@{u}")
+                .output()
+            {
                 if output.status.success() {
                     let counts = String::from_utf8_lossy(&output.stdout);
                     let parts: Vec<&str> = counts.trim().split_whitespace().collect();
@@ -544,8 +628,15 @@ pub(crate) async fn get_git_remote_status(
                 }
             }
         }
-        Ok(GitRemoteStatus { has_upstream, upstream_name, ahead, behind, remote_url })
-    }).await;
+        Ok(GitRemoteStatus {
+            has_upstream,
+            upstream_name,
+            ahead,
+            behind,
+            remote_url,
+        })
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
@@ -554,23 +645,32 @@ pub(crate) async fn git_fetch(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
+        let output = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
             .arg("fetch")
-            .output().map_err(|e| e.to_string())?;
+            .output()
+            .map_err(|e| e.to_string())?;
         if output.status.success() {
             Ok(String::from("Fetch successful. Remote data is up to date."))
         } else {
             Err(String::from_utf8_lossy(&output.stderr).into_owned())
         }
-    }).await;
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
@@ -580,15 +680,25 @@ pub(crate) async fn git_stash(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_stash State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_stash State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(&git_path).arg("stash").arg("push").arg("-u");
+        let mut cmd = create_git_command();
+        cmd.arg("-C")
+            .arg(&git_path)
+            .arg("stash")
+            .arg("push")
+            .arg("-u");
         if !message.is_empty() {
             cmd.arg("-m").arg(&message);
         }
@@ -597,7 +707,8 @@ pub(crate) async fn git_stash(
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }).await;
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
@@ -606,22 +717,32 @@ pub(crate) async fn git_stash_pop(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_stash_pop State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_stash_pop State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("stash").arg("pop")
-            .output().map_err(|e| e.to_string())?;
+        let output = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("stash")
+            .arg("pop")
+            .output()
+            .map_err(|e| e.to_string())?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }).await;
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
@@ -631,28 +752,46 @@ pub(crate) async fn git_restore_file(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_restore_file State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_restore_file State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("restore").arg("--staged").arg("--worktree").arg("--").arg(&file)
-            .output().map_err(|e| e.to_string())?;
+        let output = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("restore")
+            .arg("--staged")
+            .arg("--worktree")
+            .arg("--")
+            .arg(&file)
+            .output()
+            .map_err(|e| e.to_string())?;
         if !output.status.success() {
-             let fallback = Command::new("git")
-                .arg("-C").arg(&git_path)
-                .arg("checkout").arg("HEAD").arg("--").arg(&file)
-                .output().map_err(|e| e.to_string())?;
-             if !fallback.status.success() {
-                 return Err(String::from_utf8_lossy(&fallback.stderr).into_owned());
-             }
+            let fallback = create_git_command()
+                .arg("-C")
+                .arg(&git_path)
+                .arg("checkout")
+                .arg("HEAD")
+                .arg("--")
+                .arg(&file)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !fallback.status.success() {
+                return Err(String::from_utf8_lossy(&fallback.stderr).into_owned());
+            }
         }
         Ok(format!("Successfully reverted {}", file))
-    }).await;
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
@@ -661,30 +800,48 @@ pub(crate) async fn git_restore_all(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let project_path = {
-        let project_state = state.lock().map_err(|err| format!("git_restore_all State failure: {}", err))?;
-        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_restore_all State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
         project_state.path.clone()
     };
     let mut git_path = PathBuf::from(project_path);
-    if !repo.is_empty() { git_path.push(repo); }
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
     let result = task::spawn_blocking(move || {
-        let restore = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("restore").arg("--staged").arg("--worktree").arg(".")
-            .output().map_err(|e| e.to_string())?;
+        let restore = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("restore")
+            .arg("--staged")
+            .arg("--worktree")
+            .arg(".")
+            .output()
+            .map_err(|e| e.to_string())?;
         if !restore.status.success() {
-            let _ = Command::new("git")
-                .arg("-C").arg(&git_path)
-                .arg("checkout").arg("HEAD").arg("--").arg(".")
+            let _ = create_git_command()
+                .arg("-C")
+                .arg(&git_path)
+                .arg("checkout")
+                .arg("HEAD")
+                .arg("--")
+                .arg(".")
                 .output();
         }
-        let _ = Command::new("git")
-            .arg("-C").arg(&git_path)
-            .arg("clean").arg("-fd")
+        let _ = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("clean")
+            .arg("-fd")
             .output();
 
         Ok(String::from("All changes have been successfully reverted."))
-    }).await;
+    })
+    .await;
 
     result.map_err(|err| format!("{}", err))?
 }
