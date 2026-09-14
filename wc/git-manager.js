@@ -15,6 +15,8 @@
             t._message = t.template.querySelector('webui-input-message[label="Commit Message"]');
             t._alert = t.template.querySelector('webui-alert');
             t._btnRefresh = t.template.querySelector('webui-button[label="Refresh"]');
+            t._btnStash = t.template.querySelector('#btn-stash');
+            t._btnStashPop = t.template.querySelector('#btn-stash-pop');
             t._btnCommit = t.template.querySelector('webui-button[label="Commit"]');
             t._toggleSync = t.template.querySelector('#toggle-sync');
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
@@ -25,6 +27,7 @@
             t._btnRemoteTab = t.template.querySelector('#tab-remote');
             t._remoteStatusContainer = t.template.querySelector('#remote-status-container');
             t._branchTable = t.template.querySelector('#branch-table');
+            t._hasPendingChanges = false;
             t._branchList = [];
             t._currentBranch = '';
         },
@@ -152,10 +155,11 @@
             let repo = t._repos.value;
             if (repo === undefined) return;
             let changes = await webui.proxy.git.getChanges(repo);
+            t._hasPendingChanges = changes && changes.length > 0;
             t._fileName.innerHTML = '';
             await customElements.whenDefined('webui-canvas');
-            t._viewOld.setLines([]);
-            t._viewNew.setLines([]);
+            t._viewOld.setLines?.([]);
+            t._viewNew.setLines?.([]);
             let first = null;
             t._files = [];
             changes.forEach(fileName => {
@@ -261,6 +265,12 @@
                 let targetBranch = btn.getAttribute('data-branch');
                 if (!targetBranch) return;
                 let repo = t._repos.value;
+                if (btn.classList.contains('btn-switch') || btn.classList.contains('btn-new')) {
+                    if (t._hasPendingChanges) {
+                        t.setAlert('Cannot change branches with uncommitted changes. Please commit or stash your changes first.', 'warning');
+                        return;
+                    }
+                }
                 if (btn.classList.contains('btn-switch')) {
                     t.setAlert();
                     let result = await webui.proxy.git.switchBranch(repo, targetBranch, msg => {
@@ -279,7 +289,9 @@
                         confirm: 'Create',
                         cancel: 'Cancel',
                         onconfirm: async (data, content) => {
-                            let branchName = Object.fromEntries(data).branchName.trim();
+                            let formData = Object.fromEntries(data);
+                            let inputEl = content.querySelector('[name="branchName"]');
+                            let branchName = (formData.branchName || (inputEl ? inputEl.value : '')).trim();
                             if (!branchName) return content.alert('Branch name cannot be empty.');
                             let result = await webui.proxy.git.createBranch(repo, branchName, targetBranch, msg => content.alert(msg));
                             if (result) {
@@ -320,6 +332,29 @@
                             }
                         }
                     });
+                }
+            });
+            t._btnStash.addEventListener('click', async _ => {
+                let repo = t._repos.value;
+                if (!repo) return t.setAlert('No repo is set!');
+                if (!t._hasPendingChanges) return t.setAlert('No pending changes to stash.', 'info');
+                t.setAlert('Stashing changes...', 'info');
+                let message = t._message.value.trim() || '';
+                let result = await webui.proxy.git.stash(repo, message, msg => t.setAlert(msg));
+                if (result) {
+                    t.setAlert(result, 'success');
+                    t._message.value = '';
+                    await t.loadRepoChanges();
+                }
+            });
+            t._btnStashPop.addEventListener('click', async _ => {
+                let repo = t._repos.value;
+                if (!repo) return t.setAlert('No repo is set!');
+                t.setAlert('Popping stash...', 'info');
+                let result = await webui.proxy.git.stashPop(repo, msg => t.setAlert(msg));
+                if (result) {
+                    t.setAlert(result, 'success');
+                    await t.loadRepoChanges();
                 }
             });
             t._btnFetch.addEventListener('click', async _ => {
@@ -450,6 +485,10 @@ pre {
 <webui-flex align="center">
     <webui-button theme="info" label="Refresh"></webui-button>
     <webui-dropdown class="hidden" label="Repo"></webui-dropdown>
+    <webui-flex align="center" gap="0.5rem" style="margin-left: auto;">
+        <webui-button id="btn-stash" theme="warning" label="Stash"></webui-button>
+        <webui-button id="btn-stash-pop" theme="secondary" label="Pop Stash"></webui-button>
+    </webui-flex>
 </webui-flex>
 <webui-alert></webui-alert>
 <webui-tabs theme="secondary" index="0" transition-timing="200">

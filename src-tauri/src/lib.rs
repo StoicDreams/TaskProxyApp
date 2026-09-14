@@ -162,6 +162,8 @@ pub fn run() {
             services::git_controller::git_merge_branch,
             services::git_controller::get_git_remote_status,
             services::git_controller::git_fetch,
+            services::git_controller::git_stash,
+            services::git_controller::git_stash_pop,
             services::projects::greet,
             services::projects::add_project,
             services::projects::get_project_data,

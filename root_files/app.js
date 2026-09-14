@@ -37,6 +37,10 @@
     }
     const messages = {};
     const pendingWorkerRequests = new Map();
+    const invokeGit = async (command, args = {}, errHandler = defaultErrHandler) => {
+        const result = await tauri.core.invoke(command, args).catch(errHandler);
+        return result || undefined; // Returns undefined if result is falsy, matching your original logic
+    };
     class Tauri {
         openUrl = tauri.opener.openUrl;
         constructor() {
@@ -77,90 +81,22 @@
             }
         }
         git = {
-            commit: async (repo, files, message, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_commit', { repo: repo, files: files, message: message }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            getChanges: async (path, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('get_git_changes', { path: path }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            getFileDiff: async (repo, file, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('get_git_file_diff', { repo: repo, file: file }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            getRepos: async (path, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('get_git_repos', { path: path }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            getBranches: async (repo, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('get_git_branches', { repo: repo }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            switchBranch: async (repo, branch, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_switch_branch', { repo: repo, branch: branch }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            createBranch: async (repo, branch, baseBranch, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_create_branch', { repo: repo, branch: branch, baseBranch: baseBranch }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            deleteBranch: async (repo, branch, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_delete_branch', { repo: repo, branch: branch }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            mergeBranch: async (repo, branch, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_merge_branch', { repo: repo, branch: branch }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            pull: async (repo, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_pull', { repo: repo }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            push: async (repo, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_push', { repo: repo }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            sync: async (repo, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_sync', { repo: repo }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            getRemoteStatus: async (repo, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('get_git_remote_status', { repo: repo }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
-            fetch: async (repo, errHandler) => {
-                errHandler ??= defaultErrHandler;
-                let result = await tauri.core.invoke('git_fetch', { repo: repo }).catch(errHandler);
-                if (!result) return;
-                return result;
-            },
+            commit: (repo, files, message, err) => invokeGit('git_commit', { repo, files, message }, err),
+            getChanges: (path, err) => invokeGit('get_git_changes', { path }, err),
+            getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),
+            getRepos: (path, err) => invokeGit('get_git_repos', { path }, err),
+            getBranches: (repo, err) => invokeGit('get_git_branches', { repo }, err),
+            switchBranch: (repo, branch, err) => invokeGit('git_switch_branch', { repo, branch }, err),
+            createBranch: (repo, branch, baseBranch, err) => invokeGit('git_create_branch', { repo, branch, baseBranch }, err),
+            deleteBranch: (repo, branch, err) => invokeGit('git_delete_branch', { repo, branch }, err),
+            mergeBranch: (repo, branch, err) => invokeGit('git_merge_branch', { repo, branch }, err),
+            pull: (repo, err) => invokeGit('git_pull', { repo }, err),
+            push: (repo, err) => invokeGit('git_push', { repo }, err),
+            sync: (repo, err) => invokeGit('git_sync', { repo }, err),
+            getRemoteStatus: (repo, err) => invokeGit('get_git_remote_status', { repo }, err),
+            fetch: (repo, err) => invokeGit('git_fetch', { repo }, err),
+            stash: (repo, message, err) => invokeGit('git_stash', { repo, message }, err),
+            stashPop: (repo, err) => invokeGit('git_stash_pop', { repo }, err)
         }
         projects = {
             isLoaded: false,

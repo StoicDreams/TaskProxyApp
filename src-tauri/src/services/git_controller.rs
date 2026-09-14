@@ -608,3 +608,64 @@ pub(crate) async fn git_fetch(
     }).await;
     result.map_err(|err| format!("{}", err))?
 }
+
+#[tauri::command]
+pub(crate) async fn git_stash(
+    repo: String,
+    message: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("git_stash State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+
+    let result = task::spawn_blocking(move || {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(&git_path).arg("stash").arg("push").arg("-u");
+
+        if !message.is_empty() {
+            cmd.arg("-m").arg(&message);
+        }
+
+        let output = cmd.output().map_err(|e| e.to_string())?;
+
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }).await;
+
+    result.map_err(|err| format!("{}", err))?
+}
+
+#[tauri::command]
+pub(crate) async fn git_stash_pop(
+    repo: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state.lock().map_err(|err| format!("git_stash_pop State failure: {}", err))?;
+        if project_state.path.is_empty() { return Err(String::from("Project not loaded.")); }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() { git_path.push(repo); }
+
+    let result = task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .arg("-C").arg(&git_path)
+            .arg("stash").arg("pop")
+            .output().map_err(|e| e.to_string())?;
+
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }).await;
+
+    result.map_err(|err| format!("{}", err))?
+}
