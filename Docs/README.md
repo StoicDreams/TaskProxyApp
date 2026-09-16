@@ -112,7 +112,7 @@ Visit the [Tauri Website](https://tauri.app/start/) for instructions on how to s
 
 ```terminal
 # Install trunk to serve web components for app
-cargo intall trunk
+cargo intall trunk --lock
 
 # Install tauri cli to run developer build
 cargo install tauri-cli
