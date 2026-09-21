@@ -40,7 +40,7 @@ tauri-plugin-os = "2.2"
 keyring = { version = "4.2", features = [
     "apple-native-keyring-store",
     "windows-native-keyring-store",
-    "linux-keyutils-keyring-store",
+    "dbus-secret-service-keyring-store",
 ] }
 tokio = { version = "1.44", features = ["full"] }
 age = "0.12"

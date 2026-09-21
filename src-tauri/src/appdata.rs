@@ -11,14 +11,16 @@ const APPDATA_FILENAME: &str = "app.data.enc";
 static MEMORY_PASSPHRASE: Mutex<Option<String>> = Mutex::new(None);
 
 #[tauri::command]
-pub(crate) fn has_securitykey() -> bool {
-    match get_passphrase() {
+pub(crate) async fn has_securitykey() -> bool {
+    task::spawn_blocking(|| match get_passphrase() {
         Ok(_) => true,
         Err(err) => {
             println!("Does not have security key: {}", err);
             false
         }
-    }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -118,6 +120,9 @@ pub(crate) async fn delete_securitykey() -> Result<String, String> {
         entry
             .delete_credential()
             .map_err(|e| format!("Failed to delete security key from keychain: {:?}", e))?;
+        if let Ok(mut cache) = MEMORY_PASSPHRASE.lock() {
+            *cache = None;
+        }
         Ok(String::from("Security Key Deleted!"))
     })
     .await;
@@ -152,7 +157,7 @@ fn get_passphrase() -> Result<SecretString, String> {
         Ok(password) => {
             *cache = Some(password.clone());
             Ok(SecretString::from(password))
-        },
+        }
         Err(e) => Err(format!(
             "Failed to retrieve security key from keychain: {:?}",
             e
@@ -226,33 +231,33 @@ pub(crate) async fn save_json_to_local_storage(
     file_name: &str,
 ) -> Result<String, String> {
     let file_path = get_app_data_path(app_handle, file_name).await?;
-    let passphrase = get_passphrase()?;
-    let recipient = age::scrypt::Recipient::new(passphrase.clone());
-
-    let encrypted = match age::encrypt(&recipient, json.as_bytes()) {
-        Ok(encrypted) => encrypted,
-        Err(err) => return Err(format!("Failed to save {}: {}", data_type, err)),
-    };
-
-    let file_path_clone = file_path.clone();
+    let data_type_string = data_type.to_string();
     let result = task::spawn_blocking(move || {
-        if let Some(parent) = file_path_clone.parent() {
+        let passphrase = get_passphrase()?;
+        let recipient = age::scrypt::Recipient::new(passphrase.clone());
+        let encrypted = match age::encrypt(&recipient, json.as_bytes()) {
+            Ok(encrypted) => encrypted,
+            Err(err) => return Err(format!("Failed to save {}: {}", data_type_string, err)),
+        };
+        if let Some(parent) = file_path.parent() {
             if !parent.exists() {
                 let _ = fs::create_dir_all(parent);
             }
         }
-        fs::write(file_path_clone, encrypted)
-    }).await;
-
-    let result = result.map_err(|err| format!("{}", err))?;
+        fs::write(&file_path, encrypted)
+            .map_err(|err| format!("Error saving {}: {}", data_type_string, err))?;
+        Ok(format!("{} saved", data_type_string))
+    })
+    .await;
+    let result = result.map_err(|err| format!("Task failed: {}", err))?;
     match result {
-        Ok(()) => {
+        Ok(msg) => {
             eprintln!("Successfully saved {}!", data_type);
-            Ok(format!("{} saved", data_type))
+            Ok(msg)
         }
         Err(err) => {
             eprintln!("Failed to save {}!", data_type);
-            Err(format!("Error saving {}: {}", data_type, err))
+            Err(err)
         }
     }
 }
@@ -262,35 +267,37 @@ pub(crate) async fn get_data_from_local_storage(
     file_path: &str,
 ) -> Result<Vec<u8>, String> {
     let file_path = get_app_data_path(app_handle, file_path).await?;
-    let passphrase = get_passphrase()?;
-    let identity = age::scrypt::Identity::new(passphrase);
-    let file_path_clone = file_path.clone();
-    let result = task::spawn_blocking(move || fs::read(file_path_clone)).await;
-    let result = result.map_err(|err| format!("{}", err))?;
-    let encrypted_data = match result {
-        Ok(data) => data,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            println!("Data file not found at {:?}.", file_path);
+    let result = task::spawn_blocking(move || {
+        let encrypted_data = match fs::read(&file_path) {
+            Ok(data) => data,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                println!("Data file not found at {:?}.", file_path);
+                return Ok(Vec::new());
+            }
+            Err(e) => {
+                return Err(format!("Error reading data file {:?}: {}", file_path, e));
+            }
+        };
+        if encrypted_data.is_empty() {
+            println!("Data file {:?} is empty.", file_path);
             return Ok(Vec::new());
         }
-        Err(e) => {
-            return Err(format!("Error reading data file {:?}: {}", file_path, e));
+        let passphrase = get_passphrase()?;
+        let identity = age::scrypt::Identity::new(passphrase);
+        match age::decrypt(&identity, &encrypted_data) {
+            Ok(decrypted) => Ok(decrypted),
+            Err(err) => Err(format!("Failed to decrypt file: {}", err)),
         }
-    };
-    if encrypted_data.is_empty() {
-        println!("Data file {:?} is empty.", file_path);
-        return Ok(Vec::new());
-    }
-    match age::decrypt(&identity, &encrypted_data) {
-        Ok(decrypted) => Ok(decrypted),
-        Err(err) => Err(format!("Failed to decrypt file: {}", err)),
-    }
+    })
+    .await;
+    result.map_err(|err| format!("Task failed: {}", err))?
 }
 
 async fn get_app_data_path(app_handle: &AppHandle, file_name: &str) -> Result<PathBuf, String> {
-    let data_dir = app_handle.path().app_local_data_dir().map_err(|err| {
-        format!("Could not resolve application data directory.\n{}", err)
-    })?;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|err| format!("Could not resolve application data directory.\n{}", err))?;
 
     Ok(data_dir.join(file_name))
 }
