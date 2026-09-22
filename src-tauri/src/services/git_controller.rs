@@ -293,6 +293,7 @@ pub(crate) fn get_git_file_diff(
         .arg("-C")
         .arg(git_path)
         .arg("diff")
+        .arg("HEAD")
         .arg("--")
         .arg(file)
         .output()

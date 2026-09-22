@@ -29,32 +29,45 @@ const procs = {
         let result = { old: [], new: [] };
         if (data.fileContent !== undefined) {
             let fileLines = data.fileContent.replace(/\r\n/g, '\n').split('\n');
-            while (lineNumber < fileLines.length) {
-                let line = fileLines[lineNumber++];
-                if (data.isCompare) {
-                    if (added[lineNumber] !== undefined) {
-                        if (removed[lineOld + 1] !== undefined) {
-                            lineOld++;
-                            buildLine(result.old, removed[lineOld], lineOld, 'danger');
-                        } else {
-                            buildLine(result.old, line, ' ', null, true);
-                        }
-                    } else {
-                        lineOld++;
-                        if (removed[lineOld] !== undefined) {
-                            buildLine(result.old, removed[lineOld], lineOld, 'danger');
-                            lineOld++;
-                        }
-                        buildLine(result.old, line, lineOld);
-                    }
+            if (data.change === 'Add') {
+                for (let i = 0; i < fileLines.length; i++) {
+                    let line = fileLines[i];
+                    buildLine(result.new, line, i + 1, 'success');
+                    buildLine(result.old, line, ' ', null, true);
                 }
-                {
-                    let theme = added[lineNumber] !== undefined ? 'success' : null;
-                    buildLine(result.new, line, lineNumber, theme);
+            } else if (data.change === 'Delete') {
+                for (let i = 0; i < fileLines.length; i++) {
+                    let line = fileLines[i];
+                    buildLine(result.old, line, i + 1, 'danger');
+                    buildLine(result.new, line, ' ', null, true);
+                }
+            } else {
+                while (lineNumber < fileLines.length) {
+                    let line = fileLines[lineNumber++];
+                    if (data.isCompare) {
+                        if (added[lineNumber] !== undefined) {
+                            if (removed[lineOld + 1] !== undefined) {
+                                lineOld++;
+                                buildLine(result.old, removed[lineOld], lineOld, 'danger');
+                            } else {
+                                buildLine(result.old, line, ' ', null, true);
+                            }
+                        } else {
+                            lineOld++;
+                            if (removed[lineOld] !== undefined) {
+                                buildLine(result.old, removed[lineOld], lineOld, 'danger');
+                                lineOld++;
+                            }
+                            buildLine(result.old, line, lineOld);
+                        }
+                    }
+                    {
+                        let theme = added[lineNumber] !== undefined ? 'success' : null;
+                        buildLine(result.new, line, lineNumber, theme);
+                    }
                 }
             }
         }
-
         function buildLine(array, line, lineNumber, theme, fill) {
             let ln = { lineNumber: lineNumber, line: line };
             if (theme) {
@@ -112,5 +125,3 @@ const procs = {
         return { added, removed };
     }
 };
-
-

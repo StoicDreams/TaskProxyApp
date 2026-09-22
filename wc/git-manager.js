@@ -122,8 +122,25 @@
             data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName) : '';
             data.isCompare = data.fileDiff !== undefined && changeDetail.change !== 'Add' && changeDetail.change !== 'Delete';
             if (changeDetail.change === 'Delete') {
-                let a = data.fileDiff.split('@@');
-                data.fileContent = a.length > 1 ? a[a.length - 1].substring(1) : '';
+                if (data.fileDiff) {
+                    let lines = data.fileDiff.split('\n');
+                    let contentLines = [];
+                    let inDiff = false;
+                    for (let line of lines) {
+                        if (line.startsWith('@@')) {
+                            inDiff = true;
+                            continue;
+                        }
+                        if (inDiff) {
+                            if (line.startsWith('-') || line.startsWith(' ')) {
+                                contentLines.push(line.substring(1));
+                            }
+                        }
+                    }
+                    data.fileContent = contentLines.join('\n');
+                } else {
+                    data.fileContent = '';
+                }
             } else {
                 data.fileContent = await webui.proxy.getProjectFile(fullFilePath);
             }
@@ -148,29 +165,28 @@
             t._diffViewer.clear?.();
             let first = null;
             t._files = [];
-            changes.forEach(fileName => {
-                let changeDetail = fileName.trim().split(' ');
-                let changeType = changeDetail[0];
-                let theme = "info";
-                switch (changeType) {
-                    case 'M':
-                        changeType = 'Modify';
-                        break;
-                    case 'D':
-                        changeType = 'Delete';
-                        theme = 'danger';
-                        break;
-                    case '??':
-                        changeType = 'Add';
-                        theme = 'success';
-                        break;
+            changes.forEach(line => {
+                if (!line || line.length < 3) return;
+                let status = line.substring(0, 2);
+                let filePath = line.substring(3).trim();
+                if (filePath.includes(' -> ')) {
+                    filePath = filePath.split(' -> ')[1];
                 }
-                let display = changeDetail[1].split('/');
-                display = display[display.length - 1];
+                let changeType = 'Modify';
+                let theme = 'info';
+                if (status === '??' || status.includes('A')) {
+                    changeType = 'Add';
+                    theme = 'success';
+                } else if (status.includes('D')) {
+                    changeType = 'Delete';
+                    theme = 'danger';
+                }
+                let displayParts = filePath.split('/');
+                let display = displayParts[displayParts.length - 1];
                 let details = {
                     repo: repo,
                     change: changeType,
-                    fileName: changeDetail[1],
+                    fileName: filePath,
                     display: `<span class="change-type">${changeType}</span> <strong>${display}</strong>`,
                     isIncluded: true,
                 };
