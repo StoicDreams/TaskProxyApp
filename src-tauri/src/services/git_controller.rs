@@ -1,7 +1,10 @@
 use crate::prelude::*;
 
 fn create_git_command() -> Command {
-    create_command("git")
+    let mut cmd = create_command("git");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.stdin(std::process::Stdio::null());
+    cmd
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
