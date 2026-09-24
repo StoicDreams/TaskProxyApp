@@ -1,5 +1,6 @@
 use crate::prelude::*;
-use age::secrecy::{ExposeSecret, SecretString};
+use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+use aes_gcm::{Aes256Gcm, Nonce};
 use keyring::Entry;
 use std::sync::Mutex;
 
@@ -234,17 +235,22 @@ pub(crate) async fn save_json_to_local_storage(
     let data_type_string = data_type.to_string();
     let result = task::spawn_blocking(move || {
         let passphrase = get_passphrase()?;
-        let recipient = age::scrypt::Recipient::new(passphrase.clone());
-        let encrypted = match age::encrypt(&recipient, json.as_bytes()) {
-            Ok(encrypted) => encrypted,
-            Err(err) => return Err(format!("Failed to save {}: {}", data_type_string, err)),
-        };
+        let mut hasher = Sha256::new();
+        hasher.update(passphrase.expose_secret().as_bytes());
+        let key_bytes = hasher.finalize();
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes).expect("Key length must be 32 bytes");
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; 12 bytes
+        let ciphertext = cipher
+            .encrypt(&nonce, json.as_bytes())
+            .map_err(|err| format!("Failed to encrypt {}: {}", data_type_string, err))?;
+        let mut encrypted_data = nonce.to_vec();
+        encrypted_data.extend_from_slice(&ciphertext);
         if let Some(parent) = file_path.parent() {
             if !parent.exists() {
                 let _ = fs::create_dir_all(parent);
             }
         }
-        fs::write(&file_path, encrypted)
+        fs::write(&file_path, encrypted_data)
             .map_err(|err| format!("Error saving {}: {}", data_type_string, err))?;
         Ok(format!("{} saved", data_type_string))
     })
@@ -282,9 +288,17 @@ pub(crate) async fn get_data_from_local_storage(
             println!("Data file {:?} is empty.", file_path);
             return Ok(Vec::new());
         }
+        if encrypted_data.len() < 12 {
+            return Err(format!("Data file {:?} is corrupted.", file_path));
+        }
         let passphrase = get_passphrase()?;
-        let identity = age::scrypt::Identity::new(passphrase);
-        match age::decrypt(&identity, &encrypted_data) {
+        let mut hasher = Sha256::new();
+        hasher.update(passphrase.expose_secret().as_bytes());
+        let key_bytes = hasher.finalize();
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes).expect("Key length must be 32 bytes");
+        let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
+        let nonce = Nonce::from_slice(nonce_bytes);
+        match cipher.decrypt(nonce, ciphertext) {
             Ok(decrypted) => Ok(decrypted),
             Err(err) => Err(format!("Failed to decrypt file: {}", err)),
         }
