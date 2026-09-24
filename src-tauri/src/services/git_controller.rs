@@ -610,6 +610,11 @@ pub(crate) async fn get_git_remote_status(
         let mut ahead = 0;
         let mut behind = 0;
         if has_upstream {
+            let _ = create_git_command()
+                .arg("-C")
+                .arg(&git_path_str)
+                .arg("fetch")
+                .output();
             if let Ok(output) = create_git_command()
                 .arg("-C")
                 .arg(&git_path_str)
