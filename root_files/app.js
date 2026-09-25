@@ -159,6 +159,10 @@
                 return await tauri.core.invoke('get_projects', {}).catch(interceptKeychainError);
             }
         }
+        async getScripts(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('get_scripts', {}).catch(errHandler);
+        }
         hasSecurityKey(errHandler) {
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('has_securitykey', {}).catch(errHandler);

@@ -20,6 +20,7 @@
         shadowTemplate: `
 <webui-nav-link icon="emoji-compass|fill|bordered|theme:success|backing|shape:circle" url="/nav-manager" title="Navigation Manager"></webui-nav-link>
 <webui-nav-link icon="emoji-books|fill|theme:success|shape:circle|inverted" url="/docs" title="Docs Manager"></webui-nav-link>
+<webui-nav-link icon="emoji-scroll|fill|bordered|theme:success|backing|shape:circle" url="/script-manager" title="Script Manager"></webui-nav-link>
 <webui-nav-link icon="emoji-octopus|fill|theme:success|shape:circle|inverted" url="/git-controller" title="Git Controller"></webui-nav-link>
 <style type="text/css">
 :host {

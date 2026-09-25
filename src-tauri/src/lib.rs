@@ -23,7 +23,7 @@ pub fn run() {
 
     // Setup plugins
     let mut builder = tauri::Builder::default()
-        .setup(|app|{
+        .setup(|app| {
             #[cfg(debug_assertions)]
             {
                 use tauri::Manager;
@@ -148,6 +148,8 @@ pub fn run() {
             appdata::save_app_data,
             appdata::set_securitykey,
             appdata::sync_app_data,
+            services::emojis::init_emoji_search,
+            services::emojis::search_emojis,
             services::git_controller::get_git_changes,
             services::git_controller::get_git_file_diff,
             services::git_controller::get_git_repos,
@@ -175,8 +177,7 @@ pub fn run() {
             services::projects::save_project_data,
             services::projects::save_project_file,
             services::projects::sync_project_data,
-            services::init_emoji_search,
-            services::search_emojis
+            services::script_controller::get_scripts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
