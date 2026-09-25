@@ -301,6 +301,7 @@
                     });
                     if (result) {
                         t.setAlert(result, 'success');
+                        await t.loadBranches();
                         t.loadRepoChanges();
                         if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
                     }

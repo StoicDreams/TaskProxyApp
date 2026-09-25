@@ -374,8 +374,9 @@ pub(crate) async fn get_git_branches(
             .arg("-C")
             .arg(&git_path)
             .arg("for-each-ref")
-            .arg("--format=%(HEAD)|%(refname:short)|%(authordate:short)|%(committerdate:short)")
+            .arg("--format=%(HEAD)|%(refname:short)|%(authordate:short)|%(committerdate:short)|%(refname)")
             .arg("refs/heads/")
+            .arg("refs/remotes/")
             .output()
             .map_err(|e| e.to_string())?;
         if !output.status.success() {
@@ -385,11 +386,15 @@ pub(crate) async fn get_git_branches(
         let mut current_branch = String::new();
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() == 4 {
+            if parts.len() >= 5 {
                 let is_current = parts[0].trim() == "*";
                 let name = parts[1].trim().to_string();
                 let created_date = parts[2].trim().to_string();
                 let updated_date = parts[3].trim().to_string();
+                let full_ref = parts[4].trim();
+                if full_ref.ends_with("/HEAD") {
+                    continue;
+                }
                 if is_current {
                     current_branch = name.clone();
                 }
@@ -504,16 +509,61 @@ pub(crate) async fn git_delete_branch(
         git_path.push(repo);
     }
     let result = task::spawn_blocking(move || {
-        let output = create_git_command()
+        let is_remote = create_git_command()
             .arg("-C")
             .arg(&git_path)
-            .arg("branch")
-            .arg("-D")
-            .arg(&branch)
+            .arg("show-ref")
+            .arg("--verify")
+            .arg("--quiet")
+            .arg(format!("refs/remotes/{}", branch))
             .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if is_remote {
+            let parts: Vec<&str> = branch.splitn(2, '/').collect();
+            if parts.len() == 2 {
+                let output = create_git_command()
+                    .arg("-C")
+                    .arg(&git_path)
+                    .arg("push")
+                    .arg(parts[0])
+                    .arg("--delete")
+                    .arg(parts[1])
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                    if stderr.contains("remote ref does not exist") {
+                        let cleanup = create_git_command()
+                            .arg("-C")
+                            .arg(&git_path)
+                            .arg("branch")
+                            .arg("-dr")
+                            .arg(&branch)
+                            .output()
+                            .map_err(|e| e.to_string())?;
+                        if !cleanup.status.success() {
+                            return Err(stderr);
+                        }
+                    } else {
+                        return Err(stderr);
+                    }
+                }
+            } else {
+                return Err(format!("Could not parse remote branch name: {}", branch));
+            }
+        } else {
+            let output = create_git_command()
+                .arg("-C")
+                .arg(&git_path)
+                .arg("branch")
+                .arg("-D")
+                .arg(&branch)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+            }
         }
         Ok(format!("Branch '{}' deleted.", branch))
     })
