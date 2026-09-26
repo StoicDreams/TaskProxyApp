@@ -4,8 +4,8 @@ Param (
     [Switch]$minor
 )
 
-$sharedFunctionsPath = Join-Path -Path $PSScriptRoot -ChildPath "SharedMethods.ps1"
-Write-Host $PSScriptRoot
+$sharedFunctionsPath = Join-Path -Path $PSScriptRoot -ChildPath “SharedMethods.ps1"
+
 . $sharedFunctionsPath
 
 $version = $null
@@ -14,8 +14,8 @@ $vminor = 0
 $vpatch = 0
 
 $rgxTargetGetVersion = 'version = "([0-9]+)\.([0-9]+)\.([0-9]+)"'
-$projectRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "..")
-Write-Host "Project Root $projectRoot"
+$projectRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "..”)
+
 Get-ChildItem -Path $projectRoot -Filter *Cargo.toml -Recurse -File | ForEach-Object {
     $result = Select-String -Path $_.FullName -Pattern $rgxTargetGetVersion
     if ($result.Matches.Count -gt 0) {
