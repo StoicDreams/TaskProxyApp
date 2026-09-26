@@ -209,9 +209,12 @@
             return tauri.core.invoke('sync_project_data', { data: webui.projectData }).catch(errHandler);
         }
         terminalHelpers = {
+            _isSessionCleaned: false,
+            _isSessionStarted: false,
             getState() {
-                let state = webui.getData('app-terminal-state');
+                let state = !this._isSessionStarted ? null : webui.getData('app-terminal-state');
                 if (!state) {
+                    this._isSessionStarted = true;
                     state = {
                         activeId: 'live',
                         consoleActiveId: 'live',
@@ -223,6 +226,17 @@
                         listenersAttached: false,
                         consolePanelState: { isOpen: false, isTop: false, isSticky: false }
                     };
+                    this._isSessionCleaned = true;
+                    webui.setData('app-terminal-state', state);
+                } else if (!this._isSessionCleaned) {
+                    // Clean up stale data from previous sessions on initial load
+                    state.listenersAttached = false;
+                    Object.values(state.terminals).forEach(term => {
+                        if (term.status === 'Running') {
+                            term.status = 'Finished';
+                        }
+                    });
+                    this._isSessionCleaned = true;
                     webui.setData('app-terminal-state', state);
                 }
                 return state;

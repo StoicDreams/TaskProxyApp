@@ -5,7 +5,7 @@ Param (
 )
 
 $sharedFunctionsPath = Join-Path -Path $PSScriptRoot -ChildPath "SharedMethods.ps1"
-
+Write-Host $PSScriptRoot
 . $sharedFunctionsPath
 
 $version = $null
@@ -14,7 +14,9 @@ $vminor = 0
 $vpatch = 0
 
 $rgxTargetGetVersion = 'version = "([0-9]+)\.([0-9]+)\.([0-9]+)"'
-Get-ChildItem -Path .\ -Filter *Cargo.toml -Recurse -File | ForEach-Object {
+$projectRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath "..")
+Write-Host "Project Root $projectRoot"
+Get-ChildItem -Path $projectRoot -Filter *Cargo.toml -Recurse -File | ForEach-Object {
     $result = Select-String -Path $_.FullName -Pattern $rgxTargetGetVersion
     if ($result.Matches.Count -gt 0) {
         $vmajor = [int]$result.Matches[0].Groups[1].Value
@@ -47,13 +49,14 @@ if ($null -ne $version) {
     $rootpath = $rootpath.ToString().ToLower()
     Write-Host Path: "Root Path Start: $rootpath"
 
-    FilteredFileUpdate .\ Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
-    FilteredFileUpdate .\Docs README.md '\[Version: ([0-9\.]+)\]' "[Version: $version]"
-    FilteredFileUpdate .\ deploy.yml ' VERSION: ([0-9\.]+)' " VERSION: $version"
-    FilteredFileUpdate .\src-tauri tauri.conf.json '"version": "([0-9\.]+)"' """version"": ""$version"""
-    FilteredFileUpdate .\src main.rs 'const VERSION: &str = "([0-9\.]+)";' "const VERSION: &str = ""$version"";"
-    FilteredFileUpdate .\ deploy.yml ' if: (false|true)' " if: true"
-    FilteredFileUpdate .\src-tauri tauri.conf.json '"userAgent": "Task Proxy/([0-9\.]+)"' """userAgent"": ""Task Proxy/$version"""
+    FilteredFileUpdate "$projectRoot" Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
+    FilteredFileUpdate "$projectRoot/src-tauri" Cargo.toml 'version = "([0-9\.]+)"' "version = ""$version"""
+    FilteredFileUpdate "$projectRoot/Docs" README.md '\[Version: ([0-9\.]+)\]' "[Version: $version]"
+    FilteredFileUpdate "$projectRoot" deploy.yml ' VERSION: ([0-9\.]+)' " VERSION: $version"
+    FilteredFileUpdate "$projectRoot/src-tauri" tauri.conf.json '"version": "([0-9\.]+)"' """version"": ""$version"""
+    FilteredFileUpdate "$projectRoot/src" main.rs 'const VERSION: &amp;str = "([0-9\.]+)";' "const VERSION: &amp;str = ""$version"";"
+    FilteredFileUpdate "$projectRoot" deploy.yml ' if: (false|true)' " if: true"
+    FilteredFileUpdate "$projectRoot/src-tauri" tauri.conf.json '"userAgent": "Task Proxy/([0-9\.]+)"' """userAgent"": ""Task Proxy/$version"""
 }
 else {
     Write-Host Current version was not found -ForegroundColor Red

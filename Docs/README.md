@@ -2,7 +2,7 @@
 
 <img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
-[Version: 0.1.24](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.25](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 

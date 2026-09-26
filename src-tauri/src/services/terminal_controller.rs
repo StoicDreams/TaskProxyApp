@@ -179,12 +179,38 @@ pub(crate) async fn start_script(
         }
         p_state.path.clone()
     };
-    let temp_dir = std::env::temp_dir();
-    let safe_id = terminal_id.replace(&['/', '\\', '.', ':'][..], "_");
-    let script_path = temp_dir.join(format!("taskproxy_{}.ps1", safe_id));
+    let (script_path, working_dir) = if terminal_id == "live" {
+        let mut path = PathBuf::from(&project_path);
+        path.push(".taskproxy");
+        if !path.exists() {
+            let _ = fs::create_dir_all(&path);
+        }
+        (
+            path.join(format!("taskproxy_live_{}.ps1", Uuid::now_v7().simple())),
+            PathBuf::from(&project_path),
+        )
+    } else {
+        let mut path = PathBuf::from(&project_path);
+        path.push(&terminal_id);
+        let parent = path
+            .parent()
+            .unwrap_or(Path::new(&project_path))
+            .to_path_buf();
+        if !parent.exists() {
+            let _ = fs::create_dir_all(&parent);
+        }
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        (
+            parent.join(format!(
+                "taskproxy_tmp_{}_{}",
+                Uuid::now_v7().simple(),
+                file_name
+            )),
+            parent,
+        )
+    };
     fs::write(&script_path, script_content)
         .map_err(|e| format!("Failed to write temp script: {}", e))?;
-    // Use dynamic executable
     let std_cmd = create_command(&executable);
     let mut cmd = AsyncCommand::from(std_cmd);
     cmd.arg("-ExecutionPolicy")
@@ -193,7 +219,7 @@ pub(crate) async fn start_script(
         .arg("-NonInteractive")
         .arg("-File")
         .arg(&script_path)
-        .current_dir(&project_path)
+        .current_dir(&working_dir)
         .kill_on_drop(true)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

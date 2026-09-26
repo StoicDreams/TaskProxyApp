@@ -308,6 +308,9 @@
         },
         appendConsoleLine(text, isError) {
             if (!this._activeConsole) return;
+            if (this._activeConsole.firstChild && this._activeConsole.firstChild.textContent === 'No terminal output.') {
+                this._activeConsole.innerHTML = '';
+            }
             const line = webui.create('div');
             line.textContent = text;
             if (isError) line.style.color = 'var(--color-danger, #ff4d4d)';
