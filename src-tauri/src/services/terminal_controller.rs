@@ -167,6 +167,7 @@ pub(crate) async fn start_script(
     project_state: State<'_, CurrentProject>,
     terminal_id: String,
     script_content: String,
+    in_separate_window: bool,
 ) -> Result<String, String> {
     let mut processes = state.processes.lock().await;
     if processes.contains_key(&terminal_id) {
@@ -218,6 +219,101 @@ pub(crate) async fn start_script(
     };
     fs::write(&script_path, script_content)
         .map_err(|e| format!("Failed to write temp script: {}", e))?;
+    if in_separate_window {
+        let mut child_opt = None;
+        #[cfg(target_os = "windows")]
+        {
+            let mut cmd = AsyncCommand::new("cmd.exe");
+            cmd.arg("/c")
+                .arg("start")
+                .arg(&executable)
+                .arg("-NoExit")
+                .arg("-ExecutionPolicy")
+                .arg("Bypass")
+                .arg("-File")
+                .arg(&script_path)
+                .current_dir(&working_dir);
+            child_opt = Some(
+                cmd.spawn()
+                    .map_err(|e| format!("Failed to launch terminal window: {}", e))?,
+            );
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let terminal_emulators = [
+                "konsole",
+                "x-terminal-emulator",
+                "gnome-terminal",
+                "alacritty",
+                "kitty",
+                "xterm",
+            ];
+            for term in terminal_emulators {
+                let mut cmd = AsyncCommand::new(term);
+                match term {
+                    "konsole" => {
+                        cmd.arg("-e")
+                            .arg(&executable)
+                            .arg("-NoExit")
+                            .arg("-ExecutionPolicy")
+                            .arg("Bypass")
+                            .arg("-File")
+                            .arg(&script_path);
+                    }
+                    "gnome-terminal" => {
+                        cmd.arg("--")
+                            .arg(&executable)
+                            .arg("-NoExit")
+                            .arg("-ExecutionPolicy")
+                            .arg("Bypass")
+                            .arg("-File")
+                            .arg(&script_path);
+                    }
+                    _ => {
+                        cmd.arg("-e")
+                            .arg(&executable)
+                            .arg("-NoExit")
+                            .arg("-ExecutionPolicy")
+                            .arg("Bypass")
+                            .arg("-File")
+                            .arg(&script_path);
+                    }
+                }
+                cmd.current_dir(&working_dir);
+                if let Ok(child) = cmd.spawn() {
+                    child_opt = Some(child);
+                    break;
+                }
+            }
+            if child_opt.is_none() {
+                return Err("Failed to find a supported terminal emulator on Linux (tried konsole, gnome-terminal, etc.).".into());
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let script_str = script_path.to_string_lossy();
+            let apple_script = format!(
+                "tell application \"Terminal\"\n\tactivate\n\tdo script \"'{}' -NoExit -ExecutionPolicy Bypass -File '{}'\"\nend tell",
+                executable, script_str
+            );
+            let mut cmd = AsyncCommand::new("osascript");
+            cmd.arg("-e").arg(&apple_script);
+            cmd.current_dir(&working_dir);
+            child_opt = Some(
+                cmd.spawn()
+                    .map_err(|e| format!("Failed to launch macOS terminal: {}", e))?,
+            );
+        }
+        if let Some(mut child) = child_opt {
+            let cleanup_path = script_path.clone();
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                let _ = fs::remove_file(&cleanup_path);
+            });
+        }
+        return Ok("Script launched in separate OS window.".into());
+    }
     let std_cmd = create_command(&executable);
     let mut cmd = AsyncCommand::from(std_cmd);
     cmd.arg("-ExecutionPolicy")

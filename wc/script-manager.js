@@ -72,33 +72,15 @@
                 let runInQueue = webui.getData('app-script-queue') === true || webui.getData('app-script-queue') === 'true';
                 await webui.proxy.saveProjectFile(file, scriptContent);
                 webui.proxy.terminalHelpers.ensureListeners();
-                let state = webui.proxy.terminalHelpers.getState();
-                if (!state.terminals[file]) {
-                    state.terminals[file] = { id: file, name: file, status: 'Ready', script: scriptContent, output: [], isLive: false };
-                }
-                if (state.terminals[file].status === 'Running') {
-                    webui.alert('Script is already running. You can manage it in the Terminal Manager.', 'warning');
-                    return;
-                }
-                state.terminals[file].status = 'Running';
-                state.terminals[file].script = scriptContent;
-                if (!state.allScripts.includes(file)) {
-                    state.allScripts.push(file);
-                }
-                webui.setData('app-terminal-state', state);
-                webui.proxy.terminalHelpers.clearOutput(file);
-                webui.setData('app-terminal-refresh', Date.now());
                 try {
-                    await webui.proxy.terminal.start(file, scriptContent);
-                    webui.alert('Script started in Terminal Manager.', 'success');
-                } catch (err) {
-                    webui.alert(err, 'danger');
-                    let currentState = webui.proxy.terminalHelpers.getState();
-                    if (currentState.terminals[file]) {
-                        currentState.terminals[file].status = 'Finished';
-                        webui.setData('app-terminal-state', currentState);
-                        webui.setData('app-terminal-refresh', Date.now());
+                    let result = await webui.proxy.terminalHelpers.runScript(file, scriptContent, runInSeparateWindow, runInQueue);
+                    if (result === 'Queued') {
+                        webui.alert('Script added to queue.', 'info');
+                    } else {
+                        webui.alert(runInSeparateWindow ? 'Script launched in separate window.' : 'Script started in Terminal Manager.', 'success');
                     }
+                } catch (err) {
+                    webui.alert(err, 'warning');
                 }
             });
             t._btnNew.addEventListener('click', async ev => {

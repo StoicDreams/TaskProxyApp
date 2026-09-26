@@ -872,6 +872,47 @@ pub(crate) async fn git_restore_file(
     result.map_err(|err| format!("{}", err))?
 }
 #[tauri::command]
+pub(crate) async fn git_delete_file(
+    repo: String,
+    file: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let project_path = {
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("git_delete_file State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
+        project_state.path.clone()
+    };
+    let mut git_path = PathBuf::from(project_path);
+    if !repo.is_empty() {
+        git_path.push(repo);
+    }
+    let result = task::spawn_blocking(move || {
+        let target_path = git_path.join(&file);
+        let _ = create_git_command()
+            .arg("-C")
+            .arg(&git_path)
+            .arg("restore")
+            .arg("--staged")
+            .arg("--")
+            .arg(&file)
+            .output();
+
+        if target_path.exists() {
+            fs::remove_file(&target_path)
+                .map_err(|e| format!("Failed to delete file {}: {}", file, e))?;
+        } else {
+            return Err(format!("File {} does not exist", file));
+        }
+        Ok(format!("Successfully deleted {}", file))
+    })
+    .await;
+    result.map_err(|err| format!("{}", err))?
+}
+#[tauri::command]
 pub(crate) async fn git_restore_all(
     repo: String,
     state: State<'_, CurrentProject>,

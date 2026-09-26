@@ -99,6 +99,7 @@
             stashPop: (repo, err) => invokeGit('git_stash_pop', { repo }, err),
             restoreFile: (repo, file, err) => invokeGit('git_restore_file', { repo, file }, err),
             restoreAll: (repo, err) => invokeGit('git_restore_all', { repo }, err),
+            deleteFile: (repo, file, err) => invokeGit('git_delete_file', { repo, file }, err),
         }
         projects = {
             isLoaded: false,
@@ -110,7 +111,7 @@
             }
         }
         terminal = {
-            start: (id, scriptContent) => tauri.core.invoke('start_script', { terminalId: id, scriptContent }),
+            start: (id, scriptContent, inSeparateWindow) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, inSeparateWindow: !!inSeparateWindow }),
             kill: (id) => tauri.core.invoke('kill_script', { terminalId: id }),
             killAll: () => tauri.core.invoke('kill_all_scripts', {}),
             onOutput: (callback) => tauri.event.listen('terminal-output', callback),
@@ -220,6 +221,7 @@
                         consoleActiveId: 'live',
                         showAllScripts: false,
                         allScripts: [],
+                        queue: [],
                         terminals: {
                             'live': { id: 'live', name: 'Live Command', status: 'Ready', script: '', output: [], isLive: true }
                         },
@@ -229,8 +231,8 @@
                     this._isSessionCleaned = true;
                     webui.setData('app-terminal-state', state);
                 } else if (!this._isSessionCleaned) {
-                    // Clean up stale data from previous sessions on initial load
                     state.listenersAttached = false;
+                    state.queue = [];
                     Object.values(state.terminals).forEach(term => {
                         if (term.status === 'Running') {
                             term.status = 'Finished';
@@ -241,13 +243,63 @@
                 }
                 return state;
             },
+            async runScript(id, scriptContent, inSeparateWindow, useQueue) {
+                let state = this.getState();
+                if (state.terminals[id] && state.terminals[id].status === 'Running') {
+                    throw 'Script is already running. You can manage it in the Terminal Manager.';
+                }
+                if (useQueue) {
+                    let isRunning = Object.values(state.terminals).some(t => t.status === 'Running');
+                    if (isRunning) {
+                        state.queue.push({ id, scriptContent, inSeparateWindow });
+                        webui.setData('app-terminal-state', state);
+                        return 'Queued';
+                    }
+                }
+                return await this._executeScript(id, scriptContent, inSeparateWindow);
+            },
+            async _executeScript(id, scriptContent, inSeparateWindow) {
+                let state = this.getState();
+                if (!state.terminals[id]) {
+                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, output: [], isLive: id === 'live' };
+                }
+                state.terminals[id].status = 'Running';
+                state.terminals[id].script = scriptContent;
+                if (!state.allScripts.includes(id) && id !== 'live') {
+                    state.allScripts.push(id);
+                }
+                webui.setData('app-terminal-state', state);
+                this.clearOutput(id);
+                webui.setData('app-terminal-refresh', Date.now());
+                try {
+                    await webui.proxy.terminal.start(id, scriptContent, inSeparateWindow);
+                    if (inSeparateWindow) {
+                        this._scriptFinished(id);
+                    }
+                    return 'Started';
+                } catch (err) {
+                    this._scriptFinished(id);
+                    throw err;
+                }
+            },
+            _scriptFinished(id) {
+                let state = this.getState();
+                if (state.terminals[id]) {
+                    state.terminals[id].status = 'Finished';
+                    webui.setData('app-terminal-state', state);
+                    webui.setData('app-terminal-refresh', Date.now());
+                }
+                if (state.queue && state.queue.length > 0) {
+                    let next = state.queue.shift();
+                    webui.setData('app-terminal-state', state);
+                    this._executeScript(next.id, next.scriptContent, next.inSeparateWindow).catch(err => webui.alert(err, 'danger'));
+                }
+            },
             ensureListeners() {
                 let state = this.getState();
                     if (state.listenersAttached || !webui.proxy?.terminal) return;
-
                     state.listenersAttached = true;
                     webui.setData('app-terminal-state', state);
-
                     webui.proxy.terminal.onOutput((event) => {
                         let currentState = this.getState();
                         const data = event.payload;
@@ -258,16 +310,9 @@
                             document.dispatchEvent(new CustomEvent('term-line-out', { detail: data }));
                         }
                     });
-
                     webui.proxy.terminal.onFinished((event) => {
-                        let currentState = this.getState();
                         const data = event.payload;
-                        const term = currentState.terminals[data.terminalId];
-                        if (term) {
-                            term.status = 'Finished';
-                            webui.setData('app-terminal-state', currentState);
-                            webui.setData('app-terminal-refresh', Date.now());
-                        }
+                        this._scriptFinished(data.terminalId);
                     });
             },
             getDropdownOptions(state, showAll) {

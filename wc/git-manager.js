@@ -203,7 +203,8 @@
                     { value: '2', display: `Ignore` }
                 ];
                 let include = webui.create('webui-dropdown', {});
-                let btnRevert = webui.create('webui-button', { theme: 'danger', title: 'Revert changes to this file' });
+                let isNew = changeType === 'Add';
+                let btnRevert = webui.create('webui-button', { theme: 'danger', title: isNew ? 'Delete new file' : 'Revert changes to this file' });
                 btnRevert.innerHTML = `<webui-icon icon="emoji-wastebasket"></webui-icon>`;
                 btnRevert.style.padding = "0 0.5rem";
                 t._filesContainer.appendChild(include);
@@ -243,12 +244,19 @@
                 });
                 btnRevert.addEventListener('click', async _ => {
                     await webui.dialog({
-                        title: 'Revert File',
-                        content: `<p>Are you sure you want to discard all uncommitted changes in <strong>${display}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
-                        confirm: 'Revert',
+                        title: isNew ? 'Delete File' : 'Revert File',
+                        content: isNew
+                            ? `<p>Are you sure you want to permanently delete <strong>${display}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`
+                            : `<p>Are you sure you want to discard all uncommitted changes in <strong>${display}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                        confirm: isNew ? 'Delete' : 'Revert',
                         cancel: 'Cancel',
                         onconfirm: async (data, content) => {
-                            let result = await webui.proxy.git.restoreFile(repo, details.fileName, msg => content.alert(msg));
+                            let result;
+                            if (isNew) {
+                                result = await webui.proxy.git.deleteFile(repo, details.fileName, msg => content.alert(msg));
+                            } else {
+                                result = await webui.proxy.git.restoreFile(repo, details.fileName, msg => content.alert(msg));
+                            }
                             if (result) {
                                 t.setAlert(result, 'success');
                                 t.loadRepoChanges();

@@ -163,21 +163,10 @@
                     if (current.status === 'Running') {
                         await webui.proxy.terminal.kill(current.id).catch(console.warn);
                     }
-                    state = webui.proxy.terminalHelpers.getState();
-                    state.terminals[state.activeId].status = 'Running';
-                    webui.setData('app-terminal-state', state);
-                    webui.proxy.terminalHelpers.clearOutput(state.activeId);
-                    webui.setData('app-terminal-refresh', Date.now());
                     try {
-                        await webui.proxy.terminal.start(state.activeId, scriptText);
+                        await webui.proxy.terminalHelpers._executeScript(state.activeId, scriptText, false);
                     } catch (err) {
                         webui.alert(err, 'danger');
-                        state = webui.proxy.terminalHelpers.getState();
-                        if (state.terminals[state.activeId]) {
-                            state.terminals[state.activeId].status = 'Finished';
-                            webui.setData('app-terminal-state', state);
-                        }
-                        webui.setData('app-terminal-refresh', Date.now());
                     }
                 });
                 t._btnKill.addEventListener('click', async () => {
@@ -199,6 +188,7 @@
                     Object.values(state.terminals).forEach(term => {
                         if (term.status === 'Running') term.status = 'Finished';
                     });
+                    state.queue = [];
                     webui.setData('app-terminal-state', state);
                     webui.setData('app-terminal-refresh', Date.now());
                 });
