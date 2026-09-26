@@ -244,6 +244,7 @@
                 btnClear.addEventListener('click', () => {
                     let state = webui.proxy.terminalHelpers.getState();
                     webui.proxy.terminalHelpers.clearOutput(state.activeId);
+                    webui.setData('app-terminal-refresh', Date.now());
                 });
                 t.switchTerminal(initState.activeId);
                 if (!t._streamAttached) {
@@ -277,8 +278,8 @@
             this.refreshButtons();
         },
         refreshDropdown() {
-            const state = webui.proxy.terminalHelpers.getState();
             if (!this._activeDropdown) return;
+            const state = webui.proxy.terminalHelpers.getState();
             this._activeDropdown.setOptions(webui.proxy.terminalHelpers.getDropdownOptions(state, state.showAllScripts));
             this._activeDropdown.value = state.activeId;
         },

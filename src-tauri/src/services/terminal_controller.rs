@@ -16,6 +16,13 @@ impl Default for TerminalManager {
     }
 }
 
+struct TempFileCleanup(PathBuf);
+impl Drop for TempFileCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TerminalOutput {
@@ -264,6 +271,7 @@ pub(crate) async fn start_script(
     let state_arc = state.processes.clone();
     let path_to_remove = script_path.clone();
     let handle = tokio::spawn(async move {
+        let _cleanup = TempFileCleanup(path_to_remove);
         let status = child.wait().await.ok();
         let _ = app_wait.emit(
             "terminal-finished",
@@ -272,7 +280,6 @@ pub(crate) async fn start_script(
                 code: status.and_then(|s| s.code()),
             },
         );
-        let _ = fs::remove_file(path_to_remove);
         let mut p = state_arc.lock().await;
         p.remove(&t_id_wait);
     });

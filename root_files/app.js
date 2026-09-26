@@ -265,6 +265,7 @@
                         const term = currentState.terminals[data.terminalId];
                         if (term) {
                             term.status = 'Finished';
+                            webui.setData('app-terminal-state', currentState);
                             webui.setData('app-terminal-refresh', Date.now());
                         }
                     });

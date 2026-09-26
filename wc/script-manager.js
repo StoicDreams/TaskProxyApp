@@ -7,6 +7,7 @@
             const t = this;
             t._fileSelector = t.template.querySelector('webui-dropdown[label="Script"]');
             t._message = t.template.querySelector('webui-input-message');
+            t._btnRun = t.template.querySelector('webui-button[label="Run"]');
             t._btnReset = t.template.querySelector('webui-button[label="Reset"]');
             t._btnSave = t.template.querySelector('webui-button[label="Save"]');
             t._btnNew = t.template.querySelector('webui-button[label="New Script"]');
@@ -20,7 +21,6 @@
                     return { id: fileName, value: fileName, display: fileName };
                 });
                 t._fileSelector.setOptions(options);
-
                 if (selectFile) {
                     t._fileSelector.value = selectFile;
                     t.loadScript(selectFile);
@@ -57,6 +57,50 @@
                 let msg = await webui.proxy.saveProjectFile(file, t._message.value);
                 if (msg) { webui.alert(msg, 'success'); }
             });
+            t._btnRun.addEventListener('click', async ev => {
+                let file = t._fileSelector.value;
+                if (!file) {
+                    webui.alert('No script selected.', 'warning');
+                    return;
+                }
+                let scriptContent = t._message.value;
+                if (!scriptContent.trim()) {
+                    webui.alert('Script is empty.', 'warning');
+                    return;
+                }
+                let runInSeparateWindow = webui.getData('app-script-separate-window') === true || webui.getData('app-script-separate-window') === 'true';
+                let runInQueue = webui.getData('app-script-queue') === true || webui.getData('app-script-queue') === 'true';
+                await webui.proxy.saveProjectFile(file, scriptContent);
+                webui.proxy.terminalHelpers.ensureListeners();
+                let state = webui.proxy.terminalHelpers.getState();
+                if (!state.terminals[file]) {
+                    state.terminals[file] = { id: file, name: file, status: 'Ready', script: scriptContent, output: [], isLive: false };
+                }
+                if (state.terminals[file].status === 'Running') {
+                    webui.alert('Script is already running. You can manage it in the Terminal Manager.', 'warning');
+                    return;
+                }
+                state.terminals[file].status = 'Running';
+                state.terminals[file].script = scriptContent;
+                if (!state.allScripts.includes(file)) {
+                    state.allScripts.push(file);
+                }
+                webui.setData('app-terminal-state', state);
+                webui.proxy.terminalHelpers.clearOutput(file);
+                webui.setData('app-terminal-refresh', Date.now());
+                try {
+                    await webui.proxy.terminal.start(file, scriptContent);
+                    webui.alert('Script started in Terminal Manager.', 'success');
+                } catch (err) {
+                    webui.alert(err, 'danger');
+                    let currentState = webui.proxy.terminalHelpers.getState();
+                    if (currentState.terminals[file]) {
+                        currentState.terminals[file].status = 'Finished';
+                        webui.setData('app-terminal-state', currentState);
+                        webui.setData('app-terminal-refresh', Date.now());
+                    }
+                }
+            });
             t._btnNew.addEventListener('click', async ev => {
                 webui.dialog({
                     title: 'New Script',
@@ -91,12 +135,13 @@
     gap:var(--padding);
 }
 </style>
-<webui-grid columns="1fr max-content max-content max-content">
+<webui-flex align="center">
     <webui-dropdown label="Script"></webui-dropdown>
+    <webui-button theme="info" label="Run"></webui-button>
     <webui-button theme="primary" label="New Script"></webui-button>
     <webui-button theme="warning" label="Reset"></webui-button>
     <webui-button theme="success" label="Save"></webui-button>
-</webui-grid>
+</webui-flex>
 <webui-flex align="center" justify="start" gap="var(--padding)">
     <webui-toggle-icon data-bind="app-script-separate-window" data-default="false" label="Run in separate window" theme-on="primary"></webui-toggle-icon>
     <webui-toggle-icon data-bind="app-script-queue" data-default="false" label="Run in sequence (Queue)" theme-on="primary"></webui-toggle-icon>
