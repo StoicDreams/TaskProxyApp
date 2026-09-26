@@ -1,12 +1,9 @@
 "use strict"
 {
     async function loadProjects() {
-        if (webui.proxy) {
-            let projects = await webui.proxy.getProjects() || [];
-            webui.setData('app-projects', projects);
-        } else {
-            setTimeout(loadProjects, 100);
-        }
+        await webui.wait(() => !!webui.proxy);
+        let projects = await webui.proxy.getProjects() || [];
+        webui.setData('app-projects', projects);
     }
     webui.define("app-project-dropdown", {
         linkCss: false,

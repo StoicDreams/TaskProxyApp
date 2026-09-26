@@ -13,6 +13,7 @@
         },
         async loadScripts(selectFile) {
             let t = this;
+            await webui.wait(() => !!webui.proxy);
             webui.proxy.projects.runWhenLoaded(async () => {
                 let scripts = await webui.proxy.getScripts();
                 let options = (scripts || []).map(fileName => {
@@ -34,6 +35,7 @@
             let t = this;
             t._message.value = '';
             if (!file) return;
+            await webui.wait(()=>!!webui.proxy);
             let fileContent = await webui.proxy.getProjectFile(file);
             if (fileContent !== undefined) {
                 t._message.value = fileContent;

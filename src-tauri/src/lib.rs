@@ -44,7 +44,8 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(Vec::<Project>::new())))
         .manage(Arc::new(Mutex::new(TaskProxyData::new())))
         .manage(Arc::new(Mutex::new(ProjectData::new())))
-        .manage(Arc::new(Mutex::new(crate::services::EmojiState::default())));
+        .manage(Arc::new(Mutex::new(crate::services::EmojiState::default())))
+        .manage(crate::services::terminal_controller::TerminalManager::default());
 
     // Setup window positioner
     builder = builder.setup(|app| {
@@ -77,7 +78,6 @@ pub fn run() {
                 "webui.isclosing",
                 "Closing, please wait while we save your data!",
             );
-
             let app_data = {
                 match app_handle.try_state::<SharedAppData>() {
                     Some(state) => match state.lock() {
@@ -111,7 +111,6 @@ pub fn run() {
                 };
                 let (_save_app_result, _save_project_result) =
                     join!(save_app_data, save_project_data);
-
                 println!("Saves complete - Closing window.");
                 let _ = window.close();
             });
@@ -177,7 +176,12 @@ pub fn run() {
             services::projects::save_project_data,
             services::projects::save_project_file,
             services::projects::sync_project_data,
-            services::script_controller::get_scripts
+            services::script_controller::get_scripts,
+            services::terminal_controller::start_script,
+            services::terminal_controller::kill_script,
+            services::terminal_controller::kill_all_scripts,
+            services::terminal_controller::get_powershell_status,
+            services::terminal_controller::auto_install_powershell
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

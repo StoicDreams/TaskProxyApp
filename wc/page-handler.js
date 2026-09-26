@@ -15,6 +15,7 @@
     async function loadProject() {
         myId = location.pathname.substring(1);
         myFile = `.taskproxy/pages/${myId}.md`;
+        await webui.wait(()=>!!webui.proxy);
         let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
         if (!md) {
             md = '';

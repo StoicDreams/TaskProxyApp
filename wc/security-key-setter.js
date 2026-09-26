@@ -33,6 +33,7 @@
         linkCss: true,
         async connected() {
             const t = this;
+            await webui.wait(() => !!webui.proxy);
             let hasSecurityKey = await webui.proxy.hasSecurityKey(handleError);
             if (hasSecurityKey) {
                 t._del.classList.remove('hidden');

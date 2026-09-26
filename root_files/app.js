@@ -109,6 +109,15 @@
                 handler();
             }
         }
+        terminal = {
+            start: (id, scriptContent) => tauri.core.invoke('start_script', { terminalId: id, scriptContent }),
+            kill: (id) => tauri.core.invoke('kill_script', { terminalId: id }),
+            killAll: () => tauri.core.invoke('kill_all_scripts', {}),
+            onOutput: (callback) => tauri.event.listen('terminal-output', callback),
+            onFinished: (callback) => tauri.event.listen('terminal-finished', callback),
+            getPowerShellStatus: (errHandler) => tauri.core.invoke('get_powershell_status', {}).catch(errHandler ?? defaultErrHandler),
+            autoInstallPowerShell: (errHandler) => tauri.core.invoke('auto_install_powershell', {}).catch(errHandler ?? defaultErrHandler)
+        }
         async addProject(name, errHandler) {
             errHandler ??= defaultErrHandler;
             let result = await tauri.core.invoke('add_project', { name: name }).catch(errHandler);
@@ -199,13 +208,87 @@
             }
             return tauri.core.invoke('sync_project_data', { data: webui.projectData }).catch(errHandler);
         }
+        terminalHelpers = {
+            getState() {
+                let state = webui.getData('app-terminal-state');
+                if (!state) {
+                    state = {
+                        activeId: 'live',
+                        consoleActiveId: 'live',
+                        showAllScripts: false,
+                        allScripts: [],
+                        terminals: {
+                            'live': { id: 'live', name: 'Live Command', status: 'Ready', script: '', output: [], isLive: true }
+                        },
+                        listenersAttached: false,
+                        consolePanelState: { isOpen: false, isTop: false, isSticky: false }
+                    };
+                    webui.setData('app-terminal-state', state);
+                }
+                return state;
+            },
+            ensureListeners() {
+                let state = this.getState();
+                    if (state.listenersAttached || !webui.proxy?.terminal) return;
+
+                    state.listenersAttached = true;
+                    webui.setData('app-terminal-state', state);
+
+                    webui.proxy.terminal.onOutput((event) => {
+                        let currentState = this.getState();
+                        const data = event.payload;
+                        const term = currentState.terminals[data.terminalId];
+                        if (term) {
+                            term.output.push({ text: data.content, isError: data.isError });
+                            webui.setData('app-terminal-state', currentState);
+                            document.dispatchEvent(new CustomEvent('term-line-out', { detail: data }));
+                        }
+                    });
+
+                    webui.proxy.terminal.onFinished((event) => {
+                        let currentState = this.getState();
+                        const data = event.payload;
+                        const term = currentState.terminals[data.terminalId];
+                        if (term) {
+                            term.status = 'Finished';
+                            webui.setData('app-terminal-refresh', Date.now());
+                        }
+                    });
+            },
+            getDropdownOptions(state, showAll) {
+                let options = [];
+                const liveTerm = state.terminals['live'];
+                options.push({ id: 'live', value: 'live', display: `Live (${liveTerm.status})` });
+                if (showAll) {
+                    state.allScripts.forEach(path => {
+                        const term = state.terminals[path];
+                        const status = term ? term.status : 'Ready';
+                        options.push({ id: path, value: path, display: `${path} (${status})` });
+                    });
+                } else {
+                    Object.keys(state.terminals).forEach(id => {
+                        if (id === 'live') return;
+                        const term = state.terminals[id];
+                        options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
+                    });
+                }
+                return options;
+            },
+            clearOutput(id) {
+                let state = this.getState();
+                if (state.terminals[id]) {
+                    state.terminals[id].output = [];
+                    webui.setData('app-terminal-state', state);
+                    webui.setData('app-terminal-cleared', { terminalId: id, tick: Date.now() });
+                }
+            }
+        }
     }
     const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects']
     runWhenWebUIReady(async () => {
         webui.isclosing = (msg) => {
             webui.dialog({ content: msg, isLoading: true });
         };
-        document.querySelector('dialog.isloading').remove();
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
         let data = await webui.proxy.getAppData();
@@ -309,6 +392,8 @@
             action();
         } catch {
             setTimeout(() => runWhenWebUIReady(action), 10);
+        } finally {
+            hideLoading();
         }
     }
 }

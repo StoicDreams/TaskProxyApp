@@ -12,6 +12,7 @@
         disconnected() { },
         async checkAppState(k, v) {
             const t = this;
+            await webui.wait(()=>!!webui.proxy);
             let hasSecurityKey = await webui.proxy.hasSecurityKey();
             if (!hasSecurityKey) {
                 webui.setData('app-nav-home', 'Security Key');
@@ -22,6 +23,7 @@
         },
         async loadProjects() {
             const t = this;
+            await webui.wait(()=>!!webui.proxy);
             let projects = await webui.proxy.getProjects() || [];
             webui.setData('app-projects', projects);
             if (projects.length === 0) {

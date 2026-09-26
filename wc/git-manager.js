@@ -33,6 +33,7 @@
         },
         async loadRepos() {
             let t = this;
+            await webui.wait(()=>!!webui.proxy);
             let repos = await webui.proxy.git.getRepos();
             if (repos.length === 0) {
                 t._repos.classList.add('hidden');
@@ -51,6 +52,7 @@
             let t = this;
             let repo = t._repos.value;
             if (repo === undefined) return;
+            await webui.wait(()=>!!webui.proxy);
             let branchInfo = await webui.proxy.git.getBranches(repo, msg => t.setAlert(msg));
             if (branchInfo && branchInfo.branches) {
                 t._branchList = branchInfo.branches;
@@ -86,6 +88,7 @@
             let repo = t._repos.value;
             if (repo === undefined) return;
             t._remoteStatusContainer.innerHTML = '<em>Checking remote sync status...</em>';
+            await webui.wait(()=>!!webui.proxy);
             let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
             if (!status) {
                 t._remoteStatusContainer.innerHTML = '<em style="color: var(--color-danger);">Failed to retrieve remote status.</em>';
@@ -117,6 +120,7 @@
             if (changeDetail.fileName.endsWith('/')) {
                 return;
             }
+            await webui.wait(()=>!!webui.proxy);
             let data = { change: changeDetail.change, isCompare: false };
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
             data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName) : '';
@@ -158,6 +162,7 @@
             t._filesContainer.innerText = '';
             let repo = t._repos.value;
             if (repo === undefined) return;
+            await webui.wait(()=>!!webui.proxy);
             let changes = await webui.proxy.git.getChanges(repo);
             t._hasPendingChanges = changes && changes.length > 0;
             t._fileName.innerHTML = '';
@@ -272,9 +277,12 @@
         },
         connected() {
             const t = this;
-            webui.proxy.projects.runWhenLoaded(() => {
-                t.loadRepos();
-            });
+            setTimeout(async () => {
+                await webui.wait(()=>!!webui.proxy);
+                webui.proxy.projects.runWhenLoaded(() => {
+                    t.loadRepos();
+                });
+            }, 50);
             t._repos.addEventListener('change', async _ => {
                 webui.projectData.data.selectedGitRepo = t._repos.value;
                 await t.loadBranches();

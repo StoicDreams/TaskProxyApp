@@ -18,8 +18,9 @@
             switch (property) {
             }
         },
-        loadFiles() {
+        async loadFiles() {
             let t = this;
+            await webui.wait(() => !!webui.proxy);
             webui.proxy.projects.runWhenLoaded(() => {
                 t._files = webui.projectData.docs || [];
                 let options = [];
@@ -45,6 +46,7 @@
             let t = this;
             t._message.value = '';
             if (!file) return;
+            await webui.wait(() => !!webui.proxy);
             let fileContent = await webui.proxy.getProjectFile(file);
             await customElements.whenDefined('webui-content');
             if (fileContent !== undefined) {
