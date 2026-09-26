@@ -225,6 +225,7 @@ pub(crate) async fn get_git_changes(
             .arg(&git_root)
             .arg("status")
             .arg("--porcelain")
+            .arg("-z") // NUL-terminates output and disables all path quoting
             .arg("-uall")
             .output()
             .map_err(|e| e.to_string())?;
@@ -232,8 +233,25 @@ pub(crate) async fn get_git_changes(
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
         let mut files = vec![];
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            files.push(line.to_string());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut entries = stdout.split('\0').peekable();
+        while let Some(entry) = entries.next() {
+            if entry.is_empty() {
+                continue;
+            }
+            if entry.len() < 3 {
+                files.push(entry.to_string());
+                continue;
+            }
+            let status = &entry[0..2];
+            let path = &entry[3..];
+            if status.starts_with('R') || status.starts_with('C') {
+                if let Some(old_path) = entries.next() {
+                    files.push(format!("{} {} -> {}", status, old_path, path));
+                    continue;
+                }
+            }
+            files.push(format!("{} {}", status, path));
         }
         Ok(files)
     })
