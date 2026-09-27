@@ -127,6 +127,30 @@
             webui.setData('app-projects', projects);
             return result;
         }
+        async addProjectsMulti(errHandler) {
+            errHandler ??= defaultErrHandler;
+            let result = await tauri.core.invoke('add_projects_multi', {}).catch(errHandler);
+            if (!result) return;
+            let projects = await webui.proxy.getProjects().catch(errHandler) || [];
+            webui.setData('app-projects', projects);
+            return result;
+        }
+        async renameProject(path, newName, errHandler) {
+            errHandler ??= defaultErrHandler;
+            let result = await tauri.core.invoke('rename_project', { path: path, newName: newName }).catch(errHandler);
+            if (!result) return;
+            let projects = await webui.proxy.getProjects().catch(errHandler) || [];
+            webui.setData('app-projects', projects);
+            return result;
+        }
+        async removeProject(path, errHandler) {
+            errHandler ??= defaultErrHandler;
+            let result = await tauri.core.invoke('remove_project', { path: path }).catch(errHandler);
+            if (!result) return;
+            let projects = await webui.proxy.getProjects().catch(errHandler) || [];
+            webui.setData('app-projects', projects);
+            return result;
+        }
         deleteSecurityKey(errHandler) {
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('delete_securitykey', {}).catch(errHandler);

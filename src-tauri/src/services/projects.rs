@@ -201,17 +201,36 @@ pub(crate) async fn add_project(
         None => return Err(String::from("Folder selection cancelled")),
     };
     let project_path = file_path.to_string();
-    let project = Project::new(name, &file_path.to_string());
+    let mut project_name = name.trim().to_string();
+    if project_name.is_empty() {
+        let path = PathBuf::from(&project_path);
+        if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
+            project_name = folder_name.to_string();
+        } else {
+            return Err(String::from(
+                "Could not determine project name from folder.",
+            ));
+        }
+    }
+    let project = Project::new(&project_name, &project_path);
     let vec_projects = {
         let mut projects = state
             .lock()
             .map_err(|err| format!("add_project State failure: {}", err))?;
-        let project_exists = projects
+        let path_exists = projects
             .iter()
             .any(|item| item.path.eq_ignore_ascii_case(&project_path));
-        if project_exists {
+        if path_exists {
             return Err(String::from(
-                "The provided path is already in your set of projects.",
+                "The selected folder is already used by an existing project.",
+            ));
+        }
+        let name_exists = projects
+            .iter()
+            .any(|item| item.name.eq_ignore_ascii_case(&project_name));
+        if name_exists {
+            return Err(String::from(
+                "A project with this name already exists. Please choose a different name or folder.",
             ));
         }
         projects.push(project);
@@ -222,6 +241,66 @@ pub(crate) async fn add_project(
     };
     save_projects_to_local_storage(&app_handle, &vec_projects).await?;
     Ok(String::from("Project Successfully Added"))
+}
+
+#[tauri::command]
+pub(crate) async fn add_projects_multi(
+    app_handle: tauri::AppHandle,
+    state: State<'_, SharedProjects>,
+) -> Result<Vec<String>, String> {
+    let file_paths = match app_handle.dialog().file().blocking_pick_folders() {
+        Some(paths) => paths,
+        None => return Err(String::from("Folder selection cancelled")),
+    };
+    let mut results = Vec::new();
+    let mut vec_projects_to_save = None;
+    {
+        let mut projects = state
+            .lock()
+            .map_err(|err| format!("add_projects_multi State failure: {}", err))?;
+        let mut added_any = false;
+        for file_path in file_paths {
+            let project_path = file_path.to_string();
+            let path_buf = PathBuf::from(&project_path);
+            let project_name =
+                if let Some(folder_name) = path_buf.file_name().and_then(|n| n.to_str()) {
+                    folder_name.to_string()
+                } else {
+                    results.push(format!(
+                        "Error: Could not determine project name from folder {}",
+                        project_path
+                    ));
+                    continue;
+                };
+            let path_exists = projects
+                .iter()
+                .any(|item| item.path.eq_ignore_ascii_case(&project_path));
+            if path_exists {
+                results.push(format!("Skipped '{}': Folder already used.", project_name));
+                continue;
+            }
+            let name_exists = projects
+                .iter()
+                .any(|item| item.name.eq_ignore_ascii_case(&project_name));
+            if name_exists {
+                results.push(format!("Skipped '{}': Name already exists.", project_name));
+                continue;
+            }
+            projects.push(Project::new(&project_name, &project_path));
+            added_any = true;
+            results.push(format!("Added '{}'", project_name));
+        }
+        if added_any {
+            projects.sort_by_key(|p| p.name.clone());
+            let vec_projects = projects.to_vec();
+            *projects = vec_projects.clone();
+            vec_projects_to_save = Some(vec_projects);
+        }
+    }
+    if let Some(vec_projects) = vec_projects_to_save {
+        save_projects_to_local_storage(&app_handle, &vec_projects).await?;
+    }
+    Ok(results)
 }
 
 /// Example greeting to test interaction from JavaScript to Rust
@@ -330,6 +409,70 @@ pub(crate) async fn save_project_data(
     Ok(format!("Project data saved"))
 }
 
+#[tauri::command]
+pub(crate) async fn rename_project(
+    app_handle: tauri::AppHandle,
+    state: State<'_, SharedProjects>,
+    path: &str,
+    new_name: &str,
+) -> Result<String, String> {
+    let new_name_trimmed = new_name.trim().to_string();
+    if new_name_trimmed.is_empty() {
+        return Err(String::from("Project name cannot be empty."));
+    }
+    let vec_projects = {
+        let mut projects = state
+            .lock()
+            .map_err(|err| format!("rename_project State failure: {}", err))?;
+        let name_exists = projects.iter().any(|item| {
+            item.name.eq_ignore_ascii_case(&new_name_trimmed)
+                && !item.path.eq_ignore_ascii_case(path)
+        });
+        if name_exists {
+            return Err(String::from(
+                "A project with this name already exists. Please choose a different name.",
+            ));
+        }
+        if let Some(project) = projects
+            .iter_mut()
+            .find(|item| item.path.eq_ignore_ascii_case(path))
+        {
+            project.name = new_name_trimmed;
+        } else {
+            return Err(String::from("Project not found."));
+        }
+        projects.sort_by_key(|p| p.name.clone());
+        let vec_projects = projects.to_vec();
+        *projects = vec_projects.clone();
+        vec_projects
+    };
+    save_projects_to_local_storage(&app_handle, &vec_projects).await?;
+    Ok(String::from("Project Successfully Renamed"))
+}
+
+#[tauri::command]
+pub(crate) async fn remove_project(
+    app_handle: tauri::AppHandle,
+    state: State<'_, SharedProjects>,
+    path: &str,
+) -> Result<String, String> {
+    let vec_projects = {
+        let mut projects = state
+            .lock()
+            .map_err(|err| format!("remove_project State failure: {}", err))?;
+        let initial_len = projects.len();
+        projects.retain(|item| !item.path.eq_ignore_ascii_case(path));
+        if projects.len() == initial_len {
+            return Err(String::from("Project not found."));
+        }
+        let vec_projects = projects.to_vec();
+        *projects = vec_projects.clone();
+        vec_projects
+    };
+    save_projects_to_local_storage(&app_handle, &vec_projects).await?;
+    Ok(String::from("Project Successfully Removed"))
+}
+
 async fn get_project_docs(project_path: &str) -> Vec<String> {
     let mut docs = vec![];
     let root = PathBuf::from(project_path);
@@ -344,7 +487,7 @@ fn collect_md_files(current_path: &Path, root: &Path, docs: &mut Vec<String>) {
         "dist",
         "build",
         "node_modules",
-        ".git"
+        ".git",
     ];
     if let Ok(entries) = fs::read_dir(current_path) {
         for entry in entries.flatten() {

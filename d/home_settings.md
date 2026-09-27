@@ -10,9 +10,13 @@ Use this form to add additional projects as needed.
 
 </webui-page-segment>
 
-### Remove Current Project
+### Current Project: <strong data-subscribe="app-current-project.display:html"></strong>
 
-Coming soon!
+<webui-page-segment>
+
+<app-project-manager></app-project-manager>
+
+</webui-page-segment>
 
 ### Change or remove your key
 

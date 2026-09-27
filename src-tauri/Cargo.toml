@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.27"
+version = "0.1.28"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
