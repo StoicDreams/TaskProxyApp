@@ -1,7 +1,6 @@
-use std::sync::LazyLock;
-
 use crate::prelude::*;
 use background::background_tasks;
+use std::sync::LazyLock;
 use tauri::{Emitter, Manager, WindowEvent};
 use tracing_subscriber::EnvFilter;
 
@@ -78,6 +77,11 @@ pub fn run() {
                 "webui.isclosing",
                 "Closing, please wait while we save your data!",
             );
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+                let _ = app_handle.save_window_state(StateFlags::all());
+            }
             let app_data = {
                 match app_handle.try_state::<SharedAppData>() {
                     Some(state) => match state.lock() {
@@ -120,8 +124,12 @@ pub fn run() {
 
     // App setup
     builder = builder.setup(|app| {
-        // Fix for bug in initial page loading
-        if let Some(window) = app.get_webview_window("taskproxy") {
+        if let Some(window) = app.get_webview_window("main") {
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_window_state::{StateFlags, WindowExt};
+                let _ = window.restore_state(StateFlags::all());
+            }
             // Explicit nav required because Tauri initially tries loading page before assets are available.
             let url_to_load = "/";
             let nav_script = format!("window.location.replace('{}')", url_to_load);

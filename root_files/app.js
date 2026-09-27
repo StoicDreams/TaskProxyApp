@@ -344,7 +344,7 @@
             }
         }
     }
-    const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects']
+    const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects', 'page-path']
     runWhenWebUIReady(async () => {
         webui.isclosing = (msg) => {
             webui.dialog({ content: msg, isLoading: true });
@@ -356,11 +356,7 @@
         webui.projectData = {};
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1) return;
-            if (key === 'page-path') {
-                setTimeout(() => handlePagePath(value), 100);
-            } else {
-                webui.setData(key, value);
-            }
+            webui.setData(key, value);
         });
         webui.watchAppDataChanges(queueAppDataChanges);
         let currentProject = webui.getData('app-current-project');
@@ -376,7 +372,7 @@
     const syncQueueTimeout = 500;
     function handlePagePath(pagePath) {
         let navTo = pagePath === '/root' ? '/' : pagePath;
-        if (location.pathname === pagePath) return;
+        if (location.pathname === navTo) return;
         webui.navigateTo(navTo);
     }
     async function queueAppDataChanges(changes, appData) {
@@ -412,7 +408,6 @@
             webui.proxy.projects.isLoaded = !!webui.projectData.id;
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';
-            webui.navigateTo('/');
             setTimeout(() => {
                 handlePagePath(startPage);
             }, 300);

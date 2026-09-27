@@ -37,12 +37,18 @@
                 t.classList.remove('show');
             } else {
                 t.classList.add('show');
+                let current = webui.getData('app-current-project');
+                if (current && current.value) {
+                    t._dropdown.value = current.value;
+                }
                 setTimeout(() => {
                     let value = webui.getData('app-current-project');
                     if (!value) {
                         webui.setData('app-current-project', dp[0]);
+                    } else if (value.value && t._dropdown.value !== value.value) {
+                        t._dropdown.value = value.value;
                     }
-                }, 3000);
+                }, 100);
             }
         },
         shadowTemplate: `
