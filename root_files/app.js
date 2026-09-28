@@ -394,9 +394,13 @@
     });
     let queueId = '';
     const syncQueueTimeout = 500;
-    function handlePagePath(pagePath) {
+    async function handlePagePath(pagePath, forceReload = false) {
         let navTo = pagePath === '/root' ? '/' : pagePath;
-        if (location.pathname === navTo) return;
+        if (!forceReload && location.pathname === navTo) return;
+        if (forceReload) {
+            webui.navigateTo('_reloading');
+            await webui.wait(50);
+        }
         webui.navigateTo(navTo);
     }
     async function queueAppDataChanges(changes, appData) {
@@ -433,11 +437,11 @@
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';
             setTimeout(() => {
-                handlePagePath(startPage);
+                handlePagePath(startPage, true);
             }, 300);
         } catch (ex) {
             webui.alert(ex);
-            handlePagePath('/');
+            handlePagePath('/', true);
         } finally {
             hideLoading();
         }
