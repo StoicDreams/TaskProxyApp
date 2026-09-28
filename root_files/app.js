@@ -111,7 +111,7 @@
             }
         }
         terminal = {
-            start: (id, scriptContent, inSeparateWindow) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, inSeparateWindow: !!inSeparateWindow }),
+            start: (id, scriptContent, args, inSeparateWindow) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow }),
             kill: (id) => tauri.core.invoke('kill_script', { terminalId: id }),
             killAll: () => tauri.core.invoke('kill_all_scripts', {}),
             onOutput: (callback) => tauri.event.listen('terminal-output', callback),
@@ -267,7 +267,7 @@
                 }
                 return state;
             },
-            async runScript(id, scriptContent, inSeparateWindow, useQueue) {
+            async runScript(id, scriptContent, args, inSeparateWindow, useQueue) {
                 let state = this.getState();
                 if (state.terminals[id] && state.terminals[id].status === 'Running') {
                     throw 'Script is already running. You can manage it in the Terminal Manager.';
@@ -275,17 +275,17 @@
                 if (useQueue) {
                     let isRunning = Object.values(state.terminals).some(t => t.status === 'Running');
                     if (isRunning) {
-                        state.queue.push({ id, scriptContent, inSeparateWindow });
+                        state.queue.push({ id, scriptContent, args, inSeparateWindow });
                         webui.setData('app-terminal-state', state);
                         return 'Queued';
                     }
                 }
-                return await this._executeScript(id, scriptContent, inSeparateWindow);
+                return await this._executeScript(id, scriptContent, args, inSeparateWindow);
             },
-            async _executeScript(id, scriptContent, inSeparateWindow) {
+            async _executeScript(id, scriptContent, args, inSeparateWindow) {
                 let state = this.getState();
                 if (!state.terminals[id]) {
-                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, output: [], isLive: id === 'live' };
+                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, args: args, output: [], isLive: id === 'live' };
                 }
                 state.terminals[id].status = 'Running';
                 state.terminals[id].script = scriptContent;
@@ -296,7 +296,7 @@
                 this.clearOutput(id);
                 webui.setData('app-terminal-refresh', Date.now());
                 try {
-                    await webui.proxy.terminal.start(id, scriptContent, inSeparateWindow);
+                    await webui.proxy.terminal.start(id, scriptContent, args, inSeparateWindow);
                     if (inSeparateWindow) {
                         this._scriptFinished(id);
                     }
@@ -316,7 +316,7 @@
                 if (state.queue && state.queue.length > 0) {
                     let next = state.queue.shift();
                     webui.setData('app-terminal-state', state);
-                    this._executeScript(next.id, next.scriptContent, next.inSeparateWindow).catch(err => webui.alert(err, 'danger'));
+                    this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow).catch(err => webui.alert(err, 'danger'));
                 }
             },
             ensureListeners() {

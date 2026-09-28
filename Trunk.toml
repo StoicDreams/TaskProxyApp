@@ -3,6 +3,11 @@ target = "./index.html"
 
 [watch]
 watch = ["./src", "./wc", "./root_files", "./d", "./css"]
+ignore = [
+    "./.taskproxy",
+    "./.editorconfig",
+    "./Docs"
+]
 
 [serve]
 ws_protocol = "ws"

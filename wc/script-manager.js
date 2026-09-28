@@ -7,9 +7,7 @@
             const t = this;
             t._fileSelector = t.template.querySelector('webui-dropdown[label="Script"]');
             t._message = t.template.querySelector('webui-input-message');
-            t._btnRun = t.template.querySelector('webui-button[label="Run"]');
-            t._btnReset = t.template.querySelector('webui-button[label="Reset"]');
-            t._btnSave = t.template.querySelector('webui-button[label="Save"]');
+            t._runner = t.template.querySelector('app-script-runner');
             t._btnNew = t.template.querySelector('webui-button[label="New Script"]');
         },
         async loadScripts(selectFile) {
@@ -33,78 +31,14 @@
         },
         async loadScript(file) {
             let t = this;
-            t._message.value = '';
             if (!file) return;
-            await webui.wait(()=>!!webui.proxy);
-            let fileContent = await webui.proxy.getProjectFile(file);
-            if (fileContent !== undefined) {
-                t._message.value = fileContent;
-            } else {
-                webui.alert('Failed to load script content', 'danger');
-            }
+            await webui.wait(() => !!t._runner.loadScript);
+            t._runner.loadScript(file);
         },
         connected() {
             const t = this;
             t._fileSelector.addEventListener('change', ev => {
                 t.loadScript(t._fileSelector.value);
-            });
-            t._btnReset.addEventListener('click', ev => {
-                t.loadScript(t._fileSelector.value);
-            });
-            t._btnSave.addEventListener('click', async ev => {
-                let file = t._fileSelector.value;
-                if (!file) return;
-                let msg = await webui.proxy.saveProjectFile(file, t._message.value);
-                if (msg) { webui.alert(msg, 'success'); }
-            });
-            t._btnRun.addEventListener('click', async ev => {
-                let file = t._fileSelector.value;
-                if (!file) {
-                    webui.alert('No script selected.', 'warning');
-                    return;
-                }
-                let scriptContent = t._message.value;
-                if (!scriptContent.trim()) {
-                    webui.alert('Script is empty.', 'warning');
-                    return;
-                }
-                let runInSeparateWindow = webui.getData('app-script-separate-window') === true || webui.getData('app-script-separate-window') === 'true';
-                let runInQueue = webui.getData('app-script-queue') === true || webui.getData('app-script-queue') === 'true';
-                await webui.proxy.saveProjectFile(file, scriptContent);
-                webui.proxy.terminalHelpers.ensureListeners();
-                try {
-                    let result = await webui.proxy.terminalHelpers.runScript(file, scriptContent, runInSeparateWindow, runInQueue);
-                    if (result === 'Queued') {
-                        webui.alert('Script added to queue.', 'info');
-                    } else {
-                        webui.alert(runInSeparateWindow ? 'Script launched in separate window.' : 'Script started in Terminal Manager.', 'success');
-                    }
-                } catch (err) {
-                    webui.alert(err, 'warning');
-                }
-            });
-            t._btnNew.addEventListener('click', async ev => {
-                webui.dialog({
-                    title: 'New Script',
-                    content: '<webui-flex column><webui-input-text name="scriptName" label="Script Name (without .ps1)"></webui-input-text></webui-flex>',
-                    confirm: 'Create',
-                    cancel: 'Cancel',
-                    onconfirm: async (data, content) => {
-                        let formData = Object.fromEntries(data);
-                        let scriptName = (formData.scriptName || '').trim();
-                        if (!scriptName) {
-                            content.alert('Script name cannot be empty.');
-                            return false;
-                        }
-                        let fileName = `.taskproxy/scripts/${scriptName}.ps1`;
-                        let msg = await webui.proxy.saveProjectFile(fileName, '# New PowerShell Script\n');
-                        if (msg) {
-                            webui.alert('Script created successfully.', 'success');
-                            t.loadScripts(fileName);
-                            return true;
-                        }
-                    }
-                });
             });
             t.loadScripts();
         },
@@ -119,16 +53,9 @@
 </style>
 <webui-flex align="center">
     <webui-dropdown label="Script"></webui-dropdown>
-    <webui-button theme="info" label="Run"></webui-button>
     <webui-button theme="primary" label="New Script"></webui-button>
-    <webui-button theme="warning" label="Reset"></webui-button>
-    <webui-button theme="success" label="Save"></webui-button>
 </webui-flex>
-<webui-flex align="center" justify="start" gap="var(--padding)">
-    <webui-toggle-icon data-bind="app-script-separate-window" data-default="false" label="Run in separate window" theme-on="primary"></webui-toggle-icon>
-    <webui-toggle-icon data-bind="app-script-queue" data-default="false" label="Run in sequence (Queue)" theme-on="primary"></webui-toggle-icon>
-</webui-flex>
-<webui-input-message style="min-height: 60vh;"></webui-input-message>
+<app-script-runner style="min-height: 70vh;"></app-script-runner>
 `
     });
 }

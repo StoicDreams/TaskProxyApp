@@ -167,6 +167,7 @@ pub(crate) async fn start_script(
     project_state: State<'_, CurrentProject>,
     terminal_id: String,
     script_content: String,
+    args: Vec<String>,
     in_separate_window: bool,
 ) -> Result<String, String> {
     let mut processes = state.processes.lock().await;
@@ -232,6 +233,7 @@ pub(crate) async fn start_script(
                 .arg("Bypass")
                 .arg("-File")
                 .arg(&script_path)
+                .args(&args)
                 .current_dir(&working_dir);
             child_opt = Some(
                 cmd.spawn()
@@ -258,7 +260,8 @@ pub(crate) async fn start_script(
                             .arg("-ExecutionPolicy")
                             .arg("Bypass")
                             .arg("-File")
-                            .arg(&script_path);
+                            .arg(&script_path)
+                            .args(&args);
                     }
                     "gnome-terminal" => {
                         cmd.arg("--")
@@ -267,7 +270,8 @@ pub(crate) async fn start_script(
                             .arg("-ExecutionPolicy")
                             .arg("Bypass")
                             .arg("-File")
-                            .arg(&script_path);
+                            .arg(&script_path)
+                            .args(&args);
                     }
                     _ => {
                         cmd.arg("-e")
@@ -276,7 +280,8 @@ pub(crate) async fn start_script(
                             .arg("-ExecutionPolicy")
                             .arg("Bypass")
                             .arg("-File")
-                            .arg(&script_path);
+                            .arg(&script_path)
+                            .args(&args);
                     }
                 }
                 cmd.current_dir(&working_dir);
@@ -292,9 +297,13 @@ pub(crate) async fn start_script(
         #[cfg(target_os = "macos")]
         {
             let script_str = script_path.to_string_lossy();
+            let mut escaped_args = String::new();
+            for arg in &args {
+                escaped_args.push_str(&format!(" \\\"{}\\\"", arg.replace("\"", "\\\"")));
+            }
             let apple_script = format!(
-                "tell application \"Terminal\"\n\tactivate\n\tdo script \"'{}' -NoExit -ExecutionPolicy Bypass -File '{}'\"\nend tell",
-                executable, script_str
+                "tell application \"Terminal\"\n\tactivate\n\tdo script \"'{}' -NoExit -ExecutionPolicy Bypass -File '{}'{}\"\nend tell",
+                executable, script_str, escaped_args
             );
             let mut cmd = AsyncCommand::new("osascript");
             cmd.arg("-e").arg(&apple_script);
@@ -322,6 +331,7 @@ pub(crate) async fn start_script(
         .arg("-NonInteractive")
         .arg("-File")
         .arg(&script_path)
+        .args(&args)
         .current_dir(&working_dir)
         .kill_on_drop(true)
         .stdout(Stdio::piped())
