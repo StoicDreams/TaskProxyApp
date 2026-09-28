@@ -181,6 +181,58 @@ pub(crate) async fn git_pull(
 }
 
 #[tauri::command]
+pub(crate) async fn git_pull_overwrite(
+    repo: String,
+    state: State<'_, CurrentProject>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    let git_path = get_repo_path(&state, &repo)?;
+    let app_handle_clone = app_handle.clone();
+    let result = task::spawn_blocking(move || {
+        let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
+        let mut remote = repository
+            .find_remote("origin")
+            .map_err(|e| e.to_string())?;
+        let head = repository.head().map_err(|e| e.to_string())?;
+        let branch_name = head.shorthand().ok_or("Invalid branch name")?;
+        let callbacks = create_remote_callbacks(app_handle_clone);
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+        remote
+            .fetch(&[branch_name], Some(&mut fetch_options), None)
+            .map_err(|e| {
+                if e.message().contains("Credentials Missing/Invalid") {
+                    String::from("Credentials Missing/Invalid")
+                } else {
+                    e.to_string()
+                }
+            })?;
+        let fetch_head_name = format!("refs/remotes/origin/{}", branch_name);
+        let fetch_commit = repository
+            .find_reference(&fetch_head_name)
+            .map_err(|e| e.to_string())?
+            .peel_to_commit()
+            .map_err(|e| e.to_string())?;
+        let mut checkout_builder = git2::build::CheckoutBuilder::new();
+        checkout_builder.force();
+        repository
+            .reset(
+                fetch_commit.as_object(),
+                git2::ResetType::Hard,
+                Some(&mut checkout_builder),
+            )
+            .map_err(|e| e.to_string())?;
+
+        Ok(format!(
+            "Successfully pulled and overwrote local branch '{}'",
+            branch_name
+        ))
+    })
+    .await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+#[tauri::command]
 pub(crate) async fn git_sync(
     repo: String,
     state: State<'_, CurrentProject>,
@@ -524,6 +576,12 @@ pub(crate) async fn git_delete_branch(
     let app_handle_clone = app_handle.clone();
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
+        if let Ok(mut local_branch) = repository.find_branch(&branch, git2::BranchType::Local) {
+            local_branch
+                .delete()
+                .map_err(|e| format!("Failed to delete local branch: {}", e))?;
+            return Ok(format!("Branch '{}' deleted.", branch));
+        }
         if branch.contains('/') {
             let parts: Vec<&str> = branch.splitn(2, '/').collect();
             if parts.len() == 2 {
@@ -541,17 +599,13 @@ pub(crate) async fn git_delete_branch(
                         Some(&mut push_options),
                     )
                     .map_err(|e| e.to_string())?;
-            } else {
-                return Err(format!("Could not parse remote branch name: {}", branch));
+                return Ok(format!("Remote branch '{}' deleted.", branch));
             }
-        } else {
-            let mut b = repository
-                .find_branch(&branch, git2::BranchType::Local)
-                .map_err(|e| format!("Failed to find local branch: {}", e))?;
-            b.delete()
-                .map_err(|e| format!("Failed to delete branch: {}", e))?;
         }
-        Ok(format!("Branch '{}' deleted.", branch))
+        Err(format!(
+            "Branch '{}' not found or could not be deleted.",
+            branch
+        ))
     })
     .await;
     result.map_err(|err| format!("{}", err))?
@@ -743,6 +797,9 @@ pub(crate) async fn git_restore_file(
         repository
             .checkout_head(Some(&mut checkout_builder))
             .map_err(|e| e.to_string())?;
+        if let Ok(head) = repository.head().and_then(|h| h.peel_to_commit()) {
+            let _ = repository.reset_default(Some(head.as_object()), [file.as_str()]);
+        }
         Ok(format!("Successfully reverted {}", file))
     })
     .await;

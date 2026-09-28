@@ -161,6 +161,7 @@ pub fn run() {
             services::git_controller::get_git_repos,
             services::git_controller::git_commit,
             services::git_controller::git_pull,
+            services::git_controller::git_pull_overwrite,
             services::git_controller::git_push,
             services::git_controller::git_sync,
             services::git_controller::get_git_branches,

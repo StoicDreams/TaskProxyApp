@@ -22,6 +22,7 @@
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
+            t._btnPullOverwrite = t.template.querySelector('#btn-pull-overwrite');
             t._btnFetch = t.template.querySelector('#btn-fetch');
             t._instructions = t.template.querySelector('.instructions');
             t._btnRemoteTab = t.template.querySelector('#tab-remote');
@@ -521,6 +522,28 @@
                 }
                 t.loadRepoChanges();
             });
+            t._btnPullOverwrite.addEventListener('click', async _ => {
+                t.setAlert();
+                let repo = t._repos.value;
+                if (repo === undefined) {
+                    t.setAlert('No repo is set!');
+                    return;
+                }
+                await webui.dialog({
+                    title: 'Force Pull (Overwrite Local)',
+                    content: `<p>Are you sure you want to pull and <strong>overwrite all local changes</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                    confirm: 'Overwrite',
+                    cancel: 'Cancel',
+                    onconfirm: async (data, content) => {
+                        let result = await webui.proxy.git.pullOverwrite(repo, msg => content.alert(msg));
+                        if (result) {
+                            t.setAlert(result, 'success');
+                            await t.loadRepoChanges();
+                            return true;
+                        }
+                    }
+                });
+            });
             t._btnRefresh.addEventListener('click', async _ => {
                 await t.loadRepos();
             });
@@ -625,6 +648,7 @@ pre {
             <webui-flex gap="var(--padding)" align="center">
                 <webui-button theme="info" label="Fetch" id="btn-fetch"></webui-button>
                 <webui-button theme="tertiary" label="Pull"></webui-button>
+                <webui-button theme="danger" label="Force Pull" id="btn-pull-overwrite" title="Pull and overwrite local changes"></webui-button>
                 <webui-button theme="secondary" label="Push"></webui-button>
                 <webui-button theme="success" label="Sync"></webui-button>
             </webui-flex>

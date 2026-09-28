@@ -144,6 +144,7 @@
             deleteBranch: (repo, branch, err) => invokeGit('git_delete_branch', { repo, branch }, err),
             mergeBranch: (repo, branch, err) => invokeGit('git_merge_branch', { repo, branch }, err),
             pull: (repo, err) => invokeGit('git_pull', { repo }, err),
+            pullOverwrite: (repo, err) => invokeGit('git_pull_overwrite', { repo }, err),
             push: (repo, err) => invokeGit('git_push', { repo }, err),
             sync: (repo, err) => invokeGit('git_sync', { repo }, err),
             getRemoteStatus: (repo, err) => invokeGit('get_git_remote_status', { repo }, err),
