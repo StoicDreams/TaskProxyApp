@@ -4,7 +4,7 @@
         linkCss: false,
         watchVisibility: false,
         isInput: false,
-        preload: 'dropdown toggle-icon input-message dialogs',
+        preload: 'app:script-runner dropdown toggle-icon input-message dialogs',
         constructor() {
             const t = this;
             t.icon = t.template.querySelector('webui-icon');
@@ -62,22 +62,19 @@
             container.innerHTML = `
 <div id="term-content-wrapper" style="display:none; flex-direction:column; gap:var(--padding); height:100%;">
     <webui-grid columns="1fr max-content" gap="var(--padding)" align="center">
-        <webui-dropdown label="Terminal / Script" id="term-dropdown"></webui-dropdown>
+        <webui-dropdown label="Script" id="term-dropdown"></webui-dropdown>
         <webui-toggle-icon id="term-filter-toggle" label="All Scripts" theme-on="primary"></webui-toggle-icon>
     </webui-grid>
     <webui-flex gap="0.5rem" align="center" wrap="wrap">
-        <webui-button id="btn-run" theme="primary" label="Run"></webui-button>
         <webui-button id="btn-kill" theme="warning" label="Kill"></webui-button>
         <webui-button id="btn-kill-all" theme="danger" label="Kill All"></webui-button>
-        <webui-button id="btn-save" theme="success" label="Save"></webui-button>
-        <webui-button id="btn-save-as" theme="info" label="Save As"></webui-button>
         <webui-button id="btn-clear" theme="secondary" label="Clear Output" style="margin-left: auto;"></webui-button>
     </webui-flex>
-    <webui-flex column style="flex: 1 1 50%; min-height: 0;">
+    <webui-flex column>
         <label style="font-weight: bold; margin-bottom: 0.25rem;">Script Content:</label>
-        <webui-input-message id="term-editor" style="height: 100%; min-height: 120px;"></webui-input-message>
+        <app-script-runner id="term-runner" style="height: 100%; min-height: 120px;"></app-script-runner>
     </webui-flex>
-    <webui-flex column style="flex: 1 1 50%; min-height: 0;">
+    <webui-flex column style="min-height: 40vh;">
         <label style="font-weight: bold; margin-bottom: 0.25rem;">Console Output:</label>
         <div id="term-console" style="
             flex: 1; background: #111; color: #eee; padding: 0.5rem;
@@ -125,13 +122,10 @@
                 contentWrapper.style.display = 'flex';
                 t._activeDropdown = container.querySelector('#term-dropdown');
                 const filterToggle = container.querySelector('#term-filter-toggle');
-                t._activeEditor = container.querySelector('#term-editor');
+                t._runner = container.querySelector('#term-runner');
                 t._activeConsole = container.querySelector('#term-console');
-                t._btnRun = container.querySelector('#btn-run');
                 t._btnKill = container.querySelector('#btn-kill');
                 const btnKillAll = container.querySelector('#btn-kill-all');
-                t._btnSave = container.querySelector('#btn-save');
-                const btnSaveAs = container.querySelector('#btn-save-as');
                 const btnClear = container.querySelector('#btn-clear');
                 let initState = webui.proxy.terminalHelpers.getState();
                 initState.allScripts = await webui.proxy.getScripts() || [];
@@ -144,29 +138,11 @@
                     t.refreshDropdown();
                 });
                 t._activeDropdown.addEventListener('change', () => t.switchTerminal(t._activeDropdown.value));
-                t._activeEditor.addEventListener('input', () => {
+                t._runner.addEventListener('input', () => {
                     let state = webui.proxy.terminalHelpers.getState();
                     if (state.terminals[state.activeId]) {
-                        state.terminals[state.activeId].script = t._activeEditor.value;
+                        state.terminals[state.activeId].script = t._runner.scriptContent;
                         webui.setData('app-terminal-state', state);
-                    }
-                });
-                t._btnRun.addEventListener('click', async () => {
-                    let state = webui.proxy.terminalHelpers.getState();
-                    const current = state.terminals[state.activeId];
-                    if (!current) return;
-                    const scriptText = t._activeEditor.value;
-                    if (!scriptText || !scriptText.trim()) {
-                        webui.alert('Please enter a script to run.', 'warning');
-                        return;
-                    }
-                    if (current.status === 'Running') {
-                        await webui.proxy.terminal.kill(current.id).catch(console.warn);
-                    }
-                    try {
-                        await webui.proxy.terminalHelpers._executeScript(state.activeId, scriptText, false);
-                    } catch (err) {
-                        webui.alert(err, 'danger');
                     }
                 });
                 t._btnKill.addEventListener('click', async () => {
@@ -191,45 +167,6 @@
                     state.queue = [];
                     webui.setData('app-terminal-state', state);
                     webui.setData('app-terminal-refresh', Date.now());
-                });
-                t._btnSave.addEventListener('click', async () => {
-                    let state = webui.proxy.terminalHelpers.getState();
-                    if (state.activeId === 'live') return;
-                    const msg = await webui.proxy.saveProjectFile(state.activeId, t._activeEditor.value);
-                    if (msg) webui.alert(msg, 'success');
-                });
-                btnSaveAs.addEventListener('click', () => {
-                    webui.dialog({
-                        title: 'Save Script As',
-                        content: '<webui-flex column><webui-input-text name="scriptName" label="Script Name (without .ps1)"></webui-input-text></webui-flex>',
-                        confirm: 'Save',
-                        cancel: 'Cancel',
-                        onconfirm: async (data, content) => {
-                            const formData = Object.fromEntries(data);
-                            const name = (formData.scriptName || '').trim();
-                            if (!name) {
-                                content.alert('Script name cannot be empty.');
-                                return false;
-                            }
-                            const targetPath = `.taskproxy/scripts/${name}.ps1`;
-                            let state = webui.proxy.terminalHelpers.getState();
-                            state.allScripts = await webui.proxy.getScripts() || [];
-                            if (state.allScripts.includes(targetPath)) {
-                                content.alert('A script with that name already exists.');
-                                return false;
-                            }
-                            const msg = await webui.proxy.saveProjectFile(targetPath, t._activeEditor.value);
-                            if (msg) {
-                                webui.alert(msg, 'success');
-                                state = webui.proxy.terminalHelpers.getState();
-                                state.allScripts.push(targetPath);
-                                webui.setData('app-terminal-state', state);
-                                webui.setData('app-terminal-refresh', Date.now());
-                                await t.switchTerminal(targetPath);
-                                return true;
-                            }
-                        }
-                    });
                 });
                 btnClear.addEventListener('click', () => {
                     let state = webui.proxy.terminalHelpers.getState();
@@ -262,7 +199,10 @@
             }
             webui.setData('app-terminal-state', state);
             const current = state.terminals[id];
-            if (this._activeEditor) this._activeEditor.value = current.script || '';
+            await customElements.whenDefined('app-script-runner');
+            if (this._runner) {
+                this._runner.setScript(current.id, current.script || '');
+            }
             this.renderConsole();
             this.refreshDropdown();
             this.refreshButtons();
@@ -277,10 +217,7 @@
             const state = webui.proxy.terminalHelpers.getState();
             const current = state.terminals[state.activeId];
             const isRunning = current && current.status === 'Running';
-            const isLive = state.activeId === 'live';
-            if (this._btnRun) this._btnRun.innerHTML = isRunning ? 'Restart' : 'Run';
             if (this._btnKill) this._btnKill.disabled = !isRunning;
-            if (this._btnSave) this._btnSave.style.display = isLive ? 'none' : 'inline-flex';
         },
         renderConsole() {
             if (!this._activeConsole) return;

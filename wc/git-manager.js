@@ -46,6 +46,7 @@
                     t._repos.value = webui.projectData.data.selectedGitRepo;
                 }
                 await t.loadBranches();
+                t.loadRepoChanges();
             }
         },
         async loadBranches() {
@@ -159,14 +160,14 @@
         },
         async loadRepoChanges() {
             let t = this;
-            t._filesContainer.innerText = '';
             let repo = t._repos.value;
             if (repo === undefined) return;
             await webui.wait(()=>!!webui.proxy);
             let changes = await webui.proxy.git.getChanges(repo);
+            await customElements.whenDefined('webui-content-compare');
+            t._filesContainer.innerHTML = '';
             t._hasPendingChanges = changes && changes.length > 0;
             t._fileName.innerHTML = '';
-            await customElements.whenDefined('webui-content-compare');
             t._diffViewer.clear?.();
             let first = null;
             t._files = [];
@@ -295,7 +296,6 @@
                 webui.projectData.data.selectedGitRepo = t._repos.value;
                 await t.loadBranches();
                 t.loadRepoChanges();
-                if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
             });
             t._branchTable.addEventListener('click', async ev => {
                 let btn = webui.closest(ev, 'webui-button');
@@ -482,8 +482,7 @@
                 t.loadRepoChanges();
             });
             t._btnRefresh.addEventListener('click', async _ => {
-                t.loadRepos();
-                t.loadRemoteStatus();
+                await t.loadRepos();
             });
             t._btnPush.addEventListener('click', async _ => {
                 t.setAlert();

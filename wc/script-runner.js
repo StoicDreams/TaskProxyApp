@@ -9,6 +9,7 @@
             t._btnRun = t.template.querySelector('webui-button[label="Run"]');
             t._btnReset = t.template.querySelector('webui-button[label="Reset"]');
             t._btnSave = t.template.querySelector('webui-button[label="Save"]');
+            t._btnSaveAs = t.template.querySelector('webui-button[label="Save As"]');
             t._paramsContainer = t.template.querySelector('.params-container');
             t._btnParamsClear = t.template.querySelector('webui-button[label="Clear Params"]');
             t._previewPanel = t.template.querySelector('webui-code');
@@ -30,6 +31,16 @@
             await webui.wait(()=>!!webui.proxy);
             t._message.value = await webui.proxy.getProjectFile(file) || '';
             t.parseParams(t._message.value);
+        },
+        setScript(file, content) {
+            const t = this;
+            t._fileName = file;
+            t._message.value = content || '';
+            t.parseParams(t._message.value);
+            t.updatePreview();
+        },
+        get scriptContent() {
+            return this._message ? this._message.value : '';
         },
         parseParams(scriptContent) {
             const t = this;
@@ -112,22 +123,60 @@
             });
             t._previewPanel.value = cmd;
         },
+        runSaveAs() {
+            const t = this;
+            webui.dialog({
+                title: 'Save Script As',
+                content: '<webui-flex column><webui-input-text name="scriptName" label="Script Name (without .ps1)"></webui-input-text></webui-flex>',
+                confirm: 'Save',
+                cancel: 'Cancel',
+                onconfirm: async (data, content) => {
+                    const formData = Object.fromEntries(data);
+                    const name = (formData.scriptName || '').trim();
+                    if (!name) {
+                        content.alert('Script name cannot be empty.');
+                        return false;
+                    }
+                    const targetPath = `.taskproxy/scripts/${name}.ps1`;
+                    let state = webui.proxy.terminalHelpers.getState();
+                    state.allScripts = await webui.proxy.getScripts() || [];
+                    if (state.allScripts.includes(targetPath)) {
+                        content.alert('A script with that name already exists.');
+                        return false;
+                    }
+                    const msg = await webui.proxy.saveProjectFile(targetPath, t._message.value);
+                    if (msg) {
+                        webui.alert(msg, 'success');
+                        state = webui.proxy.terminalHelpers.getState();
+                        state.allScripts.push(targetPath);
+                        webui.setData('app-terminal-state', state);
+                        webui.setData('app-terminal-refresh', Date.now());
+                        return true;
+                    }
+                }
+            });
+        },
         connected() {
             const t = this;
             t._btnReset.addEventListener('click', async () => {
-                if (!t._fileName) return;
-                t.loadScript(t._fileName, fileContent);
+                if (!t._fileName || !t._fileName.indexOf('.')===-1) {
+                    t.setScript('', '');
+                    return;
+                };
+                t.loadScript(t._fileName);
             });
             t._btnSave.addEventListener('click', async () => {
-                if (!t._fileName) return;
+                if (!t._fileName || t._fileName.indexOf('.') === -1) {
+                    t.runSaveAs();
+                    return;
+                }
                 let msg = await webui.proxy.saveProjectFile(t._fileName, t._message.value);
                 if (msg) { webui.alert(msg, 'success'); }
             });
+            t._btnSaveAs.addEventListener('click', () => {
+                t.runSaveAs();
+            });
             t._btnRun.addEventListener('click', async () => {
-                if (!t._fileName) {
-                    webui.alert('No script selected.', 'warning');
-                    return;
-                }
                 let scriptContent = t._message.value;
                 if (!scriptContent.trim()) {
                     webui.alert('Script is empty.', 'warning');
@@ -152,7 +201,9 @@
                         }
                     }
                 });
-                await webui.proxy.saveProjectFile(t._fileName, scriptContent);
+                if (t._fileName && t._fileName.indexOf('.') !== -1) {
+                    await webui.proxy.saveProjectFile(t._fileName, scriptContent);
+                }
                 webui.proxy.terminalHelpers.ensureListeners();
                 try {
                     let result = await webui.proxy.terminalHelpers.runScript(t._fileName, scriptContent, args, runInSeparateWindow, runInQueue);
@@ -205,16 +256,15 @@
     <webui-button theme="info" label="Run"></webui-button>
     <webui-button theme="warning" label="Reset"></webui-button>
     <webui-button theme="success" label="Save"></webui-button>
-</webui-flex>
-<div class="params-container"></div>
-<webui-flex align="center" gap="var(--padding)">
+    <webui-button theme="info" label="Save As"></webui-button>
     <webui-button theme="secondary" label="Clear Params"></webui-button>
     <webui-toggle-icon label="Full Path" data-default="false" theme-on="primary"></webui-toggle-icon>
 </webui-flex>
-<webui-page-segment>
+<div class="params-container"></div>
+<webui-flex column>
 <webui-code lang="powershell"></webui-code>
-</webui-page-segment>
 <webui-input-message style="min-height: 60vh;"></webui-input-message>
+</webui-flex>
 `
     });
 }
