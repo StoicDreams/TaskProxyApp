@@ -37,9 +37,62 @@
     }
     const messages = {};
     const pendingWorkerRequests = new Map();
+    async function promptForGitToken() {
+        return new Promise((resolve) => {
+            webui.dialog({
+                title: 'Git Authentication Required',
+                content: `
+                    <p>Your Personal Access Token (PAT) is missing or invalid.</p>
+                    <webui-flex column gap="var(--padding)">
+                        <webui-input-text name="gitToken" label="Personal Access Token (PAT)"></webui-input-text>
+                        <webui-toggle-icon name="isGlobal" label="Save to Global Scope (Defaults to Project)" data-default="false" theme-on="primary"></webui-toggle-icon>
+                    </webui-flex>
+                `,
+                confirm: 'Save & Retry',
+                cancel: 'Cancel',
+                onconfirm: async (data, content) => {
+                    const formData = Object.fromEntries(data);
+                    const token = (formData.gitToken || '').trim();
+                    const isGlobal = formData.isGlobal === true || formData.isGlobal === 'true';
+                    if (!token) {
+                        content.alert('Token cannot be empty.', 'danger');
+                        return false;
+                    }
+                    if (isGlobal) {
+                        if (!webui.taskProxyData.data) webui.taskProxyData.data = {};
+                        webui.taskProxyData.data['git_pat'] = token;
+                        await webui.proxy.saveAppData();
+                    } else {
+                        if (!webui.projectData.data) webui.projectData.data = {};
+                        webui.projectData.data['git_pat'] = token;
+                        await webui.proxy.syncProjectData();
+                    }
+                    resolve(true);
+                    return true;
+                },
+                oncancel: () => resolve(false)
+            });
+        });
+    }
     const invokeGit = async (command, args = {}, errHandler = defaultErrHandler) => {
-        const result = await tauri.core.invoke(command, args).catch(errHandler);
-        return result || undefined; // Returns undefined if result is falsy, matching your original logic
+        try {
+            const result = await tauri.core.invoke(command, args);
+            return result || undefined;
+        } catch (err) {
+            if (typeof err === 'string' && err.includes('Credentials Missing/Invalid')) {
+                const tokenSaved = await promptForGitToken();
+                if (tokenSaved) {
+                    return await invokeGit(command, args, errHandler);
+                } else {
+                    if (errHandler) errHandler("Git operation cancelled: Authentication required.");
+                    return undefined;
+                }
+            }
+            if (errHandler) {
+                errHandler(err);
+            }
+            return undefined;
+        }
     };
     class Tauri {
         openUrl = tauri.opener.openUrl;
@@ -376,8 +429,42 @@
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
         let data = await webui.proxy.getAppData();
+        // TODO: Finish setting up Task Proxy variable handling
         webui.taskProxyData = data;
         webui.projectData = {};
+        const getData = webui.getData;
+        const setData = webui.setData;
+        webui.getData = function (key) {
+            // Check Page Data
+            let value = getData(key);
+            if (value !== undefined) return value;
+            // Check Project Data
+            value = webui.projectData[key];
+            if (value !== undefined) return value;
+            // Return Global Data
+            return webui.taskProxyData[key];
+        }
+        webui.setData = function (key, value) {
+            setData(key, value);
+        }
+        webui.setProjectData = function (key, value) {
+            if (['id', 'currentPage', 'navigation'].indexOf(key) !== -1) {
+                setData(key, value);
+            }
+            webui.projectData[key] = value;
+        }
+        webui.setGlobalData = function (key, value) {
+            webui.taskProxyData[key] = value;
+        }
+        webui.deleteProjectData = function(key) {
+            if (['id', 'currentPage', 'navigation'].indexOf(key) !== -1) {
+                setData(key, undefined);
+            }
+            delete webui.getProjectData[key];
+        }
+        webui.deleteGlobalData = function(key) {
+            delete webui.taskProxyData[key];
+        }
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1) return;
             webui.setData(key, value);

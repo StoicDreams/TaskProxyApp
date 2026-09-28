@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.31"
+version = "0.1.32"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -54,6 +54,8 @@ base64 = "0.23"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fastembed = "6.0"
 emojis = "0.9"
+git2 = "0.19"
+chrono = "0.4"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-positioner = { version = "2.0.0", features = ["tray-icon"] }

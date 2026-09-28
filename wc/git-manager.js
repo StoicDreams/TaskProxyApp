@@ -27,6 +27,9 @@
             t._btnRemoteTab = t.template.querySelector('#tab-remote');
             t._remoteStatusContainer = t.template.querySelector('#remote-status-container');
             t._branchTable = t.template.querySelector('#branch-table');
+            t._inputPat = t.template.querySelector('#input-git-pat');
+            t._dropdownPatScope = t.template.querySelector('#dropdown-pat-scope');
+            t._btnSavePat = t.template.querySelector('#btn-save-pat');
             t._hasPendingChanges = false;
             t._branchList = [];
             t._currentBranch = '';
@@ -84,11 +87,26 @@
             });
             webui.setData('git-branches', tableData);
         },
+        loadExistingPat() {
+            let t = this;
+            let projPat = webui.projectData?.data?.['git_pat'] || webui.projectData?.data?.['github_pat'];
+            let globPat = webui.taskProxyData?.data?.['git_pat'] || webui.taskProxyData?.data?.['github_pat'];
+            if (projPat) {
+                t._inputPat.value = '********';
+                t._dropdownPatScope.value = 'Project';
+            } else if (globPat) {
+                t._inputPat.value = '********';
+                t._dropdownPatScope.value = 'Global';
+            } else {
+                t._inputPat.value = '';
+            }
+        },
         async loadRemoteStatus() {
             let t = this;
             let repo = t._repos.value;
             if (repo === undefined) return;
             t._remoteStatusContainer.innerHTML = '<em>Checking remote sync status...</em>';
+            t.loadExistingPat();
             await webui.wait(()=>!!webui.proxy);
             let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
             if (!status) {
@@ -431,6 +449,28 @@
             t._btnRemoteTab.addEventListener('click', _ => {
                 t.loadRemoteStatus();
             });
+            t._dropdownPatScope.setOptions([
+                { value: 'Project', display: 'Project Level' },
+                { value: 'Global', display: 'Global Level' }
+            ]);
+            t._dropdownPatScope.value = 'Project';
+            t._btnSavePat.addEventListener('click', async () => {
+                let token = t._inputPat.value.trim();
+                if (!token) return t.setAlert('Token cannot be empty.', 'warning');
+                if (token === '********') return t.setAlert('Please enter a new token to save.', 'info');
+                let scope = t._dropdownPatScope.value;
+                if (scope === 'Project') {
+                    if (!webui.projectData.data) webui.projectData.data = {};
+                    webui.projectData.data['git_pat'] = token;
+                    await webui.proxy.syncProjectData();
+                } else {
+                    if (!webui.taskProxyData.data) webui.taskProxyData.data = {};
+                    webui.taskProxyData.data['git_pat'] = token;
+                    await webui.proxy.saveAppData();
+                }
+                t._inputPat.value = '********';
+                t.setAlert(`PAT successfully saved to ${scope} scope.`, 'success');
+            });
             t._btnCommit.addEventListener('click', async _ => {
                 let message = t._message.value.trim();
                 t.setAlert();
@@ -588,6 +628,13 @@ pre {
                 <webui-button theme="secondary" label="Push"></webui-button>
                 <webui-button theme="success" label="Sync"></webui-button>
             </webui-flex>
+            <h3 style="margin: 0;">Authentication Settings</h3>
+            <p style="margin: 0; font-size: 0.9em; opacity: 0.8;">Set your Personal Access Token (PAT) for remote Git operations.</p>
+            <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="end">
+                <webui-input-text id="input-git-pat" label="Personal Access Token (PAT)"></webui-input-text>
+                <webui-dropdown id="dropdown-pat-scope" label="Scope"></webui-dropdown>
+                <webui-button id="btn-save-pat" theme="success" label="Save Token"></webui-button>
+            </webui-grid>
         </webui-flex>
     </webui-content>
 </webui-tabs>

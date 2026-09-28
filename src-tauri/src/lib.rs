@@ -72,8 +72,7 @@ pub fn run() {
             let window = window.clone();
             println!("Saving data from window close");
             let app_handle = window.app_handle().clone();
-            let main_window = app_handle.get_webview_window("main").unwrap();
-            let _ = main_window.emit(
+            let _ = window.emit(
                 "webui.isclosing",
                 "Closing, please wait while we save your data!",
             );
