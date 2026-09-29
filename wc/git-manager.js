@@ -90,8 +90,8 @@
         },
         loadExistingPat() {
             let t = this;
-            let projPat = webui.projectData?.data?.['git_pat'] || webui.projectData?.data?.['github_pat'];
-            let globPat = webui.taskProxyData?.data?.['git_pat'] || webui.taskProxyData?.data?.['github_pat'];
+            let projPat = webui.projectData.data['git_pat'];
+            let globPat = webui.taskProxyData.data['git_pat'];
             if (projPat) {
                 t._inputPat.value = '********';
                 t._dropdownPatScope.value = 'Project';
@@ -461,10 +461,10 @@
                 if (token === '********') return t.setAlert('Please enter a new token to save.', 'info');
                 let scope = t._dropdownPatScope.value;
                 if (scope === 'Project') {
-                    webui.projectData['git_pat'] = token;
+                    webui.setProjectData('git_pat', token);
                     await webui.proxy.saveProjectData();
                 } else {
-                    webui.taskProxyData['git_pat'] = token;
+                    webui.setGlobalData('git_pat', token);
                     await webui.proxy.saveAppData();
                 }
                 t._inputPat.value = '********';

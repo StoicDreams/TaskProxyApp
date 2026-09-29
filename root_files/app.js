@@ -441,10 +441,10 @@
             let value = getData(key);
             if (value !== undefined) return value;
             // Check Project Data
-            value = webui.projectData[key];
+            value = webui.projectData.data[key];
             if (value !== undefined) return value;
             // Return Global Data
-            return webui.taskProxyData[key];
+            return webui.taskProxyData.data[key];
         }
         webui.setData = function (key, value) {
             setData(key, value);
@@ -453,19 +453,19 @@
             if (['id', 'currentPage', 'navigation'].indexOf(key) !== -1) {
                 setData(key, value);
             }
-            webui.projectData[key] = value;
+            webui.projectData.data[key] = value;
         }
         webui.setGlobalData = function (key, value) {
-            webui.taskProxyData[key] = value;
+            webui.taskProxyData.data[key] = value;
         }
         webui.deleteProjectData = function(key) {
             if (['id', 'currentPage', 'navigation'].indexOf(key) !== -1) {
                 setData(key, undefined);
             }
-            delete webui.getProjectData[key];
+            delete webui.projectData.data[key];
         }
         webui.deleteGlobalData = function(key) {
-            delete webui.taskProxyData[key];
+            delete webui.taskProxyData.data[key];
         }
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1) return;

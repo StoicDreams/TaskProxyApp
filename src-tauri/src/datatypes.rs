@@ -37,6 +37,7 @@ pub(crate) struct ProjectData {
     pub navigation: Vec<ProjectNavItem>,
     pub variables: Vec<String>,
     pub data: HashMap<String, Value>,
+    pub selected_git_repo: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -78,6 +79,7 @@ impl ProjectData {
             navigation: Vec::new(),
             variables: Vec::new(),
             data: HashMap::new(),
+            selected_git_repo: String::new(),
         }
     }
 }
