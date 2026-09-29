@@ -431,9 +431,8 @@
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
         let data = await webui.proxy.getAppData();
-        // TODO: Finish setting up Task Proxy variable handling
         webui.taskProxyData = data;
-        webui.projectData = {};
+        webui.projectData = { navigation: [], data: {} };
         const getData = webui.getData;
         const setData = webui.setData;
         webui.getData = function (key) {
@@ -450,18 +449,12 @@
             setData(key, value);
         }
         webui.setProjectData = function (key, value) {
-            if (['id', 'currentPage', 'navigation'].indexOf(key) !== -1) {
-                setData(key, value);
-            }
             webui.projectData.data[key] = value;
         }
         webui.setGlobalData = function (key, value) {
             webui.taskProxyData.data[key] = value;
         }
         webui.deleteProjectData = function(key) {
-            if (['id', 'currentPage', 'navigation'].indexOf(key) !== -1) {
-                setData(key, undefined);
-            }
             delete webui.projectData.data[key];
         }
         webui.deleteGlobalData = function(key) {
@@ -521,7 +514,7 @@
             showLoading('Loading Project!');
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
-            webui.projectData = projectData || { navigation: [] };
+            webui.projectData = projectData || { navigation: [], data: {} };
             webui.proxy.projects.isLoaded = !!webui.projectData.id;
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';
