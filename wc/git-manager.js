@@ -463,10 +463,11 @@
                 if (scope === 'Project') {
                     if (!webui.projectData.data) webui.projectData.data = {};
                     webui.projectData.data['git_pat'] = token;
-                    await webui.proxy.syncProjectData();
+                    await webui.proxy.saveProjectData();
                 } else {
                     if (!webui.taskProxyData.data) webui.taskProxyData.data = {};
                     webui.taskProxyData.data['git_pat'] = token;
+                    webui.setData('git_pat', token);
                     await webui.proxy.saveAppData();
                 }
                 t._inputPat.value = '********';
