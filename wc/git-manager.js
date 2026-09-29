@@ -46,8 +46,8 @@
                 let options = repos.map(item => { return { id: item, value: item, display: item === '' ? 'Root' : item } });
                 t._repos.setOptions(options);
                 t._repos.classList.remove('hidden');
-                if (webui.projectData.data.selectedGitRepo) {
-                    t._repos.value = webui.projectData.data.selectedGitRepo;
+                if (webui.projectData.selectedGitRepo) {
+                    t._repos.value = webui.projectData.selectedGitRepo;
                 }
                 await t.loadBranches();
                 t.loadRepoChanges();
@@ -250,14 +250,14 @@
                 }
                 include.addEventListener('change', _ => {
                     if (include.value === '2') {
-                        if (!webui.projectData.data.gitIgnoreFiles) {
-                            webui.projectData.data.gitIgnoreFiles = [];
+                        if (!webui.projectData.gitIgnoreFiles) {
+                            webui.projectData.gitIgnoreFiles = [];
                         }
-                        if (webui.projectData.data.gitIgnoreFiles.indexOf(fullPath) === -1) {
-                            webui.projectData.data.gitIgnoreFiles.push(fullPath);
+                        if (webui.projectData.gitIgnoreFiles.indexOf(fullPath) === -1) {
+                            webui.projectData.gitIgnoreFiles.push(fullPath);
                         }
-                    } else if (webui.projectData.data.gitIgnoreFiles && webui.projectData.data.gitIgnoreFiles.indexOf(fullPath) !== -1) {
-                        webui.projectData.data.gitIgnoreFiles.splice(webui.projectData.data.gitIgnoreFiles.indexOf(fullPath), 1);
+                    } else if (webui.projectData.gitIgnoreFiles && webui.projectData.gitIgnoreFiles.indexOf(fullPath) !== -1) {
+                        webui.projectData.gitIgnoreFiles.splice(webui.projectData.gitIgnoreFiles.indexOf(fullPath), 1);
                     }
                     webui.proxy.syncProjectData();
                     setTheme();
@@ -285,7 +285,7 @@
                         }
                     });
                 });
-                if (webui.projectData.data.gitIgnoreFiles && webui.projectData.data.gitIgnoreFiles.indexOf(fullPath) !== -1) {
+                if (webui.projectData.gitIgnoreFiles && webui.projectData.gitIgnoreFiles.indexOf(fullPath) !== -1) {
                     include.value = 2;
                 }
                 setTheme();
@@ -312,7 +312,7 @@
                 });
             }, 50);
             t._repos.addEventListener('change', async _ => {
-                webui.projectData.data.selectedGitRepo = t._repos.value;
+                webui.projectData.selectedGitRepo = t._repos.value;
                 await t.loadBranches();
                 t.loadRepoChanges();
             });
@@ -461,13 +461,10 @@
                 if (token === '********') return t.setAlert('Please enter a new token to save.', 'info');
                 let scope = t._dropdownPatScope.value;
                 if (scope === 'Project') {
-                    if (!webui.projectData.data) webui.projectData.data = {};
-                    webui.projectData.data['git_pat'] = token;
+                    webui.projectData['git_pat'] = token;
                     await webui.proxy.saveProjectData();
                 } else {
-                    if (!webui.taskProxyData.data) webui.taskProxyData.data = {};
-                    webui.taskProxyData.data['git_pat'] = token;
-                    webui.setData('git_pat', token);
+                    webui.taskProxyData['git_pat'] = token;
                     await webui.proxy.saveAppData();
                 }
                 t._inputPat.value = '********';

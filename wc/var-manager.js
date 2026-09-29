@@ -25,12 +25,10 @@
             if (!isReadOnly) {
                 input.addEventListener('input', (ev) => {
                     if (scope === 'Global') {
-                        webui.taskProxyData.data[v.key] = ev.target.value;
-                        webui.setData(v.key, ev.target.value);
+                        webui.taskProxyData[v.key] = ev.target.value;
                         webui.proxy.saveAppData();
                     } else if (scope === 'Project') {
-                        webui.projectData.data[v.key] = ev.target.value;
-                        webui.setData(`session-${v.key}`, ev.target.value);
+                        webui.projectData[v.key] = ev.target.value;
                         webui.proxy.syncProjectData();
                     } else if (scope === 'Page') {
                         webui.setData(v.key, ev.target.value);
