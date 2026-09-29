@@ -297,7 +297,6 @@
                     state = {
                         activeId: 'live',
                         consoleActiveId: 'live',
-                        showAllScripts: false,
                         allScripts: [],
                         queue: [],
                         terminals: {
@@ -393,16 +392,19 @@
                         this._scriptFinished(data.terminalId);
                     });
             },
-            getDropdownOptions(state, showAll) {
+            async getDropdownOptions(state, showAll) {
                 let options = [];
                 const liveTerm = state.terminals['live'];
                 options.push({ id: 'live', value: 'live', display: `Live (${liveTerm.status})` });
                 if (showAll) {
+                    state.allScripts = await webui.proxy.getScripts();
                     state.allScripts.forEach(path => {
+                        if (path.indexOf('taskproxy_tmp_') !== -1) return;
                         const term = state.terminals[path];
                         const status = term ? term.status : 'Ready';
                         options.push({ id: path, value: path, display: `${path} (${status})` });
                     });
+                    webui.setData('app-terminal-state', state);
                 } else {
                     Object.keys(state.terminals).forEach(id => {
                         if (id === 'live') return;

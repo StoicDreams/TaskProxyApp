@@ -35,8 +35,8 @@
         setScript(file, content) {
             const t = this;
             t._fileName = file;
-            t._message.value = content || '';
-            t.parseParams(t._message.value);
+            t._message.setValue(content || '');
+            t.parseParams(content || '');
             t.updatePreview();
         },
         get scriptContent() {
@@ -229,6 +229,7 @@
             });
             t._message.addEventListener('input', () => {
                 t.parseParams(t._message.value);
+                t.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
             });
             t._toggleFullPath.addEventListener('change', () => {
                 t.updatePreview();

@@ -258,9 +258,16 @@ pub(crate) async fn git_commit(
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
         let mut index = repository.index().map_err(|e| e.to_string())?;
         for file in files {
-            index
-                .add_path(Path::new(&file))
-                .map_err(|e| format!("Failed to add file: {}", e))?;
+            let file_path = Path::new(&file);
+            if git_path.join(file_path).exists() {
+                index
+                    .add_path(file_path)
+                    .map_err(|e| format!("Failed to add file: {}", e))?;
+            } else {
+                index
+                    .remove_path(file_path)
+                    .map_err(|e| format!("Failed to remove file: {}", e))?;
+            }
         }
         index.write().map_err(|e| e.to_string())?;
         let oid = index.write_tree().map_err(|e| e.to_string())?;
