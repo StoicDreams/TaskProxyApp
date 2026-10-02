@@ -128,10 +128,11 @@
             const t = this;
             t._markdown = markdown;
             let foundMatch = false;
+            let mdTrimmed = markdown.trim();
             segmentOptions.forEach(option => {
                 if (foundMatch) return;
                 if (option.value.indexOf('{}') === -1) {
-                    if (markdown === option.value) {
+                    if (mdTrimmed === option.value) {
                         foundMatch = true;
                         t.setInputType(option.inputType);
                         t._currentOption = option.value;
@@ -140,11 +141,13 @@
                     return;
                 }
                 let [left, right] = option.value.split('{}');
-                if (markdown.startsWith(left) && markdown.endsWith(right)) {
+                let leftTrimmed = left.trim();
+                let rightTrimmed = right.trim();
+                if (mdTrimmed.startsWith(leftTrimmed) && mdTrimmed.endsWith(rightTrimmed)) {
                     foundMatch = true;
                     t.setInputType(option.inputType);
                     t._currentOption = option.value;
-                    t._inputValue = markdown.substring(left.length, markdown.length - right.length);
+                    t._inputValue = mdTrimmed.substring(leftTrimmed.length, mdTrimmed.length - rightTrimmed.length);
                     t.setOption();
                 }
             });
@@ -152,7 +155,6 @@
                 t.setInputType(inputTypes.NO_INPUT);
                 webui.log.warn("markdown-segment did not find match", markdown);
             }
-
             switch (t._inputType) {
                 case inputTypes.MULTI_LINE:
                     if (t._inputValue !== t._inputMessage.value) {

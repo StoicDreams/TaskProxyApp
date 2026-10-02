@@ -55,9 +55,9 @@
         btnAdd.addEventListener('click', async _ => {
             let segment = webui.create('app-markdown-segment', {});
             if (isEnd) {
-                bar.before(segment);
+                wrap.before(segment);
             } else {
-                bar.after(segment);
+                wrap.after(segment);
             }
             dragNDrop(segment);
             segments = Array.from(comp.querySelectorAll('app-markdown-segment'));
