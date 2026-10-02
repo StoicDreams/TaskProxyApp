@@ -99,7 +99,7 @@ Task Proxy is currently in very early development but is available for download 
 
 > All terminal commands examples are written as if starting from the root folder of this solution.
 
-### Rust
+### Rust and Tauri
 
 Install Rust and various related tooling needed and recommended for development.
 
@@ -112,6 +112,10 @@ sudo pacman -Syu --needed base-devel curl wget file openssl appmenu-gtk-module g
 rustup component add clippy rustfmt
 # Install wasm target
 rustup target add wasm32-unknown-unknown
+# Recommended binary installer to use for dependencies
+cargo install cargo-binstall
+# Install Tauri tooling using binstall
+cargo binstall cargo-cache trunk wasm-pack tauri-cli wasm-bindgen-cli -y
 ```
 
 ### Tools
