@@ -507,6 +507,7 @@
     }
     async function loadProject(project) {
         if (cache.currentProject === project) return;
+        cache.currentProject = project;
         showLoading('Saving Project!');
         try {
             webui.proxy.saveProjectData();
@@ -553,8 +554,9 @@
     }
     async function runWhenWebUIReady(action) {
         try {
+            webui.getData('test');
             await showLoading('Loading App!');
-            action();
+            await action();
         } catch {
             setTimeout(() => runWhenWebUIReady(action), 10);
         } finally {

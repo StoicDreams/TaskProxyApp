@@ -11,8 +11,7 @@
     <base href="/" />
     <script type="text/javascript">
         {
-            const id = crypto.randomUUID();
-            navigator.serviceWorker.register(`service-worker.min.js?_=${id}`);
+            navigator.serviceWorker.register(`service-worker.min.js`);
         }
     </script>
     <link rel="dns-prefetch" href="https://cdn.myfi.ws" />

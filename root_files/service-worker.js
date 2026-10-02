@@ -1,6 +1,22 @@
 self.addEventListener('install', event => event.waitUntil(onInstall(event)));
 self.addEventListener('activate', event => event.waitUntil(onActivate(event)));
-self.addEventListener('fetch', event => event.respondWith(onFetch(event)));
+self.addEventListener('fetch', event => {
+    const url = new URL(event.request.url);
+    if (
+        url.protocol === 'ipc:' ||
+        url.protocol === 'tauri:' ||
+        url.hostname === 'ipc.localhost' ||
+        url.hostname === 'tauri.localhost' ||
+        url.hostname === '127.0.0.1' ||
+        url.hostname === 'localhost'
+    ) {
+        return;
+    }
+    if (!event.request.url.startsWith('http')) {
+        return;
+    }
+    event.respondWith(onFetch(event))
+});
 function get_uuid() {
     try {
         return crypto.randomUUID();
@@ -27,15 +43,10 @@ async function onActivate(event) {
     await Promise.all(cacheKeys
         .filter(key => key.startsWith(cacheNamePrefix) && key !== cacheName)
         .map(key => caches.delete(key)));
+    await self.clients.claim();
 }
 
 async function onFetch(event) {
-    if (event.request.url.startsWith('ipc://') || event.request.url.startsWith('http://ipc.localhost')) {
-        return;
-    }
-    if (!event.request.url.startsWith('http')) {
-        return;
-    }
     let cachedResponse = null;
     let request = applyCacheBusting(event.request);
     if (allowCache(request)) {

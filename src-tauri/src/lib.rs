@@ -130,10 +130,10 @@ pub fn run() {
                 let _ = window.restore_state(StateFlags::all());
             }
             // Explicit nav required because Tauri initially tries loading page before assets are available.
-            let url_to_load = "/";
-            let nav_script = format!("window.location.replace('{}')", url_to_load);
-            //std::thread::sleep(std::time::Duration::from_millis(100));
-            let _ = window.eval(&nav_script);
+            // let url_to_load = "/";
+            // let nav_script = format!("window.location.replace('{}')", url_to_load);
+            // //std::thread::sleep(std::time::Duration::from_millis(100));
+            // let _ = window.eval(&nav_script);
             #[cfg(debug_assertions)]
             window.open_devtools();
         } else {
