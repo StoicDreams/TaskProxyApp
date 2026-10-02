@@ -2,7 +2,7 @@
 
 <img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
-[Version: 0.1.35](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.36](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
@@ -97,14 +97,29 @@ Task Proxy is currently in very early development but is available for download 
 
 ### Notes
 
-&gt; All terminal commands examples are written as if starting from the root folder of this solution.
+> All terminal commands examples are written as if starting from the root folder of this solution.
+
+### Rust
+
+Install Rust and various related tooling needed and recommended for development.
+
+```PowerShell
+# Install rustup / rustc / cargo
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Install compilers required by Tauri
+sudo pacman -Syu --needed base-devel curl wget file openssl appmenu-gtk-module gtk3 libappindicator-gtk3 librsvg libvips webkit2gtk-4.1
+# Install clippy linter and code formatter
+rustup component add clippy rustfmt
+# Install wasm target
+rustup target add wasm32-unknown-unknown
+```
 
 ### Tools
 
 Name | Description
 --- | ---
-Visual Studio Code (VSC) | Our choice of IDE for Rust / HTML / JavaScript development.
-Better Minify | VSC extension used to minify .css and .js files.
+Zed | Our choice of IDE for Rust / HTML / JavaScript development.
+Visual Studio Code (VSC) | Common IDE for development.
 
 ### Solution Setup &amp; Configure
 

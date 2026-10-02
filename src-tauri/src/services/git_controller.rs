@@ -112,6 +112,10 @@ pub(crate) async fn git_push(
                     e.to_string()
                 }
             })?;
+        if let Ok(mut local_branch) = repository.find_branch(branch_name, git2::BranchType::Local) {
+            let upstream_name = format!("origin/{}", branch_name);
+            let _ = local_branch.set_upstream(Some(&upstream_name));
+        }
         Ok(String::from("Push Successful"))
     })
     .await;
@@ -133,6 +137,14 @@ pub(crate) async fn git_pull(
             .map_err(|e| e.to_string())?;
         let head = repository.head().map_err(|e| e.to_string())?;
         let branch_name = head.shorthand().ok_or("Invalid branch name")?;
+        let local_branch = repository
+            .find_branch(branch_name, git2::BranchType::Local)
+            .map_err(|e| e.to_string())?;
+        if local_branch.upstream().is_err() {
+            return Ok(String::from(
+                "No remote tracking branch set. Skipping pull.",
+            ));
+        }
         let callbacks = create_remote_callbacks(app_handle_clone);
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
@@ -195,6 +207,14 @@ pub(crate) async fn git_pull_overwrite(
             .map_err(|e| e.to_string())?;
         let head = repository.head().map_err(|e| e.to_string())?;
         let branch_name = head.shorthand().ok_or("Invalid branch name")?;
+        let local_branch = repository
+            .find_branch(branch_name, git2::BranchType::Local)
+            .map_err(|e| e.to_string())?;
+        if local_branch.upstream().is_err() {
+            return Ok(String::from(
+                "No remote tracking branch set. Skipping pull overwrite.",
+            ));
+        }
         let callbacks = create_remote_callbacks(app_handle_clone);
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
