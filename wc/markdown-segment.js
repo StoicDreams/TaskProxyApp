@@ -68,23 +68,19 @@
             t._options.setOptions(segmentOptions);
             let md = t.dataset.markdown;
             t.setMarkdown(md || '');
-            t._inputMessage.addEventListener('input', ev => {
-                let markdown = t.buildFinalMarkdown();
-                t.setMarkdown(markdown);
-            });
-            t._inputText.addEventListener('input', ev => {
-                let markdown = t.buildFinalMarkdown();
-                t.setMarkdown(markdown);
-            });
             t._btnEdit.addEventListener('click', _ => {
                 t._isEditing = !t._isEditing;
                 if (t._isEditing) {
                     t.classList.add('isEditing');
                     if (t._inputType === inputTypes.MULTI_LINE) {
-                        t._inputMessage.autosize();
+                        setTimeout(() => {
+                            t._inputMessage.autosize();
+                        }, 10);
                     }
                 } else {
                     t.classList.remove('isEditing');
+                    let markdown = t.buildFinalMarkdown();
+                    t.setMarkdown(markdown);
                 }
             });
             t._options.addEventListener('change', ev => {
@@ -110,6 +106,13 @@
                     }
                     t._inputOptions.classList.remove('it-single');
                     t._inputOptions.classList.add('it-multi');
+                    if (t._isEditing) {
+                        setTimeout(() => {
+                            if(typeof t._inputMessage.autosize === 'function') {
+                                t._inputMessage.autosize();
+                            }
+                        }, 10);
+                    }
                     break;
                 case inputTypes.SINGLE_LINE:
                     if (t._inputMessage.value !== t._inputValue) {
@@ -147,7 +150,7 @@
                     foundMatch = true;
                     t.setInputType(option.inputType);
                     t._currentOption = option.value;
-                    t._inputValue = mdTrimmed.substring(leftTrimmed.length, mdTrimmed.length - rightTrimmed.length);
+                    t._inputValue = mdTrimmed.substring(leftTrimmed.length, mdTrimmed.length - rightTrimmed.length).trim();
                     t.setOption();
                 }
             });
@@ -207,6 +210,8 @@ display:grid;
 grid-template-columns:1fr max-content;
 align-items:start;
 position: relative;
+overflow:auto;
+width:100%;
 }
 aside {
 visibility:hidden;

@@ -59,11 +59,11 @@
                         return false;
                     }
                     if (isGlobal) {
-                        webui.taskProxyData['git_pat'] = token;
+                        webui.setGlobalData('git_pat', token);
                         webui.setData('git_pat', token);
                         await webui.proxy.saveAppData();
                     } else {
-                        webui.projectData['git_pat'] = token;
+                        webui.setProjectData('git_pat', token);
                         await webui.proxy.saveProjectData();
                     }
                     resolve(true);
