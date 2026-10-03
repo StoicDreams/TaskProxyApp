@@ -52,6 +52,7 @@
                 cancel: 'Cancel',
                 onconfirm: async (data, content) => {
                     const formData = Object.fromEntries(data);
+                    console.log('formData', formData);
                     const token = (formData.gitToken || '').trim();
                     const isGlobal = formData.isGlobal === true || formData.isGlobal === 'true';
                     if (!token) {

@@ -27,18 +27,13 @@ function get_uuid() {
         });
     }
 }
-const currentVersion = `${get_uuid()}`;
+const currentVersion = '0.1.39';
 const cacheNamePrefix = 'offline-cache-';
-const cacheName = `${cacheNamePrefix}${currentVersion}_ts_2503251820`;
-const offlineAssetsInclude = [/\.wasm/, /\.html/, /\.js$/, /\.json$/, /\.css$/, /\.woff$/, /\.png$/, /\.jpe?g$/, /\.gif$/, /\.ico$/];
-const offlineAssetsExclude = [/^service-worker\.js$/];
-
+const cacheName = `${cacheNamePrefix}${currentVersion}`;
 async function onInstall(event) {
     self.skipWaiting();
 }
-
 async function onActivate(event) {
-    // Delete unused caches
     const cacheKeys = await caches.keys();
     await Promise.all(cacheKeys
         .filter(key => key.startsWith(cacheNamePrefix) && key !== cacheName)
@@ -47,23 +42,31 @@ async function onActivate(event) {
 }
 
 async function onFetch(event) {
-    let cachedResponse = null;
     let request = applyCacheBusting(event.request);
-    if (allowCache(request)) {
-        const cache = await caches.open(cacheName);
-        cachedResponse = await cache.match(request);
+    if (!allowCache(request)) {
+        return fetch(request);
     }
-
-    return cachedResponse || fetch(request);
+    const cache = await caches.open(cacheName);
+    const cachedResponse = await cache.match(request);
+    const networkFetchPromise = fetch(request).then(networkResponse => {
+        if (networkResponse && networkResponse.ok) {
+            cache.put(request, networkResponse.clone());
+        }
+        return networkResponse;
+    }).catch(error => {
+        console.error('Background fetch failed:', error);
+    });
+    if (cachedResponse) {
+        event.waitUntil(networkFetchPromise);
+        return cachedResponse;
+    }
+    return networkFetchPromise;
 }
-
 function urlNeedsCaching(url) {
     if (url.startsWith('https://cdn.myfi.ws')) return false;
     if (url.startsWith('http://127.0.0.1:1426')) return false;
     return true;
 }
-
-/// Applying cache busting to CDN content to assure Web UI components are always up to date with the latest changes.
 function applyCacheBusting(request) {
     try {
         if (urlNeedsCaching(request.url)) {
@@ -76,12 +79,8 @@ function applyCacheBusting(request) {
         return request;
     }
 }
-
 function allowCache(request) {
-    // Only allow caching for GET requests
     if (request.method !== 'GET') { return false; }
-    // Exclude caching for navigation requests to ensure the latest site updates are loaded asap
     if (request.mode === 'navigate') { return false; }
-    // All other GET requests allow navigation
     return true;
 }

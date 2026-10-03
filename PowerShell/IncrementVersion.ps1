@@ -57,6 +57,8 @@ if ($null -ne $version) {
     FilteredFileUpdate "$projectRoot/src" main.rs 'const VERSION: &amp;str = "([0-9\.]+)";' "const VERSION: &amp;str = ""$version"";"
     FilteredFileUpdate "$projectRoot" deploy.yml ' if: (false|true)' " if: true"
     FilteredFileUpdate "$projectRoot/src-tauri" tauri.conf.json '"userAgent": "Task Proxy/([0-9\.]+)"' """userAgent"": ""Task Proxy/$version"""
+    FilteredFileUpdate "$projectRoot/root_files" service-worker.js 'const currentVersion = .*;' "const currentVersion = '$version';"
+    FilteredFileUpdate "$projectRoot/root_files" service-worker.min.js 'const currentVersion=.*,' "const currentVersion='$version',"
 }
 else {
     Write-Host Current version was not found -ForegroundColor Red

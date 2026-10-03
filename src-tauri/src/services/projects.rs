@@ -380,6 +380,11 @@ pub(crate) async fn save_project_data(
         Err(err) => eprintln!("Error converting variables to json: {}", err),
     };
     let secrets_path = format!("{}.cp.enc", data.id);
+    if let Some(state) = app_handle.try_state::<CurrentProject>() {
+        if let Ok(mut project_state) = state.lock() {
+            *project_state = data.clone();
+        }
+    }
     match save_json_to_local_storage(
         "Project current page",
         &app_handle,

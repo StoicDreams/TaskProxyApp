@@ -72,11 +72,6 @@
                 t._isEditing = !t._isEditing;
                 if (t._isEditing) {
                     t.classList.add('isEditing');
-                    if (t._inputType === inputTypes.MULTI_LINE) {
-                        setTimeout(() => {
-                            t._inputMessage.autosize();
-                        }, 10);
-                    }
                 } else {
                     t.classList.remove('isEditing');
                     let markdown = t.buildFinalMarkdown();
@@ -106,13 +101,6 @@
                     }
                     t._inputOptions.classList.remove('it-single');
                     t._inputOptions.classList.add('it-multi');
-                    if (t._isEditing) {
-                        setTimeout(() => {
-                            if(typeof t._inputMessage.autosize === 'function') {
-                                t._inputMessage.autosize();
-                            }
-                        }, 10);
-                    }
                     break;
                 case inputTypes.SINGLE_LINE:
                     if (t._inputMessage.value !== t._inputValue) {
