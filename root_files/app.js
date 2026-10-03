@@ -60,8 +60,9 @@
                         return false;
                     }
                     if (isGlobal) {
+                        webui.deleteProjectData('git_pat');
+                        await webui.proxy.saveProjectData();
                         webui.setGlobalData('git_pat', token);
-                        webui.setData('git_pat', token);
                         await webui.proxy.saveAppData();
                     } else {
                         webui.setProjectData('git_pat', token);
@@ -534,7 +535,7 @@
         let myId = webui.uuid();
         let oldId = queueId;
         queueId = myId;
-        webui.taskProxyData.data = appData;
+        webui.taskProxyData.data = { ...webui.taskProxyData.data, ...appData };
         if (oldId === '') {
             await syncAppData();
             setTimeout(() => {

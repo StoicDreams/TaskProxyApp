@@ -464,6 +464,8 @@
                     webui.setProjectData('git_pat', token);
                     await webui.proxy.saveProjectData();
                 } else {
+                    webui.deleteProjectData('git_pat');
+                    await webui.proxy.saveProjectData();
                     webui.setGlobalData('git_pat', token);
                     await webui.proxy.saveAppData();
                 }
