@@ -18,6 +18,7 @@
             t._btnStash = t.template.querySelector('#btn-stash');
             t._btnStashPop = t.template.querySelector('#btn-stash-pop');
             t._btnCommit = t.template.querySelector('webui-button[label="Commit"]');
+            t._btnToggleAll = t.template.querySelector('webui-button[label="Toggle All"]');
             t._toggleSync = t.template.querySelector('#toggle-sync');
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
@@ -124,7 +125,7 @@
                 if (status.ahead === 0 && status.behind === 0) {
                     syncHtml = `<span style="color: var(--color-success);">Up to date with remote</span>`;
                 } else {
-                    if (status.ahead > 0) syncHtml += `<span style="color: var(--color-secondary); margin-right: 1rem;">${status.ahead} Commits Ahead (Pending Push)</span> `;
+                    if (status.ahead > 0) syncHtml += `<span style="color: rgb(181, 181, 255); margin-right: 1rem;">${status.ahead} Commits Ahead (Pending Push)</span> `;
                     if (status.behind > 0) syncHtml += `<span style="color: var(--color-warning);">${status.behind} Commits Behind (Pending Pull)</span>`;
                 }
                 t._valSyncStatus.innerHTML = syncHtml;
@@ -437,6 +438,18 @@
                     t.setAlert(result, 'success');
                     await t.loadRepoChanges();
                 }
+            });
+            t._btnToggleAll.addEventListener('click', _ => {
+                let dropdowns = Array.from(t._filesContainer.querySelectorAll('webui-dropdown'));
+                if (dropdowns.length === 0) return;
+                let includedCount = t._files.filter(f => f.isIncluded).length;
+                let targetValue = includedCount > Math.floor(t._files.length / 2) ? '0' : '1';
+                dropdowns.forEach(d => {
+                    if (d.value !== '2' && d.value !== 2) {
+                        d.value = targetValue;
+                        d.dispatchEvent(new Event('change'));
+                    }
+                });
             });
             t._btnFetch.addEventListener('click', async _ => {
                 let repo = t._repos.value;

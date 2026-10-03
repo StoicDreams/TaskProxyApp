@@ -27,7 +27,7 @@ function get_uuid() {
         });
     }
 }
-const currentVersion = '0.1.39';
+const currentVersion = '0.1.40';
 const cacheNamePrefix = 'offline-cache-';
 const cacheName = `${cacheNamePrefix}${currentVersion}`;
 async function onInstall(event) {
