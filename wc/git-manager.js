@@ -27,6 +27,9 @@
             t._instructions = t.template.querySelector('.instructions');
             t._btnRemoteTab = t.template.querySelector('#tab-remote');
             t._remoteStatusContainer = t.template.querySelector('#remote-status-container');
+            t._valRemoteUrl = t.template.querySelector('#val-remote-url');
+            t._valTrackingBranch = t.template.querySelector('#val-tracking-branch');
+            t._valSyncStatus = t.template.querySelector('#val-sync-status');
             t._branchTable = t.template.querySelector('#branch-table');
             t._inputPat = t.template.querySelector('#input-git-pat');
             t._dropdownPatScope = t.template.querySelector('#dropdown-pat-scope');
@@ -106,31 +109,29 @@
             let t = this;
             let repo = t._repos.value;
             if (repo === undefined) return;
-            t._remoteStatusContainer.innerHTML = '<em>Checking remote sync status...</em>';
+            t._valSyncStatus.innerHTML = '<em>Checking remote sync status...</em>';
             t.loadExistingPat();
             await webui.wait(()=>!!webui.proxy);
             let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
             if (!status) {
-                t._remoteStatusContainer.innerHTML = '<em style="color: var(--color-danger);">Failed to retrieve remote status.</em>';
+                t._valSyncStatus.innerHTML = '<em style="color: var(--color-danger);">Failed to retrieve remote status.</em>';
                 return;
             }
-            let html = `<webui-flex column gap="0.5rem">`;
-            html += `<div><strong>Remote URL:</strong> ${status.remoteUrl || 'No origin defined'}</div>`;
+            t._valRemoteUrl.innerHTML = status.remoteUrl || 'No origin defined';
             if (status.hasUpstream) {
-                html += `<div><strong>Tracking Branch:</strong> ${status.upstreamName}</div>`;
-                html += `<div><strong>Sync Status:</strong> `;
+                t._valTrackingBranch.innerHTML = status.upstreamName;
+                let syncHtml = '';
                 if (status.ahead === 0 && status.behind === 0) {
-                    html += `<span style="color: var(--color-success);">Up to date with remote</span>`;
+                    syncHtml = `<span style="color: var(--color-success);">Up to date with remote</span>`;
                 } else {
-                    if (status.ahead > 0) html += `<span style="color: var(--color-secondary); margin-right: 1rem;">${status.ahead} Commits Ahead (Pending Push)</span> `;
-                    if (status.behind > 0) html += `<span style="color: var(--color-warning);">${status.behind} Commits Behind (Pending Pull)</span>`;
+                    if (status.ahead > 0) syncHtml += `<span style="color: var(--color-secondary); margin-right: 1rem;">${status.ahead} Commits Ahead (Pending Push)</span> `;
+                    if (status.behind > 0) syncHtml += `<span style="color: var(--color-warning);">${status.behind} Commits Behind (Pending Pull)</span>`;
                 }
-                html += `</div>`;
+                t._valSyncStatus.innerHTML = syncHtml;
             } else {
-                html += `<div><span style="color: var(--color-danger);">No remote tracking branch set. Publish this branch to synchronize.</span></div>`;
+                t._valTrackingBranch.innerHTML = '<em>None</em>';
+                t._valSyncStatus.innerHTML = `<span style="color: var(--color-danger);">No remote tracking branch set. Publish this branch to synchronize.</span>`;
             }
-            html += `</webui-flex>`;
-            t._remoteStatusContainer.innerHTML = html;
         },
         async loadFileDiff(changeDetail) {
             let t = this;
@@ -338,7 +339,7 @@
                         t.setAlert(result, 'success');
                         await t.loadBranches();
                         t.loadRepoChanges();
-                        if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
+                        t.loadRemoteStatus();
                     }
                 } else if (btn.classList.contains('btn-new')) {
                     await webui.dialog({
@@ -507,7 +508,7 @@
                     }
                 }
                 t.loadRepoChanges();
-                if (t._remoteStatusContainer.innerHTML !== '') t.loadRemoteStatus();
+                t.loadRemoteStatus();
             });
             t._btnPull.addEventListener('click', async _ => {
                 t.setAlert();
@@ -605,11 +606,28 @@ pre {
         <webui-button id="btn-stash-pop" theme="secondary" label="Pop Stash"></webui-button>
     </webui-flex>
 </webui-flex>
+<webui-flex id="remote-status-container" style="padding: var(--padding); background: var(--site-background-color); color: var(--site-background-offset); border: 1px solid var(--color-info); border-radius: 4px;" justify="space-between" align="start" wrap>
+    <webui-flex column gap="0.5rem">
+        <div><strong>Remote URL:</strong> <span id="val-remote-url"></span></div>
+        <div><strong>Tracking Branch:</strong> <span id="val-tracking-branch"></span></div>
+        <div><strong>Sync Status:</strong> <span id="val-sync-status"></span></div>
+    </webui-flex>
+    <webui-flex gap="var(--padding)" grow>
+        <webui-flex grow></webui-flex>
+        <webui-button theme="info" label="Fetch" id="btn-fetch"></webui-button>
+        <webui-button theme="tertiary" label="Pull"></webui-button>
+        <webui-button theme="danger" label="Force Pull" id="btn-pull-overwrite" title="Pull and overwrite local changes"></webui-button>
+        <webui-button theme="secondary" label="Push"></webui-button>
+        <webui-button theme="success" label="Sync"></webui-button>
+    </webui-flex>
+</webui-flex>
 <webui-alert></webui-alert>
 <webui-tabs theme="secondary" index="0" transition-timing="200">
     <webui-button slot="tabs">Commit</webui-button>
     <webui-content slot="content" nodetach>
         <webui-flex justify="flex-end" align="center" gap="var(--padding)" style="margin-bottom: var(--padding);">
+            <webui-button theme="info" label="Toggle All"></webui-button>
+            <webui-flex grow></webui-flex>
             <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" data-default="true" theme-on="primary"></webui-toggle-icon>
             <webui-button theme="primary" label="Commit"></webui-button>
         </webui-flex>
@@ -639,21 +657,11 @@ pre {
             </webui-table>
         </div>
     </webui-content>
-    <webui-button slot="tabs" id="tab-remote">Remote</webui-button>
+    <webui-button slot="tabs" id="tab-remote">Auth</webui-button>
     <webui-content slot="content" nodetach>
-        <webui-flex column gap="var(--padding)" style="margin-top: var(--padding);">
-            <div id="remote-status-container" style="padding: var(--padding); background: var(--site-background-color); color: var(--site-background-offset); border: 1px solid var(--color-info); border-radius: 4px;">
-                <!-- Dynamically populated -->
-            </div>
-            <webui-flex gap="var(--padding)" align="center">
-                <webui-button theme="info" label="Fetch" id="btn-fetch"></webui-button>
-                <webui-button theme="tertiary" label="Pull"></webui-button>
-                <webui-button theme="danger" label="Force Pull" id="btn-pull-overwrite" title="Pull and overwrite local changes"></webui-button>
-                <webui-button theme="secondary" label="Push"></webui-button>
-                <webui-button theme="success" label="Sync"></webui-button>
-            </webui-flex>
-            <h3 style="margin: 0;">Authentication Settings</h3>
-            <p style="margin: 0; font-size: 0.9em; opacity: 0.8;">Set your Personal Access Token (PAT) for remote Git operations.</p>
+        <webui-flex column gap="var(--padding)">
+            <h3>Authentication Settings</h3>
+            <p class="pa-1">Set your Personal Access Token (PAT) for remote Git operations.</p>
             <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="end">
                 <webui-input-text id="input-git-pat" label="Personal Access Token (PAT)"></webui-input-text>
                 <webui-dropdown id="dropdown-pat-scope" label="Scope"></webui-dropdown>
