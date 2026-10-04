@@ -26,7 +26,6 @@
             t._btnPullOverwrite = t.template.querySelector('#btn-pull-overwrite');
             t._btnFetch = t.template.querySelector('#btn-fetch');
             t._instructions = t.template.querySelector('.instructions');
-            t._btnRemoteTab = t.template.querySelector('#tab-remote');
             t._remoteStatusContainer = t.template.querySelector('#remote-status-container');
             t._valRemoteUrl = t.template.querySelector('#val-remote-url');
             t._valTrackingBranch = t.template.querySelector('#val-tracking-branch');
@@ -460,9 +459,6 @@
                     t.setAlert(result, 'success');
                     await t.loadRemoteStatus();
                 }
-            });
-            t._btnRemoteTab.addEventListener('click', _ => {
-                t.loadRemoteStatus();
             });
             t._dropdownPatScope.setOptions([
                 { value: 'Project', display: 'Project Level' },

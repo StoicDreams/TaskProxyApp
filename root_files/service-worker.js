@@ -27,7 +27,7 @@ function get_uuid() {
         });
     }
 }
-const currentVersion = '0.1.40';
+const currentVersion = '0.1.41';
 const cacheNamePrefix = 'offline-cache-';
 const cacheName = `${cacheNamePrefix}${currentVersion}`;
 async function onInstall(event) {
@@ -42,10 +42,10 @@ async function onActivate(event) {
 }
 
 async function onFetch(event) {
-    let request = applyCacheBusting(event.request);
-    if (!allowCache(request)) {
-        return fetch(request);
+    if (!allowCache(event.request)) {
+        return fetch(event.request);
     }
+    let request = applyCacheBusting(event.request);
     const cache = await caches.open(cacheName);
     const cachedResponse = await cache.match(request);
     const networkFetchPromise = fetch(request).then(networkResponse => {
@@ -69,7 +69,7 @@ function urlNeedsCaching(url) {
 }
 function applyCacheBusting(request) {
     try {
-        if (urlNeedsCaching(request.url)) {
+        if (!urlNeedsCaching(request.url)) {
             return request;
         }
         const url = new URL(request.url);
