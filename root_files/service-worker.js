@@ -15,18 +15,14 @@ self.addEventListener('fetch', event => {
     if (!event.request.url.startsWith('http')) {
         return;
     }
+    if (!allowCache(event.request)) {
+        return;
+    }
+    if (!urlNeedsCaching(event.request.url)) {
+        return;
+    }
     event.respondWith(onFetch(event))
 });
-function get_uuid() {
-    try {
-        return crypto.randomUUID();
-    } catch (ex) {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-            let r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
-    }
-}
 const currentVersion = '0.1.41';
 const cacheNamePrefix = 'offline-cache-';
 const cacheName = `${cacheNamePrefix}${currentVersion}`;
@@ -40,11 +36,7 @@ async function onActivate(event) {
         .map(key => caches.delete(key)));
     await self.clients.claim();
 }
-
 async function onFetch(event) {
-    if (!allowCache(event.request)) {
-        return fetch(event.request);
-    }
     let request = applyCacheBusting(event.request);
     const cache = await caches.open(cacheName);
     const cachedResponse = await cache.match(request);
@@ -69,9 +61,6 @@ function urlNeedsCaching(url) {
 }
 function applyCacheBusting(request) {
     try {
-        if (!urlNeedsCaching(request.url)) {
-            return request;
-        }
         const url = new URL(request.url);
         url.searchParams.set('_', cacheName);
         return new Request(url.toString(), request);
