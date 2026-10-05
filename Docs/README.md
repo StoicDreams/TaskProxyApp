@@ -2,7 +2,7 @@
 
 <img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
-[Version: 0.1.41](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.42](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
@@ -32,7 +32,7 @@ A key feature of Task Proxy is the ability to allow teams and developers to crea
 
 ## Planned Cloud Services
 
-- Option to store variable data in cloud.
+- Option to store shared variable data in cloud.
 
 ## Planned Website Services
 
@@ -79,15 +79,6 @@ Reports are components that can use an API endpoint or script to generate report
 - Users will have the option of storing projects in the Cloud with a paid subscription. Cloud projects will store variables in the cloud.
 - Projects, pages, and components can be exported and imported into other projects.
 - Encryption keys are never passed to or stored in the Cloud. Project data stored in the cloud is encrypted prior to transfer and are never decrypted in the Cloud.
-
-## Changes from Legacy
-
-The original Task Proxy application was written using C#/.NET Blazor Maui. The current version is being rebuilt from the ground up to be built in [Rust](https://www.rust-lang.org/) using the [Tauri framework](https://v2.tauri.app/), with [Web UI](https://webui.stoicdreams.com). Aside from the language changes there are a number of other key differences planned for how the application will function.
-
-Feature | Legacy - C# | Current - Rust | Reason for Change
---- | --- | --- | ---
-Local Storage Folder | ./TaskProxyData | ./.taskproxy | More appropriate to match commonly used industry standard naming convention for folders that store app specific data associated with a project/solution.
-Local Storage Files | Encrypted data | md / json | Project pages, scripts, and other shared assets will be stored in text formats such as markdown, json, and script file formats.
 
 ## Installation
 

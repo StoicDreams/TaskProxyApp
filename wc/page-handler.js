@@ -11,6 +11,7 @@
     let myFile = '';
     let dragNDrop = getDragNDropSetup((_) => segments);
     let segments = [];
+    let pageScripts = [];
     webui.currentPageVariables = [];
     async function loadProject() {
         myId = location.pathname.substring(1);
@@ -93,6 +94,183 @@
             comp.appendChild(segment);
         });
         comp.appendChild(bottomBar);
+        refreshScripts();
+    }
+    async function refreshScripts() {
+        let mdContent = [];
+        await webui.wait(100);
+        segments.forEach(segment => {
+            let segMd = segment.getMarkdown();
+            if (segMd) mdContent.push(segMd);
+        });
+        let fullMd = mdContent.join('\n\n');
+        pageScripts = [];
+        const scriptRegex = /```(?:powershell|ps1)\n([\s\S]*?)```/gi;
+        const varRegex = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+        const ignoreVars = ['null', 'true', 'false', '_'];
+        let scriptMatch;
+        let lastMatchIndex = 0;
+        let scriptIndex = 1;
+        while ((scriptMatch = scriptRegex.exec(fullMd)) !== null) {
+            const scriptContent = scriptMatch[1];
+            let vars = [];
+            let varMatch;
+            while ((varMatch = varRegex.exec(scriptContent)) !== null) {
+                const varName = varMatch[1];
+                if (ignoreVars.includes(varName.toLowerCase())) continue;
+                if (!vars.includes(varName)) vars.push(varName);
+                if (!webui.currentPageVariables.includes(varName)) {
+                    webui.currentPageVariables.push(varName);
+                }
+            }
+            let textSinceLastScript = fullMd.substring(lastMatchIndex, scriptMatch.index);
+            let cleanText = textSinceLastScript.replace(/<[^>]+>/g, '').replace(/[#*`_>]/g, '').trim();
+            let lines = cleanText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            let lastText = lines.length > 0 ? lines[lines.length - 1] : '';
+            pageScripts.push({
+                content: scriptContent,
+                variables: vars,
+                lastText: lastText,
+                scriptIndex: scriptIndex++
+            });
+            lastMatchIndex = scriptRegex.lastIndex;
+        }
+        applyScriptUI();
+    }
+    function applyScriptUI(attempt = 0) {
+        if (attempt > 50) return;
+        let codes = findAllWebuiCodes();
+        if (codes.length < pageScripts.length) {
+            setTimeout(() => applyScriptUI(attempt + 1), 100);
+            return;
+        }
+        updateScriptPreviews();
+        injectPlayButtons();
+    }
+    function injectVariableValues(scriptContent, forPreview) {
+        let updatedScript = scriptContent;
+        webui.currentPageVariables.forEach(varName => {
+            let rawValue = webui.getData(varName);
+            if (rawValue === undefined || rawValue === null || rawValue === '') {
+                return;
+            }
+            let val = String(rawValue);
+            let stringRegex = new RegExp(`(\\$${varName}\\s*=\\s*)(['"])([\\s\\S]*?)(\\2)`, 'gi');
+            updatedScript = updatedScript.replace(stringRegex, (match, prefix, quote, oldContent, suffix) => {
+                let formattedVal = val;
+                if (forPreview) {
+                    if (formattedVal.length > 6) {
+                        formattedVal = `${formattedVal.substring(0, 3)}***${formattedVal.substring(formattedVal.length - 3)}`;
+                    }
+                } else {
+                    if (quote === "'") {
+                        formattedVal = formattedVal.replace(/'/g, "''");
+                    } else if (quote === '"') {
+                        formattedVal = formattedVal.replace(/"/g, '`"');
+                    }
+                }
+                return `${prefix}${quote}${formattedVal}${suffix}`;
+            });
+            let nonStringRegex = new RegExp(`(\\$${varName}\\s*=\\s*)([^'"\\s][^\\n\\r]*)`, 'gi');
+            updatedScript = updatedScript.replace(nonStringRegex, (match, prefix, oldContent) => {
+                if (!isNaN(val)) {
+                    return `${prefix}${Number(val)}`;
+                } else if (val.toLowerCase() === 'true' || val.toLowerCase() === 'false') {
+                    return `${prefix}$${val.toLowerCase()}`;
+                } else if (forPreview) {
+                    return `${prefix}[INVALID TYPE]`;
+                }
+                return match;
+            });
+        });
+        return updatedScript;
+    }
+    function findAllWebuiCodes() {
+        let codes = [];
+        segments.forEach(seg => {
+            webui.querySelectorAll('webui-code', seg).forEach(el => {
+                codes.push(el);
+            });
+        });
+        return codes;
+    }
+    function updateScriptPreviews() {
+        let codes = findAllWebuiCodes();
+        codes.forEach((codeEl, index) => {
+            let scriptMeta = pageScripts[index];
+            if (!scriptMeta) return;
+            codeEl.value = injectVariableValues(scriptMeta.content, true);
+        });
+    }
+    function injectPlayButtons() {
+        let codes = findAllWebuiCodes();
+        codes.forEach((codeEl, index) => {
+            let scriptMeta = pageScripts[index];
+            if (!scriptMeta) return;
+            customElements.whenDefined('webui-code').then(() => {
+                setTimeout(() => {
+                    let root = codeEl.shadowRoot || codeEl;
+                    if (webui.querySelectorAll('.run-script-btn', root).length !== 0) return;
+                    let copyBtn = webui.querySelectorAll('webui-icon[icon="copy"]', root)[0];
+                    let playBtn = webui.create('webui-icon', {
+                        icon: 'emoji-play_button',
+                        class: 'run-script-btn',
+                        style: 'cursor: pointer; margin-left: 8px;',
+                        title: 'Run Script'
+                    });
+                    playBtn.addEventListener('click', () => runPageScript(scriptMeta));
+                    if (copyBtn) {
+                        copyBtn.after(playBtn);
+                    } else {
+                        let header = webui.querySelectorAll('label', root);
+                        if (header) {
+                            header.appendChild(playBtn);
+                        }
+                    }
+                }, 200);
+            });
+        });
+    }
+    async function runPageScript(scriptMeta) {
+        let projProject = webui.getData('app-current-project');
+        let projName = projProject ? projProject.display : 'Project';
+        let pageName = webui.getData('page-title') || 'Page';
+        let lastName = scriptMeta.lastText || `#${scriptMeta.scriptIndex}`;
+        let totalName = `${projName}_${pageName}_${lastName}`;
+        if (totalName.length > 50) {
+            if (projName.length > 18) projName = projName.substring(0, 18);
+            totalName = `${projName}_${pageName}_${lastName}`;
+            if (totalName.length > 50) {
+                if (pageName.length > 18) pageName = pageName.substring(0, 18);
+                totalName = `${projName}_${pageName}_${lastName}`;
+                if (totalName.length > 50) {
+                    totalName = totalName.substring(0, 50);
+                }
+            }
+        }
+        webui.setData('app-terminals-page-scripts', true);
+        let state = webui.proxy.terminalHelpers.getState();
+        state.activeId = totalName;
+        webui.setData('app-terminal-state', state);
+        let executableContent = injectVariableValues(scriptMeta.content, false);
+        webui.proxy.terminalHelpers.ensureListeners();
+        await new Promise(r => setTimeout(r, 200));
+        try {
+            let result = await webui.proxy.terminalHelpers.runScript(
+                totalName,
+                executableContent,
+                [],
+                false,
+                false,
+                true
+            );
+            let terminalsApp = document.querySelector('app-terminals');
+            if (terminalsApp) {
+                terminalsApp.openDrawer();
+            }
+        } catch (err) {
+            webui.alert(err, 'warning');
+        }
     }
     const segmentType = {
         INVALID: 0,
@@ -164,14 +342,34 @@
             }
         }
     }
+    let sharedDrawerObserver = null;
     webui.define("app-page-handler", {
-        preload: 'app:markdown-segment dropdown input-text input-message',
+        preload: 'app:markdown-segment dropdown input-text input-message code',
         constructor() {
             const t = this;
             comp = t;
         },
         connected() {
             const t = this;
+            t._shared = webui.querySelector('.shared');
+            sharedDrawerObserver = new MutationObserver((mutations) => {
+                mutations.forEach((m) => {
+                    if (m.attributeName === 'class' && !t._shared.classList.contains('open')) {
+                        updateScriptPreviews();
+                    }
+                });
+            });
+            sharedDrawerObserver.observe(t._shared, { attributes: true });
+            t.addEventListener('click', (ev) => {
+                let segment = ev.target.closest('app-markdown-segment');
+                if (segment) {
+                    setTimeout(() => {
+                        if (!segment.classList.contains('isEditing')) {
+                            refreshScripts();
+                        }
+                    }, 50);
+                }
+            });
             let project = webui.getData('app-current-project');
             if (project && project.value) {
                 loadProject();
@@ -181,6 +379,10 @@
         },
         disconnected() {
             const t = this;
+            if (sharedDrawerObserver) {
+                sharedDrawerObserver.disconnect();
+                sharedDrawerObserver = null;
+            }
             //comp = null;
             markdown = '';
             myId = '';

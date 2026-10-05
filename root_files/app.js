@@ -321,7 +321,7 @@
                 }
                 return state;
             },
-            async runScript(id, scriptContent, args, inSeparateWindow, useQueue) {
+            async runScript(id, scriptContent, args, inSeparateWindow, useQueue, isPageScript) {
                 let state = this.getState();
                 if (state.terminals[id] && state.terminals[id].status === 'Running') {
                     throw 'Script is already running. You can manage it in the Terminal Manager.';
@@ -329,21 +329,23 @@
                 if (useQueue) {
                     let isRunning = Object.values(state.terminals).some(t => t.status === 'Running');
                     if (isRunning) {
-                        state.queue.push({ id, scriptContent, args, inSeparateWindow });
+                        state.queue.push({ id, scriptContent, args, inSeparateWindow, isPageScript });
                         webui.setData('app-terminal-state', state);
                         return 'Queued';
                     }
                 }
-                return await this._executeScript(id, scriptContent, args, inSeparateWindow);
+                return await this._executeScript(id, scriptContent, args, inSeparateWindow, isPageScript);
             },
-            async _executeScript(id, scriptContent, args, inSeparateWindow) {
+            async _executeScript(id, scriptContent, args, inSeparateWindow, isPageScript) {
                 let state = this.getState();
                 if (!state.terminals[id]) {
-                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, args: args, output: [], isLive: id === 'live' };
+                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, args: args, output: [], isLive: id === 'live', isPageScript: !!isPageScript };
+                } else {
+                    state.terminals[id].isPageScript = !!isPageScript;
                 }
                 state.terminals[id].status = 'Running';
                 state.terminals[id].script = scriptContent;
-                if (!state.allScripts.includes(id) && id !== 'live') {
+                if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
                     state.allScripts.push(id);
                 }
                 webui.setData('app-terminal-state', state);
@@ -370,7 +372,7 @@
                 if (state.queue && state.queue.length > 0) {
                     let next = state.queue.shift();
                     webui.setData('app-terminal-state', state);
-                    this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow).catch(err => webui.alert(err, 'danger'));
+                    this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow, next.isPageScript).catch(err => webui.alert(err, 'danger'));
                 }
             },
             ensureListeners() {
@@ -397,6 +399,7 @@
                 let options = [];
                 const liveTerm = state.terminals['live'];
                 options.push({ id: 'live', value: 'live', display: `Live (${liveTerm.status})` });
+                let showPageScripts = webui.getData('app-terminals-page-scripts') === true || webui.getData('app-terminals-page-scripts') === 'true';
                 if (showAll) {
                     state.allScripts = await webui.proxy.getScripts();
                     state.allScripts.forEach(path => {
@@ -406,13 +409,24 @@
                         options.push({ id: path, value: path, display: `${path} (${status})` });
                     });
                     webui.setData('app-terminal-state', state);
-                } else {
-                    Object.keys(state.terminals).forEach(id => {
-                        if (id === 'live') return;
-                        const term = state.terminals[id];
-                        options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
-                    });
                 }
+                Object.values(state.terminals).forEach(term => {
+                    if (term.id === 'live') return;
+                    if (term.isPageScript) {
+                        if (!showPageScripts && state.activeId !== term.id) return;
+                        if (!options.find(o => o.id === term.id)) {
+                            options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
+                        }
+                    } else if (!showAll) {
+                        if (!options.find(o => o.id === term.id)) {
+                            options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
+                        }
+                    } else {
+                        if (!options.find(o => o.id === term.id)) {
+                            options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
+                        }
+                    }
+                });
                 return options;
             },
             clearOutput(id) {
