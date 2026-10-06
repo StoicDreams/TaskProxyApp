@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.43
+  VERSION: 0.1.44
   ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
 jobs:
