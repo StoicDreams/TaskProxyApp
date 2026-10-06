@@ -1,5 +1,9 @@
 "use strict";
 {
+    const globalScope = 'global';
+    const projectScope = 'project';
+    const projectRootGetVars = ['id', 'path', 'current_page', 'docs', 'navigation', 'variables', 'data']
+    const projectRootSetVars = []
     const AsyncFunction = (async () => { }).constructor;
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
@@ -52,7 +56,6 @@
                 cancel: 'Cancel',
                 onconfirm: async (data, content) => {
                     const formData = Object.fromEntries(data);
-                    console.log('formData', formData);
                     const token = (formData.gitToken || '').trim();
                     const isGlobal = formData.isGlobal === true || formData.isGlobal === 'true';
                     if (!token) {
@@ -449,22 +452,52 @@
         let data = await webui.proxy.getAppData();
         webui.taskProxyData = data;
         webui.projectData = { navigation: [], data: {} };
-        const getData = webui.getData;
-        const setData = webui.setData;
+        webui.projectData.data ??= {};
+        webui.projectData.navigation ??= [];
+        const getData = webui.getData.bind(webui);
+        const setData = webui.setData.bind(webui);
         webui.getData = function (key) {
-            // Check Page Data
-            let value = getData(key);
-            if (value !== undefined) return value;
-            // Check Project Data
-            value = webui.projectData.data[key];
-            if (value !== undefined) return value;
+            let ks = key.indexOf('.') !== -1 ? key.split('.') : [null, key];
+            const scope = ks[0];
+            key = ks[1];
+            if (scope !== projectScope && scope !== globalScope) {
+                // Check Page Data
+                let value = getData(key);
+                if (value !== undefined) return value;
+            }
+            if (scope !== globalScope) {
+                // Check Project Data
+                let value = projectRootGetVars.indexOf(key) !== -1 ? webui.projectData[key] : webui.projectData.data[key];
+                if (value !== undefined) return value;
+            }
             // Return Global Data
             return webui.taskProxyData.data[key];
         }
         webui.setData = function (key, value) {
+            let ks = key.indexOf('.') !== -1 ? key.split('.') : [null, key];
+            const scope = ks[0];
+            key = ks[1];
+            if (scope === projectScope) {
+                webui.setProjectData(key, value);
+            } else if (scope === globalScope) {
+                webui.setGlobalData(key, value);
+            }
             setData(key, value);
         }
+        webui.getProjectData = function (key) {
+            if (projectRootGetVars.indexOf(key) !== -1) {
+                return webui.projectData[key];
+            }
+            return webui.projectData.data[key];
+        }
+        webui.getGlobalData = function (key) {
+            return webui.taskProxyData.data[key];
+        }
         webui.setProjectData = function (key, value) {
+            if (projectRootSetVars.indexOf(key) !== -1) {
+                webui.projectData[key] = value;
+                return;
+            }
             webui.projectData.data[key] = value;
         }
         webui.setGlobalData = function (key, value) {
@@ -531,7 +564,7 @@
             showLoading('Loading Project!');
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
-            webui.projectData = projectData || { navigation: [], data: {} };
+            webui.projectData = projectData || { id: null, path: null, currentPage: '/', navigation: [], data: {} };
             webui.proxy.projects.isLoaded = !!webui.projectData.id;
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';

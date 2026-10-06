@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use background::background_tasks;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 use tauri::{Emitter, Manager, WindowEvent};
 use tracing_subscriber::EnvFilter;
 
@@ -12,6 +13,10 @@ pub mod errors;
 pub mod prelude;
 pub mod services;
 
+pub(crate) static PROJECT_LAST_SYNC: LazyLock<Mutex<Option<Instant>>> =
+    LazyLock::new(|| Mutex::new(None));
+pub(crate) static APP_LAST_SYNC: LazyLock<Mutex<Option<Instant>>> =
+    LazyLock::new(|| Mutex::new(None));
 static DID_SAVE_ON_CLOSE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -49,8 +49,9 @@
                 let options = repos.map(item => { return { id: item, value: item, display: item === '' ? 'Root' : item } });
                 t._repos.setOptions(options);
                 t._repos.classList.remove('hidden');
-                if (webui.projectData.selectedGitRepo) {
-                    t._repos.value = webui.projectData.selectedGitRepo;
+                let selectedGitRepo = webui.getProjectData('selectedGitRepo');
+                if (selectedGitRepo) {
+                    t._repos.value = selectedGitRepo;
                 }
                 await t.loadBranches();
                 t.loadRepoChanges();
@@ -313,7 +314,7 @@
                 });
             }, 50);
             t._repos.addEventListener('change', async _ => {
-                webui.projectData.selectedGitRepo = t._repos.value;
+                await webui.wait(20);
                 await t.loadBranches();
                 t.loadRepoChanges();
             });
@@ -446,7 +447,6 @@
                 dropdowns.forEach(d => {
                     if (d.value !== '2' && d.value !== 2) {
                         d.value = targetValue;
-                        d.dispatchEvent(new Event('change'));
                     }
                 });
             });
@@ -608,7 +608,7 @@ pre {
 </style>
 <webui-flex align="center">
     <webui-button theme="info" label="Refresh"></webui-button>
-    <webui-dropdown class="hidden" label="Repo"></webui-dropdown>
+    <webui-dropdown class="hidden" data-bind="project.selectedGitRepo" label="Repo"></webui-dropdown>
     <webui-flex align="center" gap="0.5rem" style="margin-left: auto;">
         <webui-button id="btn-revert-all" theme="danger" label="Revert All"></webui-button>
         <webui-button id="btn-stash" theme="warning" label="Stash"></webui-button>

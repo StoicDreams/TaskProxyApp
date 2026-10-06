@@ -229,7 +229,6 @@
             });
             t._message.addEventListener('input', () => {
                 t.parseParams(t._message.value);
-                t.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
             });
             t._toggleFullPath.addEventListener('change', () => {
                 t.updatePreview();
