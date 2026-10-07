@@ -182,10 +182,50 @@ pub(crate) async fn git_pull(
                 .checkout_head(Some(CheckoutBuilder::default().force()))
                 .map_err(|e| e.to_string())?;
             Ok(String::from("Fast-forward pull successful."))
+        } else if analysis.0.is_normal() {
+            let mut checkout_builder = git2::build::CheckoutBuilder::new();
+            checkout_builder.force();
+            repository
+                .merge(&[&fetch_commit], None, Some(&mut checkout_builder))
+                .map_err(|e| e.to_string())?;
+            let mut index = repository.index().map_err(|e| e.to_string())?;
+            if index.has_conflicts() {
+                return Err(String::from(
+                    "Pull resulted in conflicts. Please resolve them manually in your editor.",
+                ));
+            }
+            let oid = index.write_tree().map_err(|e| e.to_string())?;
+            let tree = repository.find_tree(oid).map_err(|e| e.to_string())?;
+            let signature = repository
+                .signature()
+                .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
+                .map_err(|e| e.to_string())?;
+            let head_commit = repository
+                .head()
+                .map_err(|e| e.to_string())?
+                .peel_to_commit()
+                .map_err(|e| e.to_string())?;
+            let fetch_commit_obj = repository
+                .find_commit(fetch_commit.id())
+                .map_err(|e| e.to_string())?;
+            let message = format!(
+                "Merge remote-tracking branch 'origin/{}' into {}",
+                branch_name, branch_name
+            );
+            repository
+                .commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    &message,
+                    &tree,
+                    &[&head_commit, &fetch_commit_obj],
+                )
+                .map_err(|e| e.to_string())?;
+            repository.cleanup_state().map_err(|e| e.to_string())?;
+            Ok(String::from("Pull and merge successful."))
         } else {
-            Err(String::from(
-                "Normal merge required, fast-forward not possible. (Not implemented in basic pull)",
-            ))
+            Err(String::from("Merge type not supported."))
         }
     })
     .await;
@@ -647,19 +687,77 @@ pub(crate) async fn git_merge_branch(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let reference = repository.resolve_reference_from_short_name(&branch).map_err(|e| e.to_string())?;
+        let reference = repository
+            .resolve_reference_from_short_name(&branch)
+            .map_err(|e| e.to_string())?;
         let fetch_commit = reference.peel_to_commit().map_err(|e| e.to_string())?;
-        let annotated_commit = repository.reference_to_annotated_commit(&reference).map_err(|e| e.to_string())?;
-        let analysis = repository.merge_analysis(&[&annotated_commit]).map_err(|e| e.to_string())?;
+        let annotated_commit = repository
+            .reference_to_annotated_commit(&reference)
+            .map_err(|e| e.to_string())?;
+        let analysis = repository
+            .merge_analysis(&[&annotated_commit])
+            .map_err(|e| e.to_string())?;
+
         if analysis.0.is_up_to_date() {
             Ok(String::from("Already up to date."))
         } else if analysis.0.is_fast_forward() {
             let mut head_ref = repository.head().map_err(|e| e.to_string())?;
-            head_ref.set_target(fetch_commit.id(), "Fast-Forward").map_err(|e| e.to_string())?;
-            repository.checkout_head(Some(git2::build::CheckoutBuilder::default().force())).map_err(|e| e.to_string())?;
+            head_ref
+                .set_target(fetch_commit.id(), "Fast-Forward")
+                .map_err(|e| e.to_string())?;
+            repository
+                .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+                .map_err(|e| e.to_string())?;
             Ok(String::from("Fast-forward merge successful."))
+        } else if analysis.0.is_normal() {
+            let mut checkout_builder = git2::build::CheckoutBuilder::new();
+            checkout_builder.force();
+            repository
+                .merge(&[&annotated_commit], None, Some(&mut checkout_builder))
+                .map_err(|e| e.to_string())?;
+
+            let mut index = repository.index().map_err(|e| e.to_string())?;
+            if index.has_conflicts() {
+                return Err(String::from(
+                    "Merge resulted in conflicts. Please resolve them manually in your editor.",
+                ));
+            }
+
+            let oid = index.write_tree().map_err(|e| e.to_string())?;
+            let tree = repository.find_tree(oid).map_err(|e| e.to_string())?;
+            let signature = repository
+                .signature()
+                .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
+                .map_err(|e| e.to_string())?;
+
+            let head_commit = repository
+                .head()
+                .map_err(|e| e.to_string())?
+                .peel_to_commit()
+                .map_err(|e| e.to_string())?;
+            let head_name = repository
+                .head()
+                .map_err(|e| e.to_string())?
+                .shorthand()
+                .unwrap_or("HEAD")
+                .to_string();
+            let message = format!("Merge branch '{}' into '{}'", branch, head_name);
+
+            repository
+                .commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    &message,
+                    &tree,
+                    &[&head_commit, &fetch_commit],
+                )
+                .map_err(|e| e.to_string())?;
+
+            repository.cleanup_state().map_err(|e| e.to_string())?;
+            Ok(String::from("Merge successful."))
         } else {
-            Err(String::from("Normal merge required, fast-forward not possible. (Not implemented in basic merge)"))
+            Err(String::from("Merge type not supported."))
         }
     })
     .await;
