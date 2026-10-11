@@ -447,6 +447,7 @@
                 dropdowns.forEach(d => {
                     if (d.value !== '2' && d.value !== 2) {
                         d.value = targetValue;
+                        d.triggerChange();
                     }
                 });
             });

@@ -893,6 +893,12 @@ const webui = (() => {
                     t._snapshot = JSON.stringify(snapshot);
                     return t._snapshot;
                 }
+                triggerChange(includeInput = false) {
+                    if (includeInput) {
+                        this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+                    }
+                    this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                }
                 get hasChanges() {
                     let a = this._snapshot;
                     let b = this.snapshot();

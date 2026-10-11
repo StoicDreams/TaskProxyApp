@@ -442,7 +442,7 @@
             }
         }
     }
-    const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'webui-version', 'app-projects', 'page-path']
+    const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'app-not-found-html', 'app-data-endpoint', 'app-content-endpoint', 'webui-version', 'app-projects', 'page-path']
     runWhenWebUIReady(async () => {
         webui.isclosing = (msg) => {
             webui.dialog({ content: msg, isLoading: true });
