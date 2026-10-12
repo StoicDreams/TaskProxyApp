@@ -473,17 +473,18 @@
             let ks = key.indexOf('.') !== -1 ? key.split('.') : [null, key];
             const scope = ks[0];
             key = ks[1];
-            if (scope !== projectScope && scope !== globalScope && getData('app-env-page-enabled')) {
+            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle"].includes(key);
+            if (scope !== projectScope && scope !== globalScope && (isAppKey || getData('app-env-page-enabled'))) {
                 // Check Page Data
                 let value = getData(key);
                 if (value !== undefined) return value;
             }
-            if (scope !== globalScope && getData('app-env-project-enabled')) {
+            if (scope !== globalScope && (isAppKey || getData('app-env-project-enabled'))) {
                 // Check Project Data
                 let value = projectRootGetVars.indexOf(key) !== -1 ? webui.projectData[key] : webui.projectData.data[key];
                 if (value !== undefined) return value;
             }
-            if (!getData('app-env-global-enabled')) return undefined;
+            if (!isAppKey && !getData('app-env-global-enabled')) return undefined;
             // Return Global Data
             return webui.taskProxyData.data[key];
         }
