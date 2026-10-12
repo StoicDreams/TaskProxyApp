@@ -451,6 +451,19 @@
         webui.proxy = new Tauri();
         let data = await webui.proxy.getAppData();
         webui.taskProxyData = data;
+        let keysDeleted = false;
+        const globalVarKeys = (webui.taskProxyData.variables || []).map(v => v.split('|')[0]);
+        Object.keys(webui.taskProxyData.data).forEach(key => {
+            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle"].includes(key);
+            const isGlobalVar = globalVarKeys.includes(key);
+            if (!isAppKey && !isGlobalVar) {
+                delete webui.taskProxyData.data[key];
+                keysDeleted = true;
+            }
+        });
+        if (keysDeleted) {
+            webui.proxy.saveAppData();
+        }
         webui.projectData = { navigation: [], data: {} };
         webui.projectData.data ??= {};
         webui.projectData.navigation ??= [];
@@ -460,16 +473,17 @@
             let ks = key.indexOf('.') !== -1 ? key.split('.') : [null, key];
             const scope = ks[0];
             key = ks[1];
-            if (scope !== projectScope && scope !== globalScope) {
+            if (scope !== projectScope && scope !== globalScope && getData('app-env-page-enabled')) {
                 // Check Page Data
                 let value = getData(key);
                 if (value !== undefined) return value;
             }
-            if (scope !== globalScope) {
+            if (scope !== globalScope && getData('app-env-project-enabled')) {
                 // Check Project Data
                 let value = projectRootGetVars.indexOf(key) !== -1 ? webui.projectData[key] : webui.projectData.data[key];
                 if (value !== undefined) return value;
             }
+            if (!getData('app-env-global-enabled')) return undefined;
             // Return Global Data
             return webui.taskProxyData.data[key];
         }
@@ -582,7 +596,15 @@
         let myId = webui.uuid();
         let oldId = queueId;
         queueId = myId;
-        webui.taskProxyData.data = { ...webui.taskProxyData.data, ...appData };
+        Object.keys(appData).forEach((key) => {
+            if (
+                key.startsWith("app-") ||
+                key.startsWith("session-") ||
+                ["page-path", "page-title", "page-subtitle"].includes(key)
+            ) {
+                webui.taskProxyData.data[key] = appData[key];
+            }
+        });
         if (oldId === '') {
             await syncAppData();
             setTimeout(() => {
