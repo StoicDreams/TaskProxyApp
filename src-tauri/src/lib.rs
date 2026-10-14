@@ -35,6 +35,7 @@ pub fn run() {
             }
             Ok(())
         })
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
@@ -198,7 +199,9 @@ pub fn run() {
             services::terminal_controller::kill_script,
             services::terminal_controller::kill_all_scripts,
             services::terminal_controller::get_powershell_status,
-            services::terminal_controller::auto_install_powershell
+            services::terminal_controller::auto_install_powershell,
+            services::updates::check_update,
+            services::updates::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

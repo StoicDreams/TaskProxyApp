@@ -3,6 +3,7 @@ pub(crate) mod git_controller;
 pub(crate) mod projects;
 pub(crate) mod script_controller;
 pub(crate) mod terminal_controller;
+pub(crate) mod updates;
 
 pub(crate) use emojis::*;
 pub(crate) use projects::*;

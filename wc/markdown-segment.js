@@ -211,12 +211,17 @@ visibility:visible;
 }
 :host div.content {
 position:relative;
+display:grid;
+grid-template-columns:1fr;
+}
+:host(.isEditing) div.content {
+grid-template-columns:1fr 1fr;
 }
 :host div.input {
 display:grid;
 align-items:start;
 grid-template-columns:1fr max-content;
-position:absolute;
+position:relative;
 width:100%;
 min-height:100%;
 z-index:1;

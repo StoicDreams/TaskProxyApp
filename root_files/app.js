@@ -193,6 +193,14 @@
             webui.setData('app-projects', projects);
             return result;
         }
+        checkUpdate(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('check_update', {}).catch(errHandler);
+        }
+        installUpdate(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('install_update', {}).catch(errHandler);
+        }
         async renameProject(path, newName, errHandler) {
             errHandler ??= defaultErrHandler;
             let result = await tauri.core.invoke('rename_project', { path: path, newName: newName }).catch(errHandler);

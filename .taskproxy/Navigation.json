@@ -1,7 +1,7 @@
 [
   {
     "name": "Tasks",
-    "icon": "emoji-hammer_and_wrench|backing|theme:primary|shape:circle",
+    "icon": "emoji-hammer_and_wrench",
     "url": "/8c7f9044-5cfc-4c73-b0a3-25ffcc1cc920",
     "children": null
   },
@@ -19,8 +19,8 @@
     ]
   },
   {
-    "name": "New Page",
-    "icon": "emoji-new|fill|bordered|inverted|theme:info",
+    "name": "Release",
+    "icon": "emoji-package",
     "url": "/901091c2-ba23-481a-8fd2-534467758277",
     "children": null
   }
