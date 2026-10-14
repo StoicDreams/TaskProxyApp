@@ -23,74 +23,41 @@ async function processMessage(run, data) {
 
 const procs = {
     processFileDiff: async function (data) {
-        let lineNumber = 0;
-        let lineOld = 0;
         const { added, removed } = procs.parseGitDiff(data.fileDiff || '');
         let result = { old: [], new: [] };
         if (data.fileContent !== undefined) {
             let fileLines = data.fileContent.replace(/\r\n/g, '\n').split('\n');
             if (data.change === 'Add') {
                 for (let i = 0; i < fileLines.length; i++) {
-                    let line = fileLines[i];
-                    buildLine(result.new, line, i + 1, 'success');
-                    buildLine(result.old, line, ' ', null, true);
+                    result.new.push({ lineNumber: i + 1, line: fileLines[i] });
                 }
             } else if (data.change === 'Delete') {
                 for (let i = 0; i < fileLines.length; i++) {
-                    let line = fileLines[i];
-                    buildLine(result.old, line, i + 1, 'danger');
-                    buildLine(result.new, line, ' ', null, true);
+                    result.old.push({ lineNumber: i + 1, line: fileLines[i] });
                 }
             } else {
-                while (lineNumber < fileLines.length) {
-                    let line = fileLines[lineNumber++];
-                    if (data.isCompare) {
-                        if (added[lineNumber] !== undefined) {
-                            if (removed[lineOld + 1] !== undefined) {
-                                lineOld++;
-                                buildLine(result.old, removed[lineOld], lineOld, 'danger');
-                            } else {
-                                buildLine(result.old, line, ' ', null, true);
-                            }
-                        } else {
-                            lineOld++;
-                            if (removed[lineOld] !== undefined) {
-                                buildLine(result.old, removed[lineOld], lineOld, 'danger');
-                                lineOld++;
-                            }
-                            buildLine(result.old, line, lineOld);
-                        }
+                for (let i = 0; i < fileLines.length; i++) {
+                    result.new.push({ lineNumber: i + 1, line: fileLines[i] });
+                }
+                let newIdx = 0;
+                let oldLineNum = 1;
+                while (newIdx < fileLines.length || removed[oldLineNum] !== undefined) {
+                    if (removed[oldLineNum] !== undefined) {
+                        result.old.push({ lineNumber: oldLineNum, line: removed[oldLineNum] });
+                        oldLineNum++;
+                        continue;
                     }
-                    {
-                        let theme = added[lineNumber] !== undefined ? 'success' : null;
-                        buildLine(result.new, line, lineNumber, theme);
+                    if (newIdx < fileLines.length) {
+                        let currentNewLineNum = newIdx + 1;
+                        if (added[currentNewLineNum] !== undefined) {
+                            newIdx++;
+                            continue;
+                        }
+                        result.old.push({ lineNumber: oldLineNum, line: fileLines[newIdx] });
+                        oldLineNum++;
+                        newIdx++;
                     }
                 }
-            }
-        }
-        function buildLine(array, line, lineNumber, theme, fill) {
-            let ln = { lineNumber: lineNumber, line: line };
-            if (theme) {
-                ln.background = `--color-${theme}`;
-                ln.color = `--color-${theme}-offset`;
-            }
-            if (fill) {
-                ln.isFiller = true;
-                ln.background = `--color-warning`;
-                ln.color = `#00000000`;
-            }
-            array.push(ln);
-        }
-        let fillTo = Math.max(result.new.length, result.old.length) + 10;
-        while (true) {
-            if (result.new.length < fillTo) {
-                buildLine(result.new);
-            }
-            if (result.old.length < fillTo) {
-                buildLine(result.old);
-            }
-            if (result.old.length >= fillTo && result.new.length >= fillTo) {
-                break;
             }
         }
         return result;
