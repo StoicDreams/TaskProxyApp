@@ -75,17 +75,29 @@
         comp.innerHTML = '';
         webui.currentPageVariables.forEach(key => webui.setData(key, undefined));
         webui.currentPageVariables = [];
+        const reservedAttrs = ['bind', 'trigger', 'subscribe', 'default', 'state', 'hide', 'toggleclass', 'removeclass', 'setattr', 'toggleattr', 'stopclick', 'click', 'markdown', 'options', 'name', 'title', 'value', 'param'];
         const dataRegex = /data-([a-zA-Z0-9-]+)="([^"]*)"/g;
         let match;
         while ((match = dataRegex.exec(md)) !== null) {
-            const key = match[1];
-            const value = match[2];
-            // Prevent overwriting internal webui-data routing properties like page-title
-            if (!key.startsWith('page-') || !key.startsWith('app-') || !key.startsWith('session-')) continue;
-            if (!webui.currentPageVariables.includes(key)) {
-                webui.currentPageVariables.push(key);
+            const attrName = match[1];
+            const attrValue = match[2];
+            if (attrName === 'bind' || attrName === 'trigger') {
+                attrValue.split('|').forEach(bk => {
+                    let bindKey = bk.split(':')[0].trim();
+                    if (bindKey.includes('.')) bindKey = bindKey.split('.')[1];
+                    if (bindKey && !webui.currentPageVariables.includes(bindKey)) {
+                        webui.currentPageVariables.push(bindKey);
+                    }
+                });
+                continue;
             }
-            webui.setData(key, value);
+            if (reservedAttrs.includes(attrName)) continue;
+            // Prevent overwriting internal webui-data routing properties like page-title
+            if (attrName.startsWith('page-') || attrName.startsWith('app-') || attrName.startsWith('session-')) continue;
+            if (!webui.currentPageVariables.includes(attrName)) {
+                webui.currentPageVariables.push(attrName);
+            }
+            webui.setData(attrName, attrValue);
         }
         convertMarkdownToSegments(markdown);
         comp.appendChild(topBar);
@@ -104,6 +116,17 @@
             if (segMd) mdContent.push(segMd);
         });
         let fullMd = mdContent.join('\n\n');
+        const bindRegex = /data-(?:bind|trigger)="([^"]*)"/g;
+        let bindMatch;
+        while ((bindMatch = bindRegex.exec(fullMd)) !== null) {
+            bindMatch[1].split('|').forEach(bk => {
+                let bindKey = bk.split(':')[0].trim();
+                if (bindKey.includes('.')) bindKey = bindKey.split('.')[1];
+                if (bindKey && !webui.currentPageVariables.includes(bindKey)) {
+                    webui.currentPageVariables.push(bindKey);
+                }
+            });
+        }
         pageScripts = [];
         const scriptRegex = /```(?:powershell|ps1)\n([\s\S]*?)```/gi;
         const varRegex = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
@@ -135,7 +158,45 @@
             });
             lastMatchIndex = scriptRegex.lastIndex;
         }
+        syncInitialBoundElements();
         applyScriptUI();
+    }
+    function syncInitialBoundElements(attempt = 0) {
+        if (attempt > 20) return;
+        let boundEls = [];
+        segments.forEach(seg => {
+            webui.querySelectorAll('[data-bind],[data-trigger]', seg).forEach(el => {
+                if (webui.closest(el, '.input')) return;
+                boundEls.push(el);
+            });
+        });
+        let needsRetry = false;
+        boundEls.forEach(el => {
+            if ((el.nodeName.startsWith('WEBUI-') || el.nodeName.startsWith('APP-')) && !el._isConnected) {
+                needsRetry = true;
+                return;
+            }
+            let keyAttr = [el.dataset.trigger, el.dataset.bind].filter(Boolean).join('|');
+            keyAttr.split('|').forEach(k => {
+                let rawKey = k.split(':')[0].trim();
+                if (!rawKey) return;
+                if (webui.getData(rawKey) === undefined) {
+                    let val = webui.getDefined(
+                        typeof el.getValue === 'function' ? el.getValue() : undefined,
+                        el.value,
+                        el.dataset.value
+                    );
+                    if (val !== undefined && val !== '') {
+                        webui.setData(rawKey, val);
+                    } else if (el.hasAttribute('options') || el.hasAttribute('data-options')) {
+                        needsRetry = true;
+                    }
+                }
+            });
+        });
+        if (needsRetry) {
+            setTimeout(() => syncInitialBoundElements(attempt + 1), 50);
+        }
     }
     function applyScriptUI(attempt = 0) {
         if (attempt > 50) return;
@@ -343,6 +404,14 @@
         }
     }
     let sharedDrawerObserver = null;
+    function onAppDataChanged(changes) {
+        if (!changes || !changes.property) return;
+        let prop = changes.property;
+        let isTracked = webui.currentPageVariables.some(v => webui.toSnake(v, '-') === prop || v === prop);
+        if (isTracked) {
+            updateScriptPreviews();
+        }
+    }
     webui.define("app-page-handler", {
         preload: 'app:markdown-segment dropdown input-text input-message code',
         constructor() {
@@ -351,6 +420,7 @@
         },
         connected() {
             const t = this;
+            webui.watchAppDataChanges(onAppDataChanged);
             t._shared = webui.querySelector('.shared');
             sharedDrawerObserver = new MutationObserver((mutations) => {
                 mutations.forEach((m) => {
@@ -379,6 +449,7 @@
         },
         disconnected() {
             const t = this;
+            webui.unwatchAppDataChanges(onAppDataChanged);
             if (sharedDrawerObserver) {
                 sharedDrawerObserver.disconnect();
                 sharedDrawerObserver = null;
