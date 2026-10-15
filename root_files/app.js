@@ -229,6 +229,10 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('get_project_file', { filePath: filePath }).catch(errHandler);
         }
+        searchProjectFiles(filter, display, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('search_project_files', { filter: filter, display: display }).catch(errHandler);
+        }
         saveProjectFile(filePath, contents, errHandler) {
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('save_project_file', { filePath: filePath, contents: contents }).catch(errHandler);

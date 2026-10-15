@@ -193,6 +193,7 @@ pub fn run() {
             services::projects::remove_project,
             services::projects::save_project_data,
             services::projects::save_project_file,
+            services::projects::search_project_files,
             services::projects::sync_project_data,
             services::script_controller::get_scripts,
             services::terminal_controller::start_script,

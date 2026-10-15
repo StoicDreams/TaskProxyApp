@@ -413,7 +413,7 @@
         }
     }
     webui.define("app-page-handler", {
-        preload: 'app:markdown-segment dropdown input-text input-message code',
+        preload: 'app:markdown-segment app:files dropdown input-text input-message code',
         constructor() {
             const t = this;
             comp = t;

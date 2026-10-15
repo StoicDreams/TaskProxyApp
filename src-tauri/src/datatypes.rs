@@ -68,6 +68,13 @@ pub(crate) struct Project {
     pub path: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DropdownOption {
+    pub value: String,
+    pub display: String,
+}
+
 impl ProjectData {
     pub fn new() -> Self {
         ProjectData {

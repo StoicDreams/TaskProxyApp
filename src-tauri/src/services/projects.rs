@@ -514,3 +514,166 @@ fn collect_md_files(current_path: &Path, root: &Path, docs: &mut Vec<String>) {
         }
     }
 }
+#[tauri::command]
+pub(crate) async fn search_project_files(
+    state: State<'_, CurrentProject>,
+    filter: String,
+    display: Option<String>,
+) -> Result<Vec<DropdownOption>, String> {
+    let project_path = {
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("search_project_files State failure: {}", err))?;
+        if project_state.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
+        project_state.path.clone()
+    };
+    let display_format = display.unwrap_or_default();
+    let patterns: Vec<String> = filter
+        .split('|')
+        .map(|s| s.trim().replace('\\', "/").to_lowercase())
+        .filter(|s| !s.is_empty() && !s.contains("..") && !s.starts_with('/') && !s.contains(':'))
+        .collect();
+    if patterns.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root = match fs::canonicalize(&project_path) {
+        Ok(p) => p,
+        Err(_) => PathBuf::from(&project_path),
+    };
+    let result = task::spawn_blocking(move || {
+        let mut matches = Vec::new();
+        collect_filtered_files(&root, &root, &patterns, &display_format, &mut matches);
+        matches.sort_by(|a, b| a.display.to_lowercase().cmp(&b.display.to_lowercase()));
+        matches
+    })
+    .await
+    .map_err(|err| format!("Search task failed: {}", err))?;
+    Ok(result)
+}
+
+fn collect_filtered_files(
+    current_path: &Path,
+    root: &Path,
+    patterns: &[String],
+    display_format: &str,
+    results: &mut Vec<DropdownOption>,
+) {
+    const IGNORED_DIRS: &[&str] = &[
+        ".taskproxy",
+        "target",
+        "dist",
+        "build",
+        "node_modules",
+        ".git",
+        "bin",
+        "obj",
+        ".vs",
+        ".vscode",
+    ];
+    if let Ok(entries) = fs::read_dir(current_path) {
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                if path.file_name().is_some_and(|name| {
+                    let name_str = name.to_string_lossy();
+                    IGNORED_DIRS.contains(&name_str.as_ref())
+                }) {
+                    continue;
+                }
+                collect_filtered_files(&path, root, patterns, display_format, results);
+            } else if file_type.is_file() {
+                if let Ok(relative_path) = path.strip_prefix(root) {
+                    let rel_str = relative_path.to_string_lossy().replace('\\', "/");
+                    let file_name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_lowercase())
+                        .unwrap_or_default();
+                    let rel_lower = rel_str.to_lowercase();
+                    let is_match = patterns.iter().any(|pat| {
+                        if pat.contains('/') {
+                            wildcard_match(pat, &rel_lower)
+                        } else {
+                            wildcard_match(pat, &file_name)
+                        }
+                    });
+                    if is_match {
+                        let display =
+                            format_option_display(relative_path, &rel_str, display_format);
+                        results.push(DropdownOption {
+                            value: rel_str,
+                            display,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+    let mut pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if i == 0 {
+            if !text.starts_with(part) {
+                return false;
+            }
+            pos = part.len();
+        } else if i == parts.len() - 1 {
+            if !text[pos..].ends_with(part) {
+                return false;
+            }
+            pos = text.len();
+        } else if let Some(found) = text[pos..].find(part) {
+            pos += found + part.len();
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+fn format_option_display(rel_path: &Path, rel_str: &str, format: &str) -> String {
+    if format.trim().is_empty() {
+        return rel_str.to_string();
+    }
+    let file_stem = rel_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = rel_path
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let parent = rel_path
+        .parent()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let path_no_ext = if parent.is_empty() {
+        file_stem.clone()
+    } else {
+        format!("{}/{}", parent, file_stem)
+    };
+    format
+        .replace("[path]", &path_no_ext)
+        .replace("[file]", &file_stem)
+        .replace("[parent]", &parent)
+        .replace("[ext]", &ext)
+}
