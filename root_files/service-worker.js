@@ -23,7 +23,7 @@ self.addEventListener('fetch', event => {
     }
     event.respondWith(onFetch(event))
 });
-const currentVersion = '0.1.52';
+const currentVersion = '0.1.53';
 const cacheNamePrefix = 'offline-cache-';
 const cacheName = `${cacheNamePrefix}${currentVersion}`;
 async function onInstall(event) {
@@ -39,10 +39,10 @@ async function onActivate(event) {
 async function onFetch(event) {
     let request = applyCacheBusting(event.request);
     const cache = await caches.open(cacheName);
-    const cachedResponse = await cache.match(request);
+    const cachedResponse = await cache.match(event.request);
     const networkFetchPromise = fetch(request).then(networkResponse => {
         if (networkResponse && networkResponse.ok) {
-            cache.put(request, networkResponse.clone());
+            cache.put(event.request, networkResponse.clone());
         }
         return networkResponse;
     }).catch(error => {
@@ -55,14 +55,13 @@ async function onFetch(event) {
     return networkFetchPromise;
 }
 function urlNeedsCaching(url) {
-    if (url.startsWith('https://cdn.myfi.ws')) return false;
     if (url.startsWith('http://127.0.0.1:1426')) return false;
     return true;
 }
 function applyCacheBusting(request) {
     try {
         const url = new URL(request.url);
-        url.searchParams.set('_', cacheName);
+        url.searchParams.set('_', Date.now());
         return new Request(url.toString(), request);
     } catch {
         return request;

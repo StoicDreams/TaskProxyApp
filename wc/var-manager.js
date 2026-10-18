@@ -109,6 +109,7 @@
                         activeEnv.variables[v.key] = input.value;
                     }
                 }
+                webui.projectData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 webui.proxy.syncProjectData();
                 webui.alert('Copied to Project Scope', 'success');
                 if (refreshCallback) refreshCallback();
@@ -120,6 +121,7 @@
                 if (!webui.taskProxyData.variables.some(def => def.split('|')[0] === v.key)) {
                     webui.taskProxyData.variables.push(`${v.key}|text|`);
                 }
+                webui.taskProxyData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 webui.proxy.saveAppData();
                 webui.alert('Copied to Global Scope', 'success');
                 if (refreshCallback) refreshCallback();
@@ -239,14 +241,26 @@
                 envSelector.value = activeEnvName;
             }
             let needsProjectSync = false;
+            if (!webui.projectData.variables) webui.projectData.variables = [];
             (webui.currentPageVariables || []).forEach(k => {
-                if (!webui.projectData.variables) webui.projectData.variables = [];
                 if (!webui.projectData.variables.some(v => v.split('|')[0] === k)) {
                     webui.projectData.variables.push(`${k}|text|`);
                     needsProjectSync = true;
                 }
             });
+            let origProjStr = JSON.stringify(webui.projectData.variables);
+            webui.projectData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+            if (origProjStr !== JSON.stringify(webui.projectData.variables)) {
+                needsProjectSync = true;
+            }
             if (needsProjectSync) webui.proxy.syncProjectData();
+            if (webui.taskProxyData && webui.taskProxyData.variables) {
+                let origGlobStr = JSON.stringify(webui.taskProxyData.variables);
+                webui.taskProxyData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                if (origGlobStr !== JSON.stringify(webui.taskProxyData.variables)) {
+                    webui.proxy.saveAppData();
+                }
+            }
             const activeEnv = environments.find(e => e.name === activeEnvName) || environments[0];
             const activeProjectVars = activeEnv?.variables || {};
             const projectDefinitions = (webui.projectData?.variables || []).map(variableString => {
@@ -268,7 +282,7 @@
                     type: 'secret',
                     value: webui.taskProxyData?.data[d.key] || d.defaultValue
                 }));
-            const pageVars = (webui.currentPageVariables || []).map(k => ({
+            const pageVars = (webui.currentPageVariables || []).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).map(k => ({
                 key: k,
                 type: 'text',
                 value: webui.getData(k) || ''
@@ -423,6 +437,7 @@
                     if (!webui.projectData.variables) webui.projectData.variables = [];
                     if (!webui.projectData.variables.some(v => v.split('|')[0] === key)) {
                         webui.projectData.variables.push(`${key}|text|`);
+                        webui.projectData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                         webui.proxy.syncProjectData();
                         webui.setData('proj-var-name', '');
                         if (input) input.value = '';
@@ -441,6 +456,7 @@
                     if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
                     if (!webui.taskProxyData.variables.some(v => v.split('|')[0] === key)) {
                         webui.taskProxyData.variables.push(`${key}|text|`);
+                        webui.taskProxyData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                         webui.proxy.saveAppData();
                         webui.setData('glob-var-name', '');
                         if (input) input.value = '';

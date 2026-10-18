@@ -40,16 +40,32 @@
             t._iconSearch = t.template.querySelector('webui-icon-search');
             t.dataset.subscribe = "app-nav-routes:setNavRoutes";
             t._iconSearch.addEventListener('icon-update', ev => {
+                if (t._isBinding) return;
                 t._navIcon.value = ev.detail;
                 link.icon = ev.detail;
             });
             t._navPreview.addEventListener('nav-preview-click', async ev => {
                 ev.preventDefault();
                 ev.stopPropagation();
+                t._isBinding = true;
                 link = ev.detail;
+                t._navName.value = ev.detail.name || '';
+                t._iconSearch.setAttribute('value', link.icon || '');
+                t._iconSearch.value = link.icon || '';
                 await customElements.whenDefined('webui-icon-search');
-                t._iconSearch.setIconFromCode(ev.detail.icon);
-                t._navName.value = ev.detail.name;
+                const applyIconSettings = (attempts = 0) => {
+                    if (t._iconSearch && typeof t._iconSearch.setIconFromCode === 'function') {
+                        setTimeout(() => {
+                            t._iconSearch.setIconFromCode(link.icon || '');
+                            setTimeout(() => { t._isBinding = false; }, 300);
+                        }, attempts === 0 ? 150 : 0);
+                    } else if (attempts < 20) {
+                        setTimeout(() => applyIconSettings(attempts + 1), 50);
+                    } else {
+                        t._isBinding = false;
+                    }
+                };
+                applyIconSettings();
             });
             t._navName.addEventListener('input', ev => {
                 link.name = t._navName.value;
