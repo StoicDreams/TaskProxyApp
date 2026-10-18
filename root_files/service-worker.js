@@ -7,7 +7,7 @@ self.addEventListener('fetch', event => {
         url.protocol === 'tauri:' ||
         url.hostname === 'ipc.localhost' ||
         url.hostname === 'tauri.localhost' ||
-        url.hostname === '127.0.0.1' ||
+        url.hostname.startsWith('127') ||
         url.hostname === 'localhost'
     ) {
         return;
@@ -18,12 +18,9 @@ self.addEventListener('fetch', event => {
     if (!allowCache(event.request)) {
         return;
     }
-    if (!urlNeedsCaching(event.request.url)) {
-        return;
-    }
     event.respondWith(onFetch(event))
 });
-const currentVersion = '0.1.53';
+const currentVersion = '0.1.54';
 const cacheNamePrefix = 'offline-cache-';
 const cacheName = `${cacheNamePrefix}${currentVersion}`;
 async function onInstall(event) {
@@ -53,10 +50,6 @@ async function onFetch(event) {
         return cachedResponse;
     }
     return networkFetchPromise;
-}
-function urlNeedsCaching(url) {
-    if (url.startsWith('http://127.0.0.1:1426')) return false;
-    return true;
 }
 function applyCacheBusting(request) {
     try {
