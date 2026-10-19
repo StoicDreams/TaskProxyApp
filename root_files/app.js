@@ -64,11 +64,20 @@
                     }
                     if (isGlobal) {
                         webui.deleteProjectData('git_pat');
+                        if (webui.projectData.variables) {
+                            webui.projectData.variables = webui.projectData.variables.filter(v => v.split('|')[0] !== 'git_pat');
+                        }
                         await webui.proxy.saveProjectData();
+
                         webui.setGlobalData('git_pat', token);
                         await webui.proxy.saveAppData();
                     } else {
                         webui.setProjectData('git_pat', token);
+                        if (!webui.projectData.variables) webui.projectData.variables = [];
+                        if (!webui.projectData.variables.some(v => v.split('|')[0] === 'git_pat')) {
+                            webui.projectData.variables.push('git_pat|secret|');
+                            webui.projectData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                        }
                         await webui.proxy.saveProjectData();
                     }
                     resolve(true);
@@ -529,12 +538,22 @@
         }
         webui.setGlobalData = function (key, value) {
             webui.taskProxyData.data[key] = value;
+            if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
+            if (!webui.taskProxyData.variables.some(v => v.split('|')[0] === key)) {
+                webui.taskProxyData.variables.push(`${key}|secret|`);
+                webui.taskProxyData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+            }
         }
         webui.deleteProjectData = function(key) {
             delete webui.projectData.data[key];
         }
         webui.deleteGlobalData = function(key) {
             delete webui.taskProxyData.data[key];
+            if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
+            let index = webui.taskProxyData.variables.indexOf(key);
+            if (index !== -1) {
+                webui.taskProxyData.variables.splice(index, 1);
+            }
         }
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1) return;

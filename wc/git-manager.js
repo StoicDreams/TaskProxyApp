@@ -97,13 +97,13 @@
             let projPat = webui.projectData.data['git_pat'];
             let globPat = webui.taskProxyData.data['git_pat'];
             if (projPat) {
-                t._inputPat.value = '********';
+                t._inputPat.placeholder = projPat.length > 5 ? `${projPat.substring(0,3)}***${projPat.substring(projPat.length-3)}` : projPat;
                 t._dropdownPatScope.value = 'Project';
             } else if (globPat) {
-                t._inputPat.value = '********';
+                t._inputPat.placeholder = globPat.length > 5 ? `${globPat.substring(0,3)}***${globPat.substring(globPat.length-3)}` : globPat;
                 t._dropdownPatScope.value = 'Global';
             } else {
-                t._inputPat.value = '';
+                t._inputPat.placeholder = undefined;
             }
         },
         async loadRemoteStatus() {
@@ -468,9 +468,29 @@
             t._dropdownPatScope.value = 'Project';
             t._btnSavePat.addEventListener('click', async () => {
                 let token = t._inputPat.value.trim();
-                if (!token) return t.setAlert('Token cannot be empty.', 'warning');
-                if (token === '********') return t.setAlert('Please enter a new token to save.', 'info');
                 let scope = t._dropdownPatScope.value;
+                if (!token) {
+                    if (scope === 'Project') {
+                        if (!webui.getProjectData('git_pat')) return;
+                        webui.dialog.confirm(`Confirm you want to delete this project's PAT token.`, async () => {
+                            webui.deleteProjectData('git_pat');
+                            await webui.proxy.saveProjectData();
+                            t.loadExistingPat();
+                            t.setAlert('Project PAT successfully deleted.', 'success');
+                            return true;
+                        });
+                    } else {
+                        if (!webui.getGlobalData('git_pat')) return;
+                        webui.dialog.confirm(`Confirm you want to delete your global PAT token.`, async () => {
+                            webui.deleteGlobalData('git_pat');
+                            await webui.proxy.saveAppData();
+                            t.loadExistingPat();
+                            t.setAlert('Global PAT successfully deleted.', 'success');
+                            return true;
+                        });
+                    }
+                    return;
+                }
                 if (scope === 'Project') {
                     webui.setProjectData('git_pat', token);
                     await webui.proxy.saveProjectData();
@@ -480,7 +500,8 @@
                     webui.setGlobalData('git_pat', token);
                     await webui.proxy.saveAppData();
                 }
-                t._inputPat.value = '********';
+                t._inputPat.value = ''
+                t._inputPat.placeholder = token.length > 5 ? `${token.substring(0,3)}***${token.substring(token.length-3)}` : token;
                 t.setAlert(`PAT successfully saved to ${scope} scope.`, 'success');
             });
             t._btnCommit.addEventListener('click', async _ => {
