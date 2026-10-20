@@ -77,11 +77,7 @@
     </webui-flex>
     <webui-flex column style="min-height: 40vh;">
         <label style="font-weight: bold; margin-bottom: 0.25rem;">Console Output:</label>
-        <div id="term-console" style="
-            flex: 1; background: #111; color: #eee; padding: 0.5rem;
-            border-radius: 4px; overflow-y: auto; font-family: monospace;
-            border: 1px solid var(--site-background-offset, #444); min-height: 140px;
-        "></div>
+        <app-console-powershell id="term-console"></div>
     </webui-flex>
 </div>
 <div id="term-install-wrapper" style="display:none; flex-direction:column; gap:var(--padding); align-items:center; text-align:center; padding: 2rem;">
@@ -178,7 +174,7 @@
                         let state = webui.proxy.terminalHelpers.getState();
                         const data = ev.detail;
                         if (state.activeId === data.terminalId) {
-                            t.appendConsoleLine(data.content, data.isError);
+                            t._activeConsole.appendLine(data.content, data.isError);
                         }
                     });
                 }
@@ -228,36 +224,20 @@
         },
         renderConsole() {
             if (!this._activeConsole) return;
-            this._activeConsole.innerHTML = '';
+            this._activeConsole.clear();
             const state = webui.proxy.terminalHelpers.getState();
             const current = state.terminals[state.activeId];
             if (!current || !current.output.length) {
-                const placeholder = webui.create('div');
-                placeholder.style.color = 'var(--site-background-offset, #888)';
-                placeholder.style.fontStyle = 'italic';
-                placeholder.textContent = 'No terminal output.';
-                this._activeConsole.appendChild(placeholder);
+                this._activeConsole.showPlaceholder();
                 return;
             }
-            current.output.forEach(entry => this.appendConsoleLine(entry.text, entry.isError));
-        },
-        appendConsoleLine(text, isError) {
-            const t = this;
-            if (!t._activeConsole) return;
-            if (t._activeConsole.firstChild && t._activeConsole.firstChild.textContent === 'No terminal output.') {
-                t._activeConsole.innerHTML = '';
-            }
-            const line = webui.create('div');
-            line.textContent = text;
-            if (isError) line.style.color = 'var(--color-danger, #ff4d4d)';
-            t._activeConsole.appendChild(line);
-            t._activeConsole.scrollTop = this._activeConsole.scrollHeight;
+            current.output.forEach(entry => this._activeConsole.appendLine(entry.text, entry.isError));
         },
         onTerminalOutput(data) {
             if (!data) return;
             const state = webui.proxy.terminalHelpers.getState();
             if (state.activeId === data.terminalId) {
-                this.appendConsoleLine(data.content, data.isError);
+                this._activeConsole.appendLine(data.content, data.isError);
             }
         },
         onTerminalRefresh() {

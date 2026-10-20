@@ -2876,7 +2876,7 @@ const webui = (() => {
         currentPageUrl = url;
         const pageState = { appData: JSON.stringify(watchedAppData) };
         window.history.pushState(pageState, document.title, url);
-        loadPage(url);
+        loadPage();
     }
     function updateActivity() {
         lastActive = Date.now();
@@ -3150,6 +3150,14 @@ const webui = (() => {
         appSettings.app.main.classList.add("transition");
         webui.setData("page-path", page);
         let timerStart = Date.now();
+        let title = location.pathname;
+        let subTitle = undefined;
+        let navLink = webui.querySelector(`[url="${location.pathname}"]`)?.innerText;
+        let id = webui.uuid();
+        if (navLink) {
+            subTitle = location.pathname;
+            title = navLink.replace(/[-_]+/g, ' ').trim();
+        }
         try {
             let contentResult = await fetchContent;
             if (!contentResult.ok) {
@@ -3162,6 +3170,8 @@ const webui = (() => {
             }
             appSettings.app.setPageContent("", watchedAppData, fullContentUrl);
             clearPageData();
+            webui.setData('page-title', title);
+            webui.setData('page-subtitle', subTitle);
             if (body.startsWith(`<!DOCTYPE`)) {
                 let err = new Error(
                     `Invalid page content loaded from ${fullContentUrl}`,
@@ -3185,6 +3195,10 @@ const webui = (() => {
                 await transitionDelay(300 - elapsed);
             }
             clearPageData();
+            if (!navLink) {
+                webui.setData('page-title', 'Page Not Found');
+                webui.setData('page-subtitle', location.pathname);
+            }
             let fallbackHtml = webui.getData("app-not-found-html");
             if (!fallbackHtml) {
                 webui.log.error("Failed loading page content", ex);

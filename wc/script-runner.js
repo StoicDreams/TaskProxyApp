@@ -98,12 +98,13 @@
                 return;
             }
             let isFull = t._toggleFullPath.value === true || t._toggleFullPath.value === 'true';
-            let cmdPath = t._fileName;
+            let cmdPath = t._fileName.replace(/\\/g, '/');
             if (!isFull) {
-                let parts = t._fileName.split(/[\/\\]/);
-                cmdPath = `.\\${parts[parts.length - 1]}`;
+                if (!cmdPath.startsWith('./')) {
+                    cmdPath = `./${cmdPath}`;
+                }
             } else if (webui.projectData && webui.projectData.path) {
-                cmdPath = `${webui.projectData.path}/${t._fileName}`.replace(/\\/g, '/');
+                cmdPath = `${webui.projectData.path}/${cmdPath}`.replace(/\\/g, '/');
             }
             let cmd = cmdPath.includes(' ') ? `& "${cmdPath}"` : cmdPath;
             let params = Array.from(t._paramsContainer.children);

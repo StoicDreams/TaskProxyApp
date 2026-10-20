@@ -38,6 +38,13 @@ fn collect_scripts(current_path: &Path, root: &Path, scripts: &mut Vec<String>) 
                 .extension()
                 .map_or(false, |ext| ext.eq_ignore_ascii_case("ps1"))
             {
+                if path.file_name().map_or(false, |name| {
+                    let name_str = name.to_string_lossy();
+                    name_str.starts_with("taskproxy_tmp_")
+                        || name_str.starts_with("taskproxy_live_")
+                }) {
+                    continue;
+                }
                 if let Ok(relative_path) = path.strip_prefix(root) {
                     scripts.push(relative_path.to_string_lossy().into_owned());
                 }

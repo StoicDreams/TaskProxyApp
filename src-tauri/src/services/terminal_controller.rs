@@ -188,38 +188,49 @@ pub(crate) async fn start_script(
         }
         p_state.path.clone()
     };
-    let (script_path, working_dir) = if terminal_id == "live" {
-        let mut path = PathBuf::from(&project_path);
-        path.push(".taskproxy");
-        if !path.exists() {
-            let _ = fs::create_dir_all(&path);
-        }
-        (
-            path.join(format!("taskproxy_live_{}.ps1", Uuid::now_v7().simple())),
-            PathBuf::from(&project_path),
-        )
+    let working_dir = PathBuf::from(&project_path);
+    let candidate_path = working_dir.join(&terminal_id);
+    let is_existing_file = terminal_id != "live"
+        && !terminal_id.is_empty()
+        && !terminal_id.contains("..")
+        && Path::new(&terminal_id).is_relative()
+        && candidate_path.is_file();
+
+    let (script_path, is_temp_file) = if is_existing_file {
+        (candidate_path, false)
     } else {
-        let mut path = PathBuf::from(&project_path);
-        path.push(&terminal_id);
-        let parent = path
-            .parent()
-            .unwrap_or(Path::new(&project_path))
-            .to_path_buf();
-        if !parent.exists() {
-            let _ = fs::create_dir_all(&parent);
+        let temp_dir = working_dir.join(".taskproxy");
+        if !temp_dir.exists() {
+            let _ = fs::create_dir_all(&temp_dir);
         }
-        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-        (
-            parent.join(format!(
+        let temp_path = if terminal_id == "live" {
+            temp_dir.join(format!("taskproxy_live_{}.ps1", Uuid::now_v7().simple()))
+        } else {
+            let safe_name: String = terminal_id
+                .chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let file_name = if safe_name.to_lowercase().ends_with(".ps1") {
+                safe_name
+            } else {
+                format!("{}.ps1", safe_name)
+            };
+            temp_dir.join(format!(
                 "taskproxy_tmp_{}_{}",
                 Uuid::now_v7().simple(),
                 file_name
-            )),
-            parent,
-        )
+            ))
+        };
+        fs::write(&temp_path, script_content)
+            .map_err(|e| format!("Failed to write temp script: {}", e))?;
+        (temp_path, true)
     };
-    fs::write(&script_path, script_content)
-        .map_err(|e| format!("Failed to write temp script: {}", e))?;
     if in_separate_window {
         let mut child_opt = None;
         #[cfg(target_os = "windows")]
@@ -227,6 +238,7 @@ pub(crate) async fn start_script(
             let mut cmd = AsyncCommand::new("cmd.exe");
             cmd.arg("/c")
                 .arg("start")
+                .arg("")
                 .arg(&executable)
                 .arg("-NoExit")
                 .arg("-ExecutionPolicy")
@@ -296,14 +308,15 @@ pub(crate) async fn start_script(
         }
         #[cfg(target_os = "macos")]
         {
-            let script_str = script_path.to_string_lossy();
+            let work_dir_str = working_dir.to_string_lossy().replace("'", "'\\''");
+            let script_str = script_path.to_string_lossy().replace("'", "'\\''");
             let mut escaped_args = String::new();
             for arg in &args {
                 escaped_args.push_str(&format!(" \\\"{}\\\"", arg.replace("\"", "\\\"")));
             }
             let apple_script = format!(
-                "tell application \"Terminal\"\n\tactivate\n\tdo script \"'{}' -NoExit -ExecutionPolicy Bypass -File '{}'{}\"\nend tell",
-                executable, script_str, escaped_args
+                "tell application \"Terminal\"\n\tactivate\n\tdo script \"cd '{}' && '{}' -NoExit -ExecutionPolicy Bypass -File '{}'{}\"\nend tell",
+                work_dir_str, executable, script_str, escaped_args
             );
             let mut cmd = AsyncCommand::new("osascript");
             cmd.arg("-e").arg(&apple_script);
@@ -314,12 +327,14 @@ pub(crate) async fn start_script(
             );
         }
         if let Some(mut child) = child_opt {
-            let cleanup_path = script_path.clone();
-            tokio::spawn(async move {
-                let _ = child.wait().await;
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                let _ = fs::remove_file(&cleanup_path);
-            });
+            if is_temp_file {
+                let cleanup_path = script_path.clone();
+                tokio::spawn(async move {
+                    let _ = child.wait().await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    let _ = fs::remove_file(&cleanup_path);
+                });
+            }
         }
         return Ok("Script launched in separate OS window.".into());
     }
@@ -375,9 +390,9 @@ pub(crate) async fn start_script(
     let t_id_wait = terminal_id.clone();
     let app_wait = app_handle.clone();
     let state_arc = state.processes.clone();
-    let path_to_remove = script_path.clone();
+    let path_to_remove = is_temp_file.then(|| script_path.clone());
     let handle = tokio::spawn(async move {
-        let _cleanup = TempFileCleanup(path_to_remove);
+        let _cleanup = path_to_remove.map(TempFileCleanup);
         let status = child.wait().await.ok();
         let _ = app_wait.emit(
             "terminal-finished",

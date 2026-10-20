@@ -21,19 +21,15 @@
         async connected() {
             const t = this;
             await webui.wait(() => !!webui.proxy);
-            console.log('connected');
             webui.proxy.projects.runWhenLoaded(async () => {
-                console.log('loaded');
                 await t.fetchData();
             });
         },
         async fetchData() {
             const t = this;
-            console.log('fetch', t._filter, t._triggerKey);
             if (!t._filter || !t._triggerKey) return;
             try {
                 let options = await webui.proxy.searchProjectFiles(t._filter, t._display);
-                console.log('options', options);
                 if (options) {
                     t._triggerKey.split('|').forEach(k => {
                         let key = k.split(':')[0].trim();
