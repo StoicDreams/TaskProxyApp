@@ -163,6 +163,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          name: taskproxyartifactswindows
       - name: Debug output bundle contents
         run: ls -laR bundle
       - name: SFTP upload
@@ -181,6 +183,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          name: taskproxyartifactsmac
       - name: Debug output bundle contents
         run: ls -laR bundle
       - name: SFTP upload
@@ -199,6 +203,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          name: taskproxyartifactsubuntu
       - name: Debug output bundle contents
         run: ls -laR bundle
       - name: SFTP upload
