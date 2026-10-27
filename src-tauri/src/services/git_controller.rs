@@ -148,8 +148,12 @@ pub(crate) async fn git_pull(
         let callbacks = create_remote_callbacks(app_handle_clone);
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
+        let refspec = format!(
+            "+refs/heads/{}:refs/remotes/origin/{}",
+            branch_name, branch_name
+        );
         remote
-            .fetch(&[branch_name], Some(&mut fetch_options), None)
+            .fetch(&[&refspec], Some(&mut fetch_options), None)
             .map_err(|e| {
                 if e.message().contains("Credentials Missing/Invalid") {
                     String::from("Credentials Missing/Invalid")
@@ -157,8 +161,10 @@ pub(crate) async fn git_pull(
                     e.to_string()
                 }
             })?;
+        let remote_ref_name = format!("refs/remotes/origin/{}", branch_name);
         let fetch_head = repository
-            .find_reference("FETCH_HEAD")
+            .find_reference(&remote_ref_name)
+            .or_else(|_| repository.find_reference("FETCH_HEAD"))
             .map_err(|e| e.to_string())?;
         let fetch_commit = repository
             .reference_to_annotated_commit(&fetch_head)
@@ -312,20 +318,21 @@ pub(crate) async fn git_commit(
 ) -> Result<String, String> {
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
-        if files.is_empty() {
-            return Err(String::from("No files provided to commit."));
-        }
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
+        let merge_head_path = repository.path().join("MERGE_HEAD");
+        let is_merging = merge_head_path.exists();
         let mut index = repository.index().map_err(|e| e.to_string())?;
-        if let Ok(head) = repository.head() {
-            if let Ok(tree) = head.peel_to_tree() {
-                let _ = index.read_tree(&tree);
+        if !is_merging {
+            if let Ok(head) = repository.head() {
+                if let Ok(tree) = head.peel_to_tree() {
+                    let _ = index.read_tree(&tree);
+                }
+            } else {
+                let _ = index.clear();
             }
-        } else {
-            let _ = index.clear();
         }
-        for file in files {
-            let file_path = Path::new(&file);
+        for file in &files {
+            let file_path = Path::new(file);
             if git_path.join(file_path).exists() {
                 index
                     .add_path(file_path)
@@ -334,21 +341,65 @@ pub(crate) async fn git_commit(
                 let _ = index.remove_path(file_path);
             }
         }
+        if is_merging && index.has_conflicts() {
+            let conflicts: Vec<PathBuf> = index
+                .conflicts()
+                .map_err(|e| e.to_string())?
+                .flatten()
+                .filter_map(|c| {
+                    c.our
+                        .or(c.their)
+                        .or(c.ancestor)
+                        .and_then(|entry| String::from_utf8(entry.path).ok())
+                        .map(PathBuf::from)
+                })
+                .collect();
+            for rel_path in conflicts {
+                let full_path = git_path.join(&rel_path);
+                if full_path.exists() {
+                    if let Ok(content) = fs::read_to_string(&full_path) {
+                        if content.contains("<<<<<<<")
+                            && content.contains("=======")
+                            && content.contains(">>>>>>>")
+                        {
+                            return Err(format!(
+                                "Conflict markers still present in {}",
+                                rel_path.display()
+                            ));
+                        }
+                    }
+                    index
+                        .add_path(&rel_path)
+                        .map_err(|e| format!("Failed to stage resolved file: {}", e))?;
+                } else {
+                    let _ = index.remove_path(&rel_path);
+                }
+            }
+        }
         index.write().map_err(|e| e.to_string())?;
         let oid = index.write_tree().map_err(|e| e.to_string())?;
         let signature = repository
             .signature()
             .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
             .map_err(|e| e.to_string())?;
-        let parent_commit = match repository.head() {
-            Ok(head) => Some(head.peel_to_commit().map_err(|e| e.to_string())?),
-            Err(_) => None,
-        };
-        let tree = repository.find_tree(oid).map_err(|e| e.to_string())?;
-        let mut parents = Vec::new();
-        if let Some(ref parent) = parent_commit {
-            parents.push(parent);
+        let mut parent_commits = Vec::new();
+        if let Ok(head) = repository.head() {
+            if let Ok(commit) = head.peel_to_commit() {
+                parent_commits.push(commit);
+            }
         }
+        if is_merging {
+            let merge_head_content = fs::read_to_string(&merge_head_path).unwrap_or_default();
+            for line in merge_head_content.lines() {
+                if let Ok(oid) = git2::Oid::from_str(line.trim()) {
+                    if let Ok(commit) = repository.find_commit(oid) {
+                        parent_commits.push(commit);
+                    }
+                }
+            }
+        }
+        let tree = repository.find_tree(oid).map_err(|e| e.to_string())?;
+        let parents: Vec<&git2::Commit> = parent_commits.iter().collect();
         repository
             .commit(
                 Some("HEAD"),
@@ -359,6 +410,9 @@ pub(crate) async fn git_commit(
                 &parents,
             )
             .map_err(|e| e.to_string())?;
+        if is_merging {
+            let _ = repository.cleanup_state();
+        }
         Ok(String::from("Commit successful."))
     })
     .await;
@@ -391,31 +445,35 @@ pub(crate) async fn get_git_changes(
                 continue;
             }
             let mut status_str = String::with_capacity(2);
-            if status.contains(git2::Status::INDEX_NEW) {
-                status_str.push('A');
-            } else if status.contains(git2::Status::INDEX_MODIFIED) {
-                status_str.push('M');
-            } else if status.contains(git2::Status::INDEX_DELETED) {
-                status_str.push('D');
-            } else if status.contains(git2::Status::INDEX_RENAMED) {
-                status_str.push('R');
+            if status.contains(git2::Status::CONFLICTED) {
+                status_str = "C ".to_string();
             } else {
-                status_str.push(' ');
-            }
-            if status.contains(git2::Status::WT_NEW) {
-                if status_str == " " {
-                    status_str = "??".to_string();
+                if status.contains(git2::Status::INDEX_NEW) {
+                    status_str.push('A');
+                } else if status.contains(git2::Status::INDEX_MODIFIED) {
+                    status_str.push('M');
+                } else if status.contains(git2::Status::INDEX_DELETED) {
+                    status_str.push('D');
+                } else if status.contains(git2::Status::INDEX_RENAMED) {
+                    status_str.push('R');
                 } else {
-                    status_str.push('?');
+                    status_str.push(' ');
                 }
-            } else if status.contains(git2::Status::WT_MODIFIED) {
-                status_str.push('M');
-            } else if status.contains(git2::Status::WT_DELETED) {
-                status_str.push('D');
-            } else if status.contains(git2::Status::WT_RENAMED) {
-                status_str.push('R');
-            } else if status_str != "??" {
-                status_str.push(' ');
+                if status.contains(git2::Status::WT_NEW) {
+                    if status_str == " " {
+                        status_str = "??".to_string();
+                    } else {
+                        status_str.push('?');
+                    }
+                } else if status.contains(git2::Status::WT_MODIFIED) {
+                    status_str.push('M');
+                } else if status.contains(git2::Status::WT_DELETED) {
+                    status_str.push('D');
+                } else if status.contains(git2::Status::WT_RENAMED) {
+                    status_str.push('R');
+                } else if status_str != "??" {
+                    status_str.push(' ');
+                }
             }
             let path_val = if status.contains(git2::Status::INDEX_RENAMED)
                 || status.contains(git2::Status::WT_RENAMED)
@@ -571,9 +629,22 @@ pub(crate) async fn git_switch_branch(
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
         let mut checkout_builder = git2::build::CheckoutBuilder::default();
         checkout_builder.force();
-        if let Ok(branch_obj) = repository.find_branch(&branch, git2::BranchType::Local) {
-            let refname = branch_obj.get().name().unwrap();
-            repository.set_head(refname).map_err(|e| e.to_string())?;
+        if let Ok(mut branch_obj) = repository.find_branch(&branch, git2::BranchType::Local) {
+            if branch_obj.upstream().is_err() {
+                let upstream_candidate = format!("origin/{}", branch);
+                if repository
+                    .find_branch(&upstream_candidate, git2::BranchType::Remote)
+                    .is_ok()
+                {
+                    let _ = branch_obj.set_upstream(Some(&upstream_candidate));
+                }
+            }
+            let refname = branch_obj
+                .get()
+                .name()
+                .ok_or("Invalid local branch reference")?
+                .to_string();
+            repository.set_head(&refname).map_err(|e| e.to_string())?;
             repository
                 .checkout_head(Some(&mut checkout_builder))
                 .map_err(|e| e.to_string())?;
@@ -582,15 +653,19 @@ pub(crate) async fn git_switch_branch(
                 .get()
                 .peel_to_commit()
                 .map_err(|e| e.to_string())?;
-            let local_name = branch.split('/').last().unwrap_or(&branch);
+            let local_name = branch.splitn(2, '/').nth(1).unwrap_or(&branch);
             let mut local_branch = repository
-                .branch(local_name, &commit, false)
+                .branch(local_name, &commit, true)
                 .map_err(|e| e.to_string())?;
-            if let Some(remote_name) = branch_obj.get().name() {
-                let _ = local_branch.set_upstream(Some(remote_name));
+            if let Ok(Some(remote_shorthand)) = branch_obj.name() {
+                let _ = local_branch.set_upstream(Some(remote_shorthand));
             }
-            let refname = local_branch.get().name().unwrap();
-            repository.set_head(refname).map_err(|e| e.to_string())?;
+            let refname = local_branch
+                .get()
+                .name()
+                .ok_or("Invalid local branch reference")?
+                .to_string();
+            repository.set_head(&refname).map_err(|e| e.to_string())?;
             repository
                 .checkout_head(Some(&mut checkout_builder))
                 .map_err(|e| e.to_string())?;
@@ -692,9 +767,29 @@ pub(crate) async fn git_merge_branch(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let reference = repository
+        let mut reference = repository
             .resolve_reference_from_short_name(&branch)
             .map_err(|e| e.to_string())?;
+        if !branch.contains('/') {
+            let remote_branch_name = format!("origin/{}", branch);
+            if let Ok(remote_ref) =
+                repository.resolve_reference_from_short_name(&remote_branch_name)
+            {
+                if let (Some(local_oid), Some(remote_oid)) =
+                    (reference.target(), remote_ref.target())
+                {
+                    if local_oid != remote_oid {
+                        if let Ok((_ahead, behind)) =
+                            repository.graph_ahead_behind(local_oid, remote_oid)
+                        {
+                            if behind > 0 {
+                                reference = remote_ref;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let fetch_commit = reference.peel_to_commit().map_err(|e| e.to_string())?;
         let annotated_commit = repository
             .reference_to_annotated_commit(&reference)
@@ -702,12 +797,12 @@ pub(crate) async fn git_merge_branch(
         let analysis = repository
             .merge_analysis(&[&annotated_commit])
             .map_err(|e| e.to_string())?;
-
         if analysis.0.is_up_to_date() {
             Ok(String::from("Already up to date."))
         } else if analysis.0.is_fast_forward() {
-            let mut head_ref = repository.head().map_err(|e| e.to_string())?;
-            head_ref
+            let head_ref = repository.head().map_err(|e| e.to_string())?;
+            let mut target_ref = head_ref.resolve().map_err(|e| e.to_string())?;
+            target_ref
                 .set_target(fetch_commit.id(), "Fast-Forward")
                 .map_err(|e| e.to_string())?;
             repository
@@ -720,21 +815,18 @@ pub(crate) async fn git_merge_branch(
             repository
                 .merge(&[&annotated_commit], None, Some(&mut checkout_builder))
                 .map_err(|e| e.to_string())?;
-
             let mut index = repository.index().map_err(|e| e.to_string())?;
             if index.has_conflicts() {
                 return Err(String::from(
                     "Merge resulted in conflicts. Please resolve them manually in your editor.",
                 ));
             }
-
             let oid = index.write_tree().map_err(|e| e.to_string())?;
             let tree = repository.find_tree(oid).map_err(|e| e.to_string())?;
             let signature = repository
                 .signature()
                 .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
                 .map_err(|e| e.to_string())?;
-
             let head_commit = repository
                 .head()
                 .map_err(|e| e.to_string())?
@@ -747,7 +839,6 @@ pub(crate) async fn git_merge_branch(
                 .unwrap_or("HEAD")
                 .to_string();
             let message = format!("Merge branch '{}' into '{}'", branch, head_name);
-
             repository
                 .commit(
                     Some("HEAD"),
@@ -758,7 +849,6 @@ pub(crate) async fn git_merge_branch(
                     &[&head_commit, &fetch_commit],
                 )
                 .map_err(|e| e.to_string())?;
-
             repository.cleanup_state().map_err(|e| e.to_string())?;
             Ok(String::from("Merge successful."))
         } else {

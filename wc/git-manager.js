@@ -201,7 +201,10 @@
                 }
                 let changeType = 'Modify';
                 let theme = 'info';
-                if (status === '??' || status.includes('A')) {
+                if (status.includes('C')) {
+                    changeType = 'Conflict';
+                    theme = 'warning';
+                } else if (status === '??' || status.includes('A')) {
                     changeType = 'Add';
                     theme = 'success';
                 } else if (status.includes('D')) {
@@ -517,10 +520,6 @@
                         files.push(item.fileName);
                     }
                 });
-                if (files.length === 0) {
-                    t.setAlert('There are no files to commit!');
-                    return;
-                }
                 let repo = t._repos.value;
                 if (repo === undefined) {
                     t.setAlert('No repo is set!');
