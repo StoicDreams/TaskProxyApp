@@ -163,6 +163,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@v4
+      - name: Debug output bundle contents
+        run: ls -laR bundle
       - name: SFTP upload
         uses: appleboy/scp-action@master
         with:
@@ -170,7 +172,7 @@ jobs:
           username: ${{ secrets.CDN_SERVER_USER }}
           password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
-          source: "bundle/"
+          source: "bundle"
           target: "${{ secrets.CDN_APP_PATH }}/task-proxy/win/${{ env.VERSION }}/"
           strip_components: 1
   publish-tauri-mac:
@@ -179,6 +181,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
+      - name: Debug output bundle contents
+        run: ls -laR bundle
       - name: SFTP upload
         uses: appleboy/scp-action@master
         with:
@@ -186,7 +190,7 @@ jobs:
           username: ${{ secrets.CDN_SERVER_USER }}
           password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
-          source: "bundle/"
+          source: "bundle"
           target: "${{ secrets.CDN_APP_PATH }}/task-proxy/mac/${{ env.VERSION }}/"
           strip_components: 1
   publish-tauri-ubuntu:
@@ -195,6 +199,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
+      - name: Debug output bundle contents
+        run: ls -laR bundle
       - name: SFTP upload
         uses: appleboy/scp-action@master
         with:
@@ -202,7 +208,7 @@ jobs:
           username: ${{ secrets.CDN_SERVER_USER }}
           password: ${{ secrets.CDN_SERVER_PW }}
           port: ${{ secrets.CDN_SERVER_PORT }}
-          source: "bundle/"
+          source: "bundle"
           target: "${{ secrets.CDN_APP_PATH }}/task-proxy/ubu/${{ env.VERSION }}/"
           strip_components: 1
   cdn-update-app-catalog:
