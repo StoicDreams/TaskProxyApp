@@ -42,8 +42,9 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
-    "copyright": "2025 Stoic Dreams",
+    "copyright": "2026 Stoic Dreams",
     "category": "DeveloperTool",
     "shortDescription": "Dev Doc/Script/Workflow Organizer",
     "longDescription": "Developer tool for organizing developer documentation, scripts, and workflows",
