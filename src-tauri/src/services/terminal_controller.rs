@@ -264,6 +264,7 @@ pub(crate) async fn start_script(
             ];
             for term in terminal_emulators {
                 let mut cmd = AsyncCommand::new(term);
+                cmd.env_remove("LD_LIBRARY_PATH");
                 match term {
                     "konsole" => {
                         cmd.arg("-e")

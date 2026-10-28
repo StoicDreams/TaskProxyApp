@@ -5,6 +5,8 @@ use std::os::windows::process::CommandExt;
 
 pub(crate) fn create_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
+    #[cfg(target_os = "linux")]
+    cmd.env_remove("LD_LIBRARY_PATH");
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // 0x08000000 is the CREATE_NO_WINDOW flag
     cmd
