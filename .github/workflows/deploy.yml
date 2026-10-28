@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.57
+  VERSION: 0.1.58
   ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
 jobs:
@@ -99,7 +99,7 @@ jobs:
           tagName: app-v__VERSION__
           releaseName: "App v__VERSION__"
           releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
       - name: Save Mac files to artifact
         uses: actions/upload-artifact@v4
@@ -149,7 +149,7 @@ jobs:
           tagName: app-v__VERSION__
           releaseName: "App v__VERSION__"
           releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: true
       - name: Save Ubuntu files to artifact
         uses: actions/upload-artifact@v4
