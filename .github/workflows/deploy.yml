@@ -36,7 +36,7 @@ jobs:
           Install-Module -Name TrustedSigning
       - name: build executable
         run: |
-          cargo tauri build
+          cargo tauri build --no-bundle
       - name: sign executable
         if: true
         run: |
