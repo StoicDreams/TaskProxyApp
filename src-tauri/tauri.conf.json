@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Task Proxy",
-  "version": "0.1.60",
+  "version": "0.1.61",
   "identifier": "com.stoic-dreams.task-proxy",
   "build": {
     "beforeDevCommand": "trunk serve",
@@ -30,7 +30,7 @@
         "devtools": true,
         "minHeight": 600,
         "minWidth": 800,
-        "userAgent": "Task Proxy/0.1.60",
+        "userAgent": "Task Proxy/0.1.61",
         "url": "/",
         "label": "taskproxy",
         "titleBarStyle": "Visible"
@@ -56,9 +56,21 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "allowDowngrades": true,
+      "allowDowngrades": false,
       "webviewInstallMode": {
         "type": "offlineInstaller"
+      },
+      "signCommand": {
+        "cmd": "pwsh",
+        "args": [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "sign-windows.ps1",
+          "%1"
+        ]
       }
     },
     "macOS": {
