@@ -6,7 +6,6 @@
         constructor() {
             const t = this;
             t._fileSelector = t.template.querySelector('webui-dropdown[label="Script"]');
-            t._message = t.template.querySelector('webui-input-message');
             t._runner = t.template.querySelector('app-script-runner');
             t._btnNew = t.template.querySelector('webui-button[label="New Script"]');
         },
@@ -25,7 +24,7 @@
                 } else if (options.length > 0) {
                     t.loadScript(t._fileSelector.value);
                 } else {
-                    t._message.value = '';
+                    t._runner.setScript('', '');
                 }
             });
         },

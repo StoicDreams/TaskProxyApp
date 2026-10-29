@@ -126,6 +126,10 @@
                 }
             };
         }
+        getVersion(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('get_version', {}).catch(errHandler);
+        }
         loading = {
             show: showLoading,
             hide: hideLoading
@@ -470,6 +474,8 @@
         };
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
+        let version = await webui.proxy.getVersion();
+        if (version) webui.setData('app-version', `v${version}`);
         let data = await webui.proxy.getAppData();
         webui.taskProxyData = data;
         let keysDeleted = false;

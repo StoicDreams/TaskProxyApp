@@ -201,6 +201,7 @@ pub fn run() {
             services::terminal_controller::kill_all_scripts,
             services::terminal_controller::get_powershell_status,
             services::terminal_controller::auto_install_powershell,
+            services::updates::get_version,
             services::updates::check_update,
             services::updates::install_update,
         ])

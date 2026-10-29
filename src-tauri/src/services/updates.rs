@@ -1,6 +1,13 @@
 use tauri_plugin_updater::UpdaterExt;
 
 #[tauri::command]
+pub(crate) fn get_version(app: tauri::AppHandle, window: tauri::WebviewWindow) -> String {
+    let version = app.package_info().version.to_string();
+    let _ = window.set_title(&format!("Task Proxy - v{}", version));
+    version
+}
+
+#[tauri::command]
 pub(crate) async fn check_update(app: tauri::AppHandle) -> Result<bool, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update_check = updater.check().await.map_err(|e| e.to_string())?;

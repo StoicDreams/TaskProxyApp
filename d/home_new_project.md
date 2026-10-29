@@ -55,3 +55,9 @@ NOTE: Once you have set your first project with a new key, any projects set with
 </webui-page-segment>
 
 <app-security-key-setter></app-security-key-setter>
+
+## Application Updates
+
+<webui-page-segment>
+<app-update-manager></app-update-manager>
+</webui-page-segment>
