@@ -12,7 +12,37 @@
     let dragNDrop = getDragNDropSetup((_) => segments);
     let segments = [];
     let pageScripts = [];
+    let pageDataComponent = '';
     webui.currentPageVariables = [];
+    let onTitleClick = () => {
+        webui.dialog({
+            title: 'Edit Page Title',
+            content: `<webui-flex column gap="var(--padding)">
+                <webui-input-text name="pageTitle" label="Page Title" value="${webui.escapeForHTML(webui.getData('page-title') || '')}"></webui-input-text>
+                <webui-input-text name="pageSubtitle" label="Page Subtitle" value="${webui.escapeForHTML(webui.getData('page-subtitle') || '')}"></webui-input-text>
+            </webui-flex>`,
+            confirm: 'Save',
+            cancel: 'Cancel',
+            onconfirm: (data) => {
+                let form = Object.fromEntries(data);
+                webui.setData('page-title', form.pageTitle || '');
+                webui.setData('page-subtitle', form.pageSubtitle || '');
+                pageDataComponent = `<webui-data data-page-title="${webui.escapeForHTML(form.pageTitle || '')}" data-page-subtitle="${webui.escapeForHTML(form.pageSubtitle || '')}"></webui-data>`;
+                if (myFile) {
+                    let md = [pageDataComponent];
+                    comp.querySelectorAll('app-markdown-segment').forEach(segment => {
+                        if (segment.parentNode !== comp) return;
+                        let markdown = segment.getMarkdown();
+                        if (markdown) {
+                            md.push(markdown);
+                        }
+                    });
+                    webui.proxy.saveProjectFile(myFile, md.join('\n\n').trim());
+                }
+                return true;
+            }
+        });
+    };
     async function loadProject() {
         myId = location.pathname.substring(1);
         myFile = `.taskproxy/pages/${myId}.md`;
@@ -38,6 +68,9 @@
         btnSave.addEventListener('click', async _ => {
             if (!myFile) return;
             let md = [];
+            if (pageDataComponent) {
+                md.push(pageDataComponent);
+            }
             comp.querySelectorAll('app-markdown-segment').forEach(segment => {
                 if (segment.parentNode !== comp) return;
                 let markdown = segment.getMarkdown();
@@ -71,16 +104,27 @@
     let bottomBar = setupBar(true);
     function setMarkdown(md) {
         if (!comp) return;
-        markdown = md;
+        let mdTrimmed = md.trim();
+        let webuiDataRegex = /^<webui-data[\s\S]*?<\/webui-data>/i;
+        let match = mdTrimmed.match(webuiDataRegex);
+        if (match) {
+            pageDataComponent = match[0];
+            markdown = mdTrimmed.substring(pageDataComponent.length).trim();
+        } else {
+            pageDataComponent = `<webui-data data-page-title="${webui.escapeForHTML(webui.getData('page-title') || '')}" data-page-subtitle="${webui.escapeForHTML(webui.getData('page-subtitle') || '')}"></webui-data>`;
+            markdown = mdTrimmed;
+        }
         comp.innerHTML = '';
+        let hiddenDataNode = webui.create('div', { style: 'display:none;', html: pageDataComponent });
+        comp.appendChild(hiddenDataNode);
         webui.currentPageVariables.forEach(key => webui.setData(key, undefined));
         webui.currentPageVariables = [];
         const reservedAttrs = ['bind', 'trigger', 'subscribe', 'default', 'state', 'hide', 'toggleclass', 'removeclass', 'setattr', 'toggleattr', 'stopclick', 'click', 'markdown', 'options', 'name', 'title', 'value', 'param'];
         const dataRegex = /data-([a-zA-Z0-9-]+)="([^"]*)"/g;
-        let match;
-        while ((match = dataRegex.exec(md)) !== null) {
-            const attrName = match[1];
-            const attrValue = match[2];
+        let dMatch;
+        while ((dMatch = dataRegex.exec(md)) !== null) {
+            const attrName = dMatch[1];
+            const attrValue = dMatch[2];
             if (attrName === 'bind' || attrName === 'trigger') {
                 attrValue.split('|').forEach(bk => {
                     let bindKey = bk.split(':')[0].trim();
@@ -92,7 +136,6 @@
                 continue;
             }
             if (reservedAttrs.includes(attrName)) continue;
-            // Prevent overwriting internal webui-data routing properties like page-title
             if (attrName.startsWith('page-') || attrName.startsWith('app-') || attrName.startsWith('session-')) continue;
             if (!webui.currentPageVariables.includes(attrName)) {
                 webui.currentPageVariables.push(attrName);
@@ -128,7 +171,7 @@
             });
         }
         pageScripts = [];
-        const scriptRegex = /```(?:powershell|ps1)\n([\s\S]*?)```/gi;
+        const scriptRegex = /```(?:powershell|pwsh|ps1)\n([\s\S]*?)```/gi;
         const varRegex = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
         const ignoreVars = ['null', 'true', 'false', '_'];
         let scriptMatch;
@@ -440,6 +483,18 @@
                     }, 50);
                 }
             });
+            t._headerTitle = document.querySelector('header h1[data-subscribe="page-title:innerHTML"]');
+            t._headerSubtitle = document.querySelector('header h2[data-subscribe="page-subtitle:innerHTML"]');
+            if (t._headerTitle) {
+                t._headerTitle.addEventListener('click', onTitleClick);
+                t._headerTitle.style.cursor = 'pointer';
+                t._headerTitle.setAttribute('title', 'Edit Page Title');
+            }
+            if (t._headerSubtitle) {
+                t._headerSubtitle.addEventListener('click', onTitleClick);
+                t._headerSubtitle.style.cursor = 'pointer';
+                t._headerSubtitle.setAttribute('title', 'Edit Page Title');
+            }
             let project = webui.getData('app-current-project');
             if (project && project.value) {
                 loadProject();
@@ -454,11 +509,22 @@
                 sharedDrawerObserver.disconnect();
                 sharedDrawerObserver = null;
             }
+            if (t._headerTitle) {
+                t._headerTitle.removeEventListener('click', onTitleClick);
+                t._headerTitle.style.cursor = '';
+                t._headerTitle.removeAttribute('title');
+            }
+            if (t._headerSubtitle) {
+                t._headerSubtitle.removeEventListener('click', onTitleClick);
+                t._headerSubtitle.style.cursor = '';
+                t._headerSubtitle.removeAttribute('title');
+            }
             //comp = null;
             markdown = '';
             myId = '';
             myFile = '';
             segments = [];
+            pageDataComponent = '';
         }
     });
 }

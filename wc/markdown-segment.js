@@ -31,6 +31,7 @@
             const t = this;
             t._content = t.template.querySelector('webui-content');
             t._btnEdit = t.template.querySelector('aside webui-button');
+            t._btnUndo = t.template.querySelector('#btn-undo');
             t._inputMessage = t.template.querySelector('webui-input-message');
             t._inputText = t.template.querySelector('webui-input-text');
             t._options = t.template.querySelector('webui-dropdown');
@@ -68,9 +69,24 @@
             t._options.setOptions(segmentOptions);
             let md = t.dataset.markdown;
             t.setMarkdown(md || '');
+            const liveUpdate = () => {
+                if (!t._isEditing) return;
+                let markdown = t.buildFinalMarkdown();
+                switch (t._inputType) {
+                    case inputTypes.SPECIAL:
+                        t._content.setHtml('TODO: Implement Special Displays');
+                        break;
+                    default:
+                        t._content.setHtml(webui.applyAppDataToContent(markdown));
+                        break;
+                }
+            };
+            t._inputMessage.addEventListener('input', liveUpdate);
+            t._inputText.addEventListener('input', liveUpdate);
             t._btnEdit.addEventListener('click', _ => {
                 t._isEditing = !t._isEditing;
                 if (t._isEditing) {
+                    t._originalMarkdown = t.getMarkdown();
                     t.classList.add('isEditing');
                 } else {
                     t.classList.remove('isEditing');
@@ -78,12 +94,17 @@
                     t.setMarkdown(markdown);
                 }
             });
+            t._btnUndo.addEventListener('click', _ => {
+                if (!t._isEditing) return;
+                t._isEditing = false;
+                t.classList.remove('isEditing');
+                t.setMarkdown(t._originalMarkdown);
+            });
             t._options.addEventListener('change', ev => {
                 if (t._currentOption !== t._options.value) {
                     t._currentOption = t._options.value;
                     t.setInputType(getOption(t._currentOption).inputType);
-                    let markdown = t.buildFinalMarkdown();
-                    t.setMarkdown(markdown);
+                    liveUpdate();
                 }
             });
         },
@@ -176,7 +197,11 @@
         },
         getMarkdown() {
             const t = this;
-            return t._inputType === inputTypes.DELETE ? null : t._markdown;
+            if (t._inputType === inputTypes.DELETE) return null;
+            if (t._isEditing) {
+                return t.buildFinalMarkdown();
+            }
+            return t._markdown;
         },
         async render() {
             const t = this;
@@ -194,61 +219,78 @@
         shadowTemplate: `
 <style type="text/css">
 :host {
-display:grid;
-grid-template-columns:1fr max-content;
-align-items:start;
+display: flex;
+align-items: stretch;
 position: relative;
-overflow:auto;
-width:100%;
+width: 100%;
 }
 aside {
-visibility:hidden;
+display: flex;
+flex-direction: column;
+gap: 4px;
+flex: 0 0 36px;
+margin-right: var(--padding);
 }
-:host(:hover) aside {
-display:flex;
-flex-direction:column;
-visibility:visible;
+aside webui-button {
+flex-grow: 1;
+min-height: 36px;
 }
+#btn-undo { display: none; }
+:host(.isEditing) #btn-undo { display: inline-flex; }
 :host div.content {
-position:relative;
-display:grid;
-grid-template-columns:1fr;
+position: relative;
+display: grid;
+grid-template-columns: 1fr;
+flex: 1 1 0%;
+min-width: 0;
 }
 :host(.isEditing) div.content {
-grid-template-columns:1fr 1fr;
+grid-template-columns: 1fr 1fr;
+gap: var(--padding);
 }
 :host div.input {
-display:grid;
-align-items:start;
-grid-template-columns:1fr max-content;
-position:relative;
-width:100%;
-min-height:100%;
-z-index:1;
-top:0;
-left:0;
+display: flex;
+flex-direction: column;
+align-items: stretch;
+gap: var(--padding);
+position: relative;
+width: 100%;
+min-height: 100%;
+z-index: 1;
+top: 0;
+left: 0;
 }
 :host(:not(.isEditing)) div.input {
-display:none;
+display: none;
+}
+.input-options {
+display: flex;
+flex-direction: column;
+flex-grow: 1;
+}
+.input-options > webui-input-text,
+.input-options > webui-input-message {
+flex-grow: 1;
 }
 .input-options:not(.it-single) > webui-input-text,
 .input-options:not(.it-multi) > webui-input-message {
-display:none;
+display: none;
 }
 </style>
+<aside>
+<webui-button id="btn-edit" class="drag-handle" title="Click to toggle edit, drag to move" start-icon="pencil" theme="info"></webui-button>
+<webui-button id="btn-undo" title="Revert changes & close" start-icon="arrow|rotate:180|bordered|shape:circle|inverted|theme:warning" theme="warning"></webui-button>
+</aside>
 <div class="content">
-<webui-content></webui-content>
 <div class="input">
+<webui-dropdown></webui-dropdown>
 <div class="input-options">
 <webui-input-text></webui-input-text>
 <webui-input-message></webui-input-message>
 </div>
-<webui-dropdown></webui-dropdown>
 </div>
+<webui-content></webui-content>
 </div>
-<aside>
-<webui-button class="drag-handle" title="Click to edit, drag to move" start-icon="pencil" theme="info"></webui-button>
-</aside>
 `
     });
 }
