@@ -1,7 +1,7 @@
 "use strict"
 {
     const globalIgnorePrefixes = ['app-', 'page-'];
-    const globalIgnoreKeys = ['webui-version', 'home-source'];
+    const globalIgnoreKeys = ['webui-version', 'app-home-source'];
     function getEnvironments() {
         if (!webui.projectData) webui.projectData = {};
         if (!webui.projectData.data) webui.projectData.data = {};

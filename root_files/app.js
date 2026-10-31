@@ -504,7 +504,7 @@
             let ks = key.indexOf('.') !== -1 ? key.split('.') : [null, key];
             const scope = ks[0];
             key = ks[1];
-            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle"].includes(key);
+            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle", "git_pat"].includes(key);
             if (scope !== projectScope && scope !== globalScope && (isAppKey || getData('app-env-page-enabled'))) {
                 // Check Page Data
                 let value = getData(key);
@@ -584,7 +584,7 @@
     async function handlePagePath(pagePath, forceReload = false) {
         let navTo = pagePath === '/root' ? '/' : pagePath;
         if (!forceReload && location.pathname === navTo) return;
-        if (forceReload) {
+        if (forceReload && location.pathname !== navTo) {
             webui.navigateTo('_reloading');
             await webui.wait(50);
         }

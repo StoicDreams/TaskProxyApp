@@ -2,4 +2,4 @@
 
 <app-home data-subscribe="home-state:checkAppState"></app-home>
 
-<webui-content data-subscribe="home-source:setSrc" nest></webui-content>
+<webui-content data-subscribe="app-home-source:setSrc" nest></webui-content>

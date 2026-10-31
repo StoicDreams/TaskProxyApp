@@ -44,7 +44,7 @@
                 let result = await webui.proxy.deleteSecurityKey(handleError);
                 if (!result) return;
                 t._alert.setValue({ text: result, theme: 'success' });
-                webui.setData('home-state', 'sec-key-deleted');
+                webui.setData('app-home-state', 'sec-key-deleted');
             }, handleError));
             t._sav.addEventListener('click', webui.eventSoloProcess(async _ => {
                 let secKey = `${t._input.value}`.trim();
@@ -56,7 +56,7 @@
                 let result = await webui.proxy.setSecurityKey(secKey, handleError);
                 if (!result) return;
                 t._alert.setValue({ text: result, theme: 'success' });
-                webui.setData('home-state', 'sec-key-saved');
+                webui.setData('app-home-state', 'sec-key-saved');
             }, handleError));
             t._gen.addEventListener('click', webui.eventSoloProcess(async _ => {
                 t._input.setValue(generateSecurityKey());

@@ -17,7 +17,7 @@
             let hasSecurityKey = await webui.proxy.hasSecurityKey();
             if (!hasSecurityKey) {
                 webui.setData('app-nav-home', 'Security Key');
-                webui.setData('home-source', "d/first_run.md");
+                webui.setData('app-home-source', "d/first_run.md");
                 return;
             }
             t.loadProjects();
@@ -29,10 +29,10 @@
             webui.setData('app-projects', projects);
             if (projects.length === 0) {
                 webui.setData('app-nav-home', 'First Project');
-                webui.setData('home-source', "d/home_new_project.md");
+                webui.setData('app-home-source', "d/home_new_project.md");
             } else {
                 webui.setData('app-nav-home', 'Settings');
-                webui.setData('home-source', "d/home_settings.md");
+                webui.setData('app-home-source', "d/home_settings.md");
             }
         }
     });
