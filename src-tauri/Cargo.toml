@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.67"
+version = "0.1.68"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -54,7 +54,7 @@ base64 = "0.23"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fastembed = { version = "6.0", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls", "image-models"] }
 emojis = "0.9"
-git2 = { version = "0.19", default-features = false, features = ["https", "ssh", "ssh_key_from_memory"] }
+git2 = { version = "0.19", features = ["vendored-openssl"] }
 chrono = "0.4"
 tauri-plugin-updater = { version = "2.13.3", features = ["rustls-tls"] }
 
