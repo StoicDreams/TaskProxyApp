@@ -474,9 +474,9 @@
         };
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
-        let version = await webui.proxy.getVersion();
-        if (version) webui.setData('app-version', `v${version}`);
         let data = await webui.proxy.getAppData();
+        let version = await webui.proxy.getVersion();
+        if (version) data.data['app-version'] = `v${version}`;
         webui.taskProxyData = data;
         let keysDeleted = false;
         const globalVarKeys = (webui.taskProxyData.variables || []).map(v => v.split('|')[0]);

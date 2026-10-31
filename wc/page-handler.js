@@ -97,6 +97,7 @@
             segments = Array.from(comp.querySelectorAll('app-markdown-segment'));
         });
         bar.appendChild(btnAdd);
+        bar.appendChild(webui.create('webui-flex', { 'grow': true }));
         bar.appendChild(btnSave);
         return wrap;
     }

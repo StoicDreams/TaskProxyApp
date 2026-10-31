@@ -19,6 +19,17 @@
         { value: '***DELETING CONTENT***', display: 'Delete Segment', inputType: inputTypes.DELETE },
         { value: '{}', display: 'Raw', inputType: inputTypes.MULTI_LINE },
     ];
+    const segmentChecks = [
+        segmentOptions[0],
+        segmentOptions[6],
+        segmentOptions[5],
+        segmentOptions[4],
+        segmentOptions[3],
+        segmentOptions[2],
+        segmentOptions[1],
+        segmentOptions[7],
+        segmentOptions[9],
+    ];
     function getOption(value) {
         for (let option of segmentOptions) {
             if (option.value === value) return option;
@@ -141,7 +152,7 @@
             t._markdown = markdown;
             let foundMatch = false;
             let mdTrimmed = markdown.trim();
-            segmentOptions.forEach(option => {
+            segmentChecks.forEach(option => {
                 if (foundMatch) return;
                 if (option.value.indexOf('{}') === -1) {
                     if (mdTrimmed === option.value) {
