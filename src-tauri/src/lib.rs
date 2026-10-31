@@ -35,7 +35,14 @@ pub fn run() {
             }
             Ok(())
         })
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_updater::Builder::new()
+                .header("Accept", "*/*")
+                .unwrap()
+                .header("User-Agent", "TauriUpdater/1.0")
+                .unwrap()
+                .build(),
+        )
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
