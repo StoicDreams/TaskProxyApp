@@ -195,6 +195,7 @@
             let result = await tauri.core.invoke('add_project', { name: name }).catch(errHandler);
             if (!result) return;
             let projects = await webui.proxy.getProjects().catch(errHandler) || [];
+            projects.forEach(p => { if (p && p.path) p.path = p.path.replace(/\\/g, '/'); });
             webui.setData('app-projects', projects);
             return result;
         }
@@ -203,6 +204,7 @@
             let result = await tauri.core.invoke('add_projects_multi', {}).catch(errHandler);
             if (!result) return;
             let projects = await webui.proxy.getProjects().catch(errHandler) || [];
+            projects.forEach(p => { if (p && p.path) p.path = p.path.replace(/\\/g, '/'); });
             webui.setData('app-projects', projects);
             return result;
         }
@@ -240,7 +242,8 @@
         }
         getProjectFile(filePath, errHandler) {
             errHandler ??= defaultErrHandler;
-            return tauri.core.invoke('get_project_file', { filePath: filePath }).catch(errHandler);
+            let cleanPath = (filePath || '').replace(/\\/g, '/');
+            return tauri.core.invoke('get_project_file', { filePath: cleanPath }).catch(errHandler);
         }
         searchProjectFiles(filter, display, errHandler) {
             errHandler ??= defaultErrHandler;
@@ -248,7 +251,8 @@
         }
         saveProjectFile(filePath, contents, errHandler) {
             errHandler ??= defaultErrHandler;
-            return tauri.core.invoke('save_project_file', { filePath: filePath, contents: contents }).catch(errHandler);
+            let cleanPath = (filePath || '').replace(/\\/g, '/');
+            return tauri.core.invoke('save_project_file', { filePath: cleanPath, contents: contents }).catch(errHandler);
         }
         getProjectData(project, errHandler) {
             errHandler ??= defaultErrHandler;
@@ -600,13 +604,16 @@
             case 'app-current-project':
                 await loadProject({
                     name: changes.newValue.display,
-                    path: changes.newValue.value
+                    path: (changes.newValue.value || '').replace(/\\/g, '/')
                 });
                 break;
         }
 
     }
     async function loadProject(project) {
+        if (project && project.path) {
+            project.path = project.path.replace(/\\/g, '/');
+        }
         if (cache.currentProject === project) return;
         cache.currentProject = project;
         showLoading('Saving Project!');
@@ -617,6 +624,9 @@
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
             webui.projectData = projectData || { id: null, path: null, currentPage: '/', navigation: [], data: {} };
+            if (webui.projectData && webui.projectData.path) {
+                webui.projectData.path = webui.projectData.path.replace(/\\/g, '/');
+            }
             webui.proxy.projects.isLoaded = !!webui.projectData.id;
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';

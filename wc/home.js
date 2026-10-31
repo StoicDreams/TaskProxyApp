@@ -2,6 +2,7 @@
 "use strict"
 {
     webui.define("app-home", {
+        preload: 'content',
         constructor() {
             const t = this;
         },

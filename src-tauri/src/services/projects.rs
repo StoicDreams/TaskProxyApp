@@ -5,8 +5,9 @@ use tauri_plugin_dialog::DialogExt;
 pub(crate) async fn get_project_data(
     app_handle: AppHandle,
     state: State<'_, CurrentProject>,
-    project: Project,
+    mut project: Project,
 ) -> Result<ProjectData, String> {
+    project.path = project.path.replace('\\', "/");
     let project_hash = get_hash_code(&project.path);
     let current_project = {
         let project_state = state
@@ -26,7 +27,7 @@ pub(crate) async fn get_project_data(
     let result = task::spawn_blocking(async move || {
         let mut data = ProjectData::new();
         data.id = project_hash.to_owned();
-        data.path = project.path.to_owned();
+        data.path = project.path.replace('\\', "/");
         if nav_file.exists() && nav_file.is_file() {
             if let Ok(content) = fs::read_to_string(nav_file) {
                 if let Ok(nav) = serde_json::from_str::<Vec<ProjectNavItem>>(&content) {
@@ -108,7 +109,7 @@ pub(crate) async fn get_project_file(
                 "Get Project File: Unable to load file, project not loaded.",
             ));
         }
-        project.path
+        project.path.replace('\\', "/")
     };
     if file_path.is_empty() {
         return Err(String::from("Get Project File: File path is empty."));
@@ -152,7 +153,7 @@ pub(crate) async fn save_project_file(
                 "Save Project File Failed: Unable to load page data, project not loaded.",
             ));
         }
-        project.path
+        project.path.replace('\\', "/")
     };
     if file_path.is_empty() {
         return Err(String::from(
@@ -200,7 +201,7 @@ pub(crate) async fn add_project(
         Some(file_path) => file_path,
         None => return Err(String::from("Folder selection cancelled")),
     };
-    let project_path = file_path.to_string();
+    let project_path = file_path.to_string().replace('\\', "/");
     let mut project_name = name.trim().to_string();
     if project_name.is_empty() {
         let path = PathBuf::from(&project_path);
@@ -260,7 +261,7 @@ pub(crate) async fn add_projects_multi(
             .map_err(|err| format!("add_projects_multi State failure: {}", err))?;
         let mut added_any = false;
         for file_path in file_paths {
-            let project_path = file_path.to_string();
+            let project_path = file_path.to_string().replace('\\', "/");
             let path_buf = PathBuf::from(&project_path);
             let project_name =
                 if let Some(folder_name) = path_buf.file_name().and_then(|n| n.to_str()) {
@@ -421,6 +422,7 @@ pub(crate) async fn rename_project(
     path: &str,
     new_name: &str,
 ) -> Result<String, String> {
+    let path = path.replace('\\', "/");
     let new_name_trimmed = new_name.trim().to_string();
     if new_name_trimmed.is_empty() {
         return Err(String::from("Project name cannot be empty."));
@@ -431,7 +433,7 @@ pub(crate) async fn rename_project(
             .map_err(|err| format!("rename_project State failure: {}", err))?;
         let name_exists = projects.iter().any(|item| {
             item.name.eq_ignore_ascii_case(&new_name_trimmed)
-                && !item.path.eq_ignore_ascii_case(path)
+                && !item.path.eq_ignore_ascii_case(&path)
         });
         if name_exists {
             return Err(String::from(
@@ -440,7 +442,7 @@ pub(crate) async fn rename_project(
         }
         if let Some(project) = projects
             .iter_mut()
-            .find(|item| item.path.eq_ignore_ascii_case(path))
+            .find(|item| item.path.eq_ignore_ascii_case(&path))
         {
             project.name = new_name_trimmed;
         } else {
@@ -461,12 +463,13 @@ pub(crate) async fn remove_project(
     state: State<'_, SharedProjects>,
     path: &str,
 ) -> Result<String, String> {
+    let path = path.replace('\\', "/");
     let vec_projects = {
         let mut projects = state
             .lock()
             .map_err(|err| format!("remove_project State failure: {}", err))?;
         let initial_len = projects.len();
-        projects.retain(|item| !item.path.eq_ignore_ascii_case(path));
+        projects.retain(|item| !item.path.eq_ignore_ascii_case(&path));
         if projects.len() == initial_len {
             return Err(String::from("Project not found."));
         }
