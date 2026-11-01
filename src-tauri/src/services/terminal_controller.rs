@@ -51,6 +51,7 @@ pub(crate) struct PowerShellStatus {
 pub(crate) fn is_pwsh_installed() -> (bool, String) {
     if create_command("pwsh")
         .arg("-v")
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -60,6 +61,7 @@ pub(crate) fn is_pwsh_installed() -> (bool, String) {
     }
     if create_command("powershell")
         .arg("-v")
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -77,6 +79,7 @@ fn is_command_available(cmd: &str) -> bool {
     let program = "which";
     create_command(program)
         .arg(cmd)
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -145,6 +148,7 @@ pub(crate) async fn auto_install_powershell() -> Result<String, String> {
         let (prog, args) = ("sh", vec!["-c", &command]);
         create_command(prog)
             .args(args)
+            .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("Failed to run install command: {}", e))
     })
