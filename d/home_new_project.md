@@ -61,3 +61,5 @@ NOTE: Once you have set your first project with a new key, any projects set with
 <webui-page-segment>
 <app-update-manager></app-update-manager>
 </webui-page-segment>
+
+<webui-content src="d/help/utilities_settings.md"></webui-content>

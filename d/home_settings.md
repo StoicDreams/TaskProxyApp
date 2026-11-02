@@ -39,3 +39,6 @@ NOTE: Deleting your security key only removes the key from your OS' key store. Y
 <webui-page-segment>
 <app-update-manager></app-update-manager>
 </webui-page-segment>
+
+<webui-content src="d/help/project_management.md"></webui-content>
+<webui-content src="d/help/utilities_settings.md"></webui-content>

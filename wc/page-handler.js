@@ -143,6 +143,22 @@
             }
             webui.setData(attrName, attrValue);
         }
+        const allScopes = [webui.projectData?.data, webui.taskProxyData?.data];
+        allScopes.forEach(scope => {
+            if (!scope) return;
+            Object.keys(scope).forEach(key => {
+                let snakeKey = `{${webui.toSnake(key).toUpperCase()}}`;
+                if (markdown.includes(snakeKey)) {
+                    if (!webui.currentPageVariables.includes(key)) {
+                        webui.currentPageVariables.push(key);
+                        let val = webui.getData(key);
+                        if (val !== undefined) {
+                            webui.setData(key, val);
+                        }
+                    }
+                }
+            });
+        });
         convertMarkdownToSegments(markdown);
         comp.appendChild(topBar);
         segments.forEach(segment => {
@@ -171,6 +187,22 @@
                 }
             });
         }
+        const allScopes = [webui.projectData?.data, webui.taskProxyData?.data];
+        allScopes.forEach(scope => {
+            if (!scope) return;
+            Object.keys(scope).forEach(key => {
+                let snakeKey = `{${webui.toSnake(key).toUpperCase()}}`;
+                if (fullMd.includes(snakeKey)) {
+                    if (!webui.currentPageVariables.includes(key)) {
+                        webui.currentPageVariables.push(key);
+                        let val = webui.getData(key);
+                        if (val !== undefined) {
+                            webui.setData(key, val);
+                        }
+                    }
+                }
+            });
+        });
         pageScripts = [];
         const scriptRegex = /```(?:powershell|pwsh|ps1)\n([\s\S]*?)```/gi;
         const varRegex = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
@@ -454,6 +486,11 @@
         let isTracked = webui.currentPageVariables.some(v => webui.toSnake(v, '-') === prop || v === prop);
         if (isTracked) {
             updateScriptPreviews();
+            segments.forEach(seg => {
+            if (typeof seg.render === 'function' && !seg.classList.contains('isEditing')) {
+                seg.render();
+            }
+        });
         }
     }
     webui.define("app-page-handler", {

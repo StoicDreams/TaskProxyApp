@@ -4,9 +4,10 @@
     <webui-button slot="tabs">Committing & Syncing</webui-button>
     <webui-content slot="content" nodetach>
         <webui-page-segment>
-        - **Committing**: Select files to include, exclude, or ignore using the dropdowns. Enter a commit message and click **Commit**.
-        - **Syncing**: Click **Sync** to automatically pull remote changes and push your local commits. Enable the **Sync after commit** toggle to automate this immediately following a commit.
-        - **Remote Operations**: Use **Fetch** to check for updates, **Pull** to safely merge remote changes, **Push** to send local commits, or **Force Pull** to overwrite all local changes with the remote branch.
+            - **Viewing Changes**: Click on a file name in the pending changes list to load a side-by-side diff comparison of the modifications.
+            - **Committing**: Select files to include, exclude, or ignore using the dropdowns. Enter a commit message and click **Commit**.
+            - **Syncing**: Click **Sync** to automatically pull remote changes and push your local commits. Enable the **Sync after commit** toggle to automate this immediately following a commit.
+            - **Remote Operations**: Use **Fetch** to check for updates, **Pull** to safely merge remote changes, **Push** to send local commits, or **Force Pull** to overwrite all local changes with the remote branch.
         </webui-page-segment>
     </webui-content>
     <webui-button slot="tabs">Branch Management</webui-button>

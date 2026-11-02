@@ -3,3 +3,5 @@
 ## View and Manage Your Projects .md docs
 
 <app-doc-manager></app-doc-manager>
+
+<webui-content src="d/help/docs_nav.md"></webui-content>

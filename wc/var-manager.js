@@ -227,6 +227,7 @@
         <div id="var-global-list" style="margin-top: 1rem;"></div>
     </webui-content>
 </webui-tabs>
+<webui-content src="d/help/variable_management.md" style="margin-top: var(--padding);"></webui-content>
 `;
         const renderAllLists = () => {
             const environments = getEnvironments();
