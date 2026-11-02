@@ -583,10 +583,11 @@
     const syncQueueTimeout = 500;
     async function handlePagePath(pagePath, forceReload = false) {
         let navTo = pagePath === '/root' ? '/' : pagePath;
-        if (!forceReload && location.pathname === navTo) return;
-        if (forceReload && location.pathname !== navTo) {
+        if (forceReload) {
             webui.navigateTo('_reloading');
             await webui.wait(50);
+        } else if (location.pathname === navTo) {
+            return;
         }
         webui.navigateTo(navTo);
     }
