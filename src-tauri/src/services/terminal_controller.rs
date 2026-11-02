@@ -49,25 +49,28 @@ pub(crate) struct PowerShellStatus {
 }
 
 pub(crate) fn is_pwsh_installed() -> (bool, String) {
-    if create_command("pwsh")
-        .arg("-v")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
+    let mut candidates = vec!["pwsh"];
+    #[cfg(not(target_os = "windows"))]
     {
-        return (true, "pwsh".to_string());
+        candidates.extend(vec![
+            "/opt/homebrew/bin/pwsh",
+            "/usr/local/bin/pwsh",
+            "/usr/bin/pwsh",
+            "/snap/bin/pwsh",
+        ]);
     }
-    if create_command("powershell")
-        .arg("-v")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
-    {
-        return (true, "powershell".to_string());
+    candidates.extend(vec!["powershell"]);
+    for cmd in candidates {
+        if create_command(cmd)
+            .arg("-v")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return (true, cmd.to_string());
+        }
     }
     (false, "".to_string())
 }
