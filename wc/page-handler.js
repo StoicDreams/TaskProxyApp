@@ -344,11 +344,13 @@
         codes.forEach((codeEl, index) => {
             let scriptMeta = pageScripts[index];
             if (!scriptMeta) return;
-            customElements.whenDefined('webui-code').then(() => {
-                setTimeout(() => {
-                    let root = codeEl.shadowRoot || codeEl;
+            customElements.whenDefined('webui-code').then(async () => {
+                let root = codeEl.shadowRoot || codeEl;
+                const inject = () => {
                     if (webui.querySelectorAll('.run-script-btn', root).length !== 0) return;
-                    let copyBtn = webui.querySelectorAll('webui-icon[icon="copy"]', root)[0];
+                    let copyBtn = webui.querySelector('webui-icon[icon="copy"]', root);
+                    let header = webui.querySelector('label', root);
+                    if (!copyBtn && !header) return;
                     let playBtn = webui.create('webui-icon', {
                         icon: 'emoji-play_button',
                         class: 'run-script-btn',
@@ -358,13 +360,15 @@
                     playBtn.addEventListener('click', () => runPageScript(scriptMeta));
                     if (copyBtn) {
                         copyBtn.after(playBtn);
-                    } else {
-                        let header = webui.querySelectorAll('label', root);
-                        if (header) {
-                            header.appendChild(playBtn);
-                        }
+                    } else if (header) {
+                        header.appendChild(playBtn);
                     }
-                }, 200);
+                };
+                if (!codeEl._playBtnObserver) {
+                    codeEl._playBtnObserver = new MutationObserver(() => inject());
+                    codeEl._playBtnObserver.observe(root, { childList: true, subtree: true });
+                }
+                inject();
             });
         });
     }
@@ -485,12 +489,17 @@
         let prop = changes.property;
         let isTracked = webui.currentPageVariables.some(v => webui.toSnake(v, '-') === prop || v === prop);
         if (isTracked) {
-            updateScriptPreviews();
+            let renders = [];
             segments.forEach(seg => {
-            if (typeof seg.render === 'function' && !seg.classList.contains('isEditing')) {
-                seg.render();
-            }
-        });
+                if (typeof seg.render === 'function' && !seg.classList.contains('isEditing')) {
+                    renders.push(seg.render());
+                }
+            });
+            Promise.all(renders).then(() => {
+                setTimeout(() => {
+                    applyScriptUI();
+                }, 50);
+            });
         }
     }
     webui.define("app-page-handler", {
