@@ -2,89 +2,45 @@
 
 <img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
-[Version: 0.1.77](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.78](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
 [gh-image]: https://github.com/stoicdreams/taskproxyapp/actions/workflows/deploy.yml/badge.svg
 [gh-checks]: https://github.com/stoicdreams/taskproxyapp/actions?query=branch%3Amain
 
-Task Proxy is a desktop application targeted towards software developers and power users to help them document and organize their workflows, automation scripts, and project documentation and configurations.
+**Supercharge Your Developer Workflow**
 
-A key feature of Task Proxy is the ability to allow teams and developers to create and share reports, scripts, automation, and onboarding workflows to help new team members get setup quickly, and help assure developers stays in sync as project configurations are changed.
+Task Proxy is a lightweight, cross-platform developer tool designed to manage documentation, scripts, and productivity features. It helps organize, simplify, and automate your workflows without adding friction. Built in [Rust](https://www.rust-lang.org/) and the [Tauri framework](https://tauri.app/) with [Web UI](https://webui.stoicdreams.com/), Task Proxy delivers native speed and reliability across Windows, Mac, and Linux.
 
-<div style="clear:both"></div>
+## Why Choose Task Proxy?
 
-## Expected launch features include
+- **Zero-Friction Collaboration:** Configurations and custom pages are stored within a `.taskproxy` folder in your project root. Everything stays perfectly synced and easily shared via your version control system.
+- **Bulletproof Security:** Manage and store secrets for scripts and API connections securely. Task Proxy encrypts sensitive data via your OS's native credential manager, keeping it safely outside your repository.
+- **Precision Context:** Scope variables to Global, Project, or Page levels, ensuring your data and secrets are only accessible exactly where they are needed.
 
-- Reporting components generated from script results or API endpoint results.
-- Scoped variables for storing common, dev-specific, or secret data values.
-- Script templating allowing variables editable in UI
-- Event driven triggers to run specified scripts on specified events (file updates, button in UI, git commit, etc).
-- Support for Windows 10/11, Mac, Linux
+## Core Capabilities
 
-## Expected Use-Cases
+- **Project Management:** Create, add, and switch between multiple isolated workspaces instantly.
+- **Git Controller:** Authenticate via Personal Access Tokens (PAT) to commit, sync, fetch, push, pull, branch, and stash directly from the UI, featuring a built-in diff viewer.
+- **Terminal & Script Manager:** Write parameterized PowerShell (`.ps1`) scripts with auto-generated UI inputs, and execute them in live background terminals or separate OS windows.
+- **Docs & Nav Management:** Manage standard repository markdown files (e.g., `readme.md`) and create custom, modular Task Proxy pages using live data bindings and components.
 
-- Onboarding workflow with step-by-step guidance for developers to setup their local environment for deploying projects locally (websites, fabric cluster, etc).
-- Managing / Sharing scripts (Powershell, command prompt, SQL).
-- Sharing team &amp; project documentation (Architecture, features, coding standards, etc) organized using a tag-based system inspired by mind-map applications.
-- Health report that will verify required SDKs/configurations are installed/setup as expected for Team/project.
+## Example Workflows
 
-## Planned Cloud Services
-
-- Option to store shared variable data in cloud.
-
-## Planned Website Services
-
-- Paste exported project, page, and unit templates to share.
-- View templates shared by others.
-- Vote on templates.
-
-## Expected Workflows
-
-### Opening Task Proxy for the first time
-
-When opening the application for the first time, the user should be presented with a startup guide giving them a quick overview of the application and the ability to create their first project. Any Project specific menu items should be disabled / hidden.
-
-### Cloud Services
-
-Planned workflow to enable Cloud Services:
-
-1. Create an account at StoicDreams.com and sign-up for desired subscription service option.
-1. Sign-in to Task Proxy app with your Stoic Dreams account credentials.
-1. App will automatically detect service availability and enable Cloud settings in App settings.
-1. In Cloud Settings, user can toggle cloud features to enable or disable.
-
-### Manage Variables
-
-Variables are data objects that can be used to fill in values. It is recommended to use variables for any dynamic values used for any scripts or processes. But you absolutely need to use variables where any secrets might be used to assure secrets are not getting saved in any shared files or scripts.
-
-#### Variable Scopes
-
-Variables can be scoped as Page, Project, and Global scopes. Page scoped variables are only available to the page they are defined in. And project scoped variables are available anywhere within the project. While Global scopes can be accessed across any project.
-
-When scripts or components are accessing variable values with keys duplicated across scopes, they will only use the value that is from the highest priority available. Page scoped variables have the highest priority, then Project, then Global.
-
-### Create a new Report
-
-Reports are components that can use an API endpoint or script to generate report data that can then be displayed in the page.
-
-## Software Expectations / Goals
-
-- Task Proxy uses the naming convention of `Project` to represent a collection of configurations, documentation, scripts, and solutions.
-- Task Proxy can track multiple projects to be loaded and saved as desired.
-- Only 1 project can be loaded at a time.
-- Users will have the option of storing projects locally when using the standard (free) version of Task Proxy.
-  - The common expected use case is to setup the root of a repository as a Task Proxy project. This way all associated project data is always synced with its respective repository and anyone who clones the repository will have access to the associated Task Proxy project.
-- Users will have the option of storing projects in the Cloud with a paid subscription. Cloud projects will store variables in the cloud.
-- Projects, pages, and components can be exported and imported into other projects.
-- Encryption keys are never passed to or stored in the Cloud. Project data stored in the cloud is encrypted prior to transfer and are never decrypted in the Cloud.
+- **Centralized Team Hubs:** Create modular Task Proxy Pages within your project to provide onboarding documentation, run health-check scripts, and show dynamic reports.
+- **Automated Pipelines:** Utilize the integrated Script and Terminal Managers to queue and execute command flows in a specified sequence.
+- **Live Documentation Editing:** Manage project documentation with side-by-side live rendering.
 
 ## Installation
 
-Task Proxy is currently in very early development but is available for download on [TaskProxy.com](https://www.taskproxy.com) for Windows, Mac, and Linux.
+Task Proxy is available for download on [TaskProxy.com](https://www.taskproxy.com/) for Windows, Mac, and Linux.
 
-## Dev
+---
+
+## Development Setup
+
+If you want to build Task Proxy from source or contribute to the project, follow these steps.
 
 ### Notes
 
@@ -161,3 +117,15 @@ Link | Details
 [https://v2.tauri.app/start/](https://v2.tauri.app/start/) | Start page for Tauri V2 documentation
 [https://tauri.app/develop/calling-rust/](https://tauri.app/develop/calling-rust/) | Learn more about Tauri commands.
 [https://v2.tauri.app/plugin/](https://v2.tauri.app/plugin/) | Plugins that enable additional features.
+
+---
+
+## Author
+
+**[Erik Gassler](https://www.erikgassler.com) - [Stoic Dreams](https://www.stoicdreams.com)** - Forging solutions for tomorrow's software development.
+
+**Support** - Visit [Stoic Dreams' GitHub Sponsor page](https://github.com/sponsors/StoicDreams) if you would like to provide support to Stoic Dreams.
+
+## License
+
+[MIT](LICENSE)

@@ -485,7 +485,7 @@
         let keysDeleted = false;
         const globalVarKeys = (webui.taskProxyData.variables || []).map(v => v.split('|')[0]);
         Object.keys(webui.taskProxyData.data).forEach(key => {
-            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle"].includes(key);
+            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle", "webui-version"].includes(key);
             const isGlobalVar = globalVarKeys.includes(key);
             if (!isAppKey && !isGlobalVar) {
                 delete webui.taskProxyData.data[key];

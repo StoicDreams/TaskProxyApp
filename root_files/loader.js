@@ -3065,7 +3065,7 @@ const webui = (() => {
             let keepKey =
                 key.startsWith("app-") ||
                 key.startsWith("session-") ||
-                ["page-path"].indexOf(key) !== -1;
+                ["page-path","webui-version"].indexOf(key) !== -1;
             if (!keepKey) {
                 delete watchedAppData[key];
             }
