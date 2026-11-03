@@ -2,7 +2,7 @@
 mod prelude;
 use prelude::*;
 
-pub(crate) const VERSION: &str = "0.1.24";
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     // TODO
