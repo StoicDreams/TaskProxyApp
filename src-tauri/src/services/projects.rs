@@ -1,5 +1,161 @@
 use crate::prelude::*;
+use std::sync::LazyLock;
 use tauri_plugin_dialog::DialogExt;
+
+const NAVIGATION_FILE: &str = "Navigation.json";
+const VARIABLES_FILE: &str = "Variables.json";
+const EMPTY_LIST: &str = "[]";
+
+/// What the shared project files contained when last loaded or written, per project.
+/// These files are committed with the project, so they can change on disk at any time.
+static FILE_BASELINES: LazyLock<Mutex<HashMap<String, FileBaselines>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Clone)]
+struct FileBaselines {
+    navigation: String,
+    variables: String,
+}
+
+#[derive(Debug, PartialEq)]
+enum DiskFile {
+    Missing,
+    Parsed(String),
+    Unparseable,
+}
+
+#[derive(Debug, PartialEq)]
+enum SaveAction {
+    Skip,
+    Write,
+    Conflict,
+}
+
+fn read_list_file<T: DeserializeOwned + Serialize>(path: &Path) -> (DiskFile, Vec<T>) {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return (DiskFile::Missing, Vec::new());
+        }
+        Err(_) => return (DiskFile::Unparseable, Vec::new()),
+    };
+    match serde_json::from_str::<Vec<T>>(&content) {
+        Ok(items) => match to_json(&items) {
+            Ok(json) => (DiskFile::Parsed(json), items),
+            Err(_) => (DiskFile::Unparseable, Vec::new()),
+        },
+        Err(_) => (DiskFile::Unparseable, Vec::new()),
+    }
+}
+
+fn plan_file_save(baseline: &str, memory: &str, disk: &DiskFile) -> SaveAction {
+    if memory == baseline {
+        return SaveAction::Skip;
+    }
+    match disk {
+        DiskFile::Unparseable => SaveAction::Conflict,
+        DiskFile::Missing if memory == EMPTY_LIST => SaveAction::Skip,
+        DiskFile::Missing => SaveAction::Write,
+        DiskFile::Parsed(json) if json == memory => SaveAction::Skip,
+        DiskFile::Parsed(json) if json == baseline => SaveAction::Write,
+        DiskFile::Parsed(_) => SaveAction::Conflict,
+    }
+}
+
+fn save_list_file<T: DeserializeOwned + Serialize>(
+    path: &Path,
+    baseline: &mut String,
+    memory: &str,
+) -> Result<(), String> {
+    let (disk, _) = read_list_file::<T>(path);
+    match plan_file_save(baseline, memory, &disk) {
+        SaveAction::Skip => {}
+        SaveAction::Write => write_atomic(path, memory.as_bytes())
+            .map_err(|err| format!("Error saving {}: {}", path.display(), err))?,
+        SaveAction::Conflict => {
+            return Err(format!(
+                "{} was not saved because the file changed on disk or could not be read. Fix the file if needed, then restart Task Proxy to load it.",
+                path.display()
+            ));
+        }
+    }
+    *baseline = memory.to_string();
+    Ok(())
+}
+
+fn save_project_files(
+    id: &str,
+    root: &Path,
+    navigation: String,
+    variables: String,
+) -> Result<(), String> {
+    let data_root = root.join(".taskproxy");
+    let nav_file = data_root.join(NAVIGATION_FILE);
+    let var_file = data_root.join(VARIABLES_FILE);
+    let mut baselines = FILE_BASELINES
+        .lock()
+        .map_err(|err| format!("File baseline failure: {}", err))?;
+    let baseline = baselines.entry(id.to_string()).or_insert_with(|| {
+        let (_, nav_items) = read_list_file::<ProjectNavItem>(&nav_file);
+        let (_, var_items) = read_list_file::<String>(&var_file);
+        FileBaselines {
+            navigation: to_json(&nav_items).unwrap_or_else(|_| EMPTY_LIST.to_string()),
+            variables: to_json(&var_items).unwrap_or_else(|_| EMPTY_LIST.to_string()),
+        }
+    });
+    let nav_result =
+        save_list_file::<ProjectNavItem>(&nav_file, &mut baseline.navigation, &navigation);
+    let var_result = save_list_file::<String>(&var_file, &mut baseline.variables, &variables);
+    match (nav_result, var_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(err), Ok(())) | (Ok(()), Err(err)) => Err(err),
+        (Err(nav_err), Err(var_err)) => Err(format!("{}\n{}", nav_err, var_err)),
+    }
+}
+
+/// Read the shared project files and record them as the new baseline.
+fn load_project_files(id: &str, root: &Path) -> (Vec<ProjectNavItem>, Vec<String>) {
+    let data_root = root.join(".taskproxy");
+    let (_, navigation) = read_list_file::<ProjectNavItem>(&data_root.join(NAVIGATION_FILE));
+    let (_, variables) = read_list_file::<String>(&data_root.join(VARIABLES_FILE));
+    if let Ok(mut baselines) = FILE_BASELINES.lock() {
+        baselines.insert(
+            id.to_string(),
+            FileBaselines {
+                navigation: to_json(&navigation).unwrap_or_else(|_| EMPTY_LIST.to_string()),
+                variables: to_json(&variables).unwrap_or_else(|_| EMPTY_LIST.to_string()),
+            },
+        );
+    }
+    (navigation, variables)
+}
+
+fn reload_files_from_disk(mut data: ProjectData) -> ProjectData {
+    let data_root = PathBuf::from(&data.path).join(".taskproxy");
+    let memory_nav = to_json(&data.navigation).unwrap_or_default();
+    let memory_vars = to_json(&data.variables).unwrap_or_default();
+    let Ok(mut baselines) = FILE_BASELINES.lock() else {
+        return data;
+    };
+    let Some(baseline) = baselines.get_mut(&data.id) else {
+        return data;
+    };
+    if memory_nav == baseline.navigation {
+        let (disk, items) = read_list_file::<ProjectNavItem>(&data_root.join(NAVIGATION_FILE));
+        if disk != DiskFile::Unparseable {
+            baseline.navigation = to_json(&items).unwrap_or_else(|_| EMPTY_LIST.to_string());
+            data.navigation = items;
+        }
+    }
+    if memory_vars == baseline.variables {
+        let (disk, items) = read_list_file::<String>(&data_root.join(VARIABLES_FILE));
+        if disk != DiskFile::Unparseable {
+            baseline.variables = to_json(&items).unwrap_or_else(|_| EMPTY_LIST.to_string());
+            data.variables = items;
+        }
+    }
+    data
+}
 
 #[tauri::command]
 pub(crate) async fn get_project_data(
@@ -18,61 +174,43 @@ pub(crate) async fn get_project_data(
     if project_hash == current_project.id {
         return Ok(current_project);
     }
-    _ = save_project_data(current_project, app_handle.clone()).await;
-    let project_root = PathBuf::from(&project.path);
-    let data_root = project_root.join(".taskproxy");
-    let nav_file = data_root.join("Navigation.json");
-    let var_file = data_root.join("Variables.json");
-    let project = project.clone();
-    let result = task::spawn_blocking(async move || {
-        let mut data = ProjectData::new();
-        data.id = project_hash.to_owned();
-        data.path = project.path.replace('\\', "/");
-        if nav_file.exists() && nav_file.is_file() {
-            if let Ok(content) = fs::read_to_string(nav_file) {
-                if let Ok(nav) = serde_json::from_str::<Vec<ProjectNavItem>>(&content) {
-                    data.navigation = nav;
-                }
-            }
-        }
-        if var_file.exists() && var_file.is_file() {
-            if let Ok(content) = fs::read_to_string(var_file) {
-                if let Ok(variables) = serde_json::from_str::<Vec<String>>(&content) {
-                    data.variables = variables;
-                }
-            }
-        }
-        if let Ok(decrypted) =
-            get_data_from_local_storage(&app_handle, &format!("{}.cp.enc", project_hash)).await
-        {
-            if !decrypted.is_empty() {
-                if let Ok(current_page) = String::from_utf8(decrypted) {
-                    data.current_page = current_page;
-                }
-            }
-        }
-        if let Ok(decrypted) =
-            get_data_from_local_storage(&app_handle, &format!("{}.enc", project_hash)).await
-        {
-            if !decrypted.is_empty() {
-                if let Ok(project_variables) =
-                    serde_json::from_slice::<HashMap<String, Value>>(&decrypted)
-                {
-                    data.data = project_variables;
-                }
-            }
-        }
-        {
-            data.docs = get_project_docs(&data.path).await;
-        }
-        data
-    })
-    .await
-    .map_err(|err| format!("{}", err));
-    let data = match result {
-        Ok(data) => data.await,
-        Err(_) => ProjectData::new(),
+    _ = persist_project_data(current_project, &app_handle).await;
+    let mut data = ProjectData::new();
+    data.id = project_hash.clone();
+    data.path = project.path.clone();
+    let (navigation, variables, docs) = {
+        let id = project_hash.clone();
+        let path = project.path.clone();
+        task::spawn_blocking(move || {
+            let (navigation, variables) = load_project_files(&id, Path::new(&path));
+            (navigation, variables, get_project_docs(&path))
+        })
+        .await
+        .map_err(|err| format!("{}", err))?
     };
+    data.navigation = navigation;
+    data.variables = variables;
+    data.docs = docs;
+    if let Ok(decrypted) =
+        get_data_from_local_storage(&app_handle, &format!("{}.cp.enc", project_hash)).await
+    {
+        if !decrypted.is_empty() {
+            if let Ok(current_page) = String::from_utf8(decrypted) {
+                data.current_page = current_page;
+            }
+        }
+    }
+    if let Ok(decrypted) =
+        get_data_from_local_storage(&app_handle, &format!("{}.enc", project_hash)).await
+    {
+        if !decrypted.is_empty() {
+            if let Ok(project_variables) =
+                serde_json::from_slice::<HashMap<String, Value>>(&decrypted)
+            {
+                data.data = project_variables;
+            }
+        }
+    }
     {
         let mut project_state = state
             .lock()
@@ -90,8 +228,24 @@ pub(crate) fn sync_project_data(
     let mut project_state = state
         .lock()
         .map_err(|err| format!("sync_project_data State failure: {}", err))?;
-    *project_state = data;
-    Ok(format!("Project data synced"))
+    // A late sync from the previous project must not replace the one now open.
+    if project_state.id == data.id {
+        *project_state = data;
+    }
+    Ok(String::from("Project data synced"))
+}
+
+fn current_project_path(
+    state: &State<'_, CurrentProject>,
+    context: &str,
+) -> Result<PathBuf, String> {
+    let project_state = state
+        .lock()
+        .map_err(|err| format!("{}: State failure: {}", context, err))?;
+    if project_state.path.is_empty() {
+        return Err(format!("{}: Project not loaded.", context));
+    }
+    Ok(PathBuf::from(project_state.path.replace('\\', "/")))
 }
 
 #[tauri::command]
@@ -99,35 +253,19 @@ pub(crate) async fn get_project_file(
     state: State<'_, CurrentProject>,
     file_path: String,
 ) -> Result<String, String> {
-    let project_path = {
-        let project_state = state
-            .lock()
-            .map_err(|err| format!("Get Project File State failure: {}", err))?;
-        let project = project_state.to_owned();
-        if project.path.is_empty() {
-            return Err(String::from(
-                "Get Project File: Unable to load file, project not loaded.",
-            ));
+    const CONTEXT: &str = "Get Project File";
+    let root = current_project_path(&state, CONTEXT)?;
+    let relative = safe_relative_path(&file_path).map_err(|err| format!("{}: {}", CONTEXT, err))?;
+    let result = task::spawn_blocking(move || {
+        let file = root.join(relative);
+        if !file.is_file() {
+            return Err(format!("{}: File not found", CONTEXT));
         }
-        project.path.replace('\\', "/")
-    };
-    if file_path.is_empty() {
-        return Err(String::from("Get Project File: File path is empty."));
-    }
-    let safe_file_path = PathBuf::from(&file_path);
-    if safe_file_path.is_absolute() || file_path.contains("..") {
-        return Err(String::from(
-            "Get Project File: Invalid file path. Path must be relative.",
-        ));
-    }
-    let proj_path = PathBuf::from(project_path);
-    let file = proj_path.join(safe_file_path);
-    if !file.is_file() {
-        return Err(String::from("Get Project File: File not found"));
-    }
-    let result = task::spawn_blocking(move || fs::read_to_string(file)).await;
-    let result = result.map_err(|err| format!("{}", err))?;
-    result.map_err(|err| format!("Failed to load file: {}", err))
+        ensure_inside_root(&root, &file).map_err(|err| format!("{}: {}", CONTEXT, err))?;
+        fs::read_to_string(file).map_err(|err| format!("Failed to load file: {}", err))
+    })
+    .await;
+    result.map_err(|err| format!("{}", err))?
 }
 
 #[tauri::command]
@@ -136,58 +274,30 @@ pub(crate) async fn save_project_file(
     file_path: String,
     contents: String,
 ) -> Result<String, String> {
-    let mut contents = contents.to_owned();
+    const CONTEXT: &str = "Save Project File Failed";
+    let mut contents = contents;
     if !contents.ends_with('\n') {
-        contents = format!("{}\n", contents);
+        contents.push('\n');
     }
-    let project_path = {
-        let project_state = state.lock().map_err(|err| {
-            format!(
-                "Save Project File Failed: get_page_data State failure: {}",
-                err
-            )
-        })?;
-        let project = project_state.to_owned();
-        if project.path.is_empty() {
-            return Err(String::from(
-                "Save Project File Failed: Unable to load page data, project not loaded.",
-            ));
-        }
-        project.path.replace('\\', "/")
-    };
-    if file_path.is_empty() {
-        return Err(String::from(
-            "Save Project File Failed: File path is empty.",
-        ));
+    let root = current_project_path(&state, CONTEXT)?;
+    let relative = safe_relative_path(&file_path).map_err(|err| format!("{}: {}", CONTEXT, err))?;
+    if targets_git_dir(&relative) {
+        return Err(format!("{}: Cannot write inside a .git folder.", CONTEXT));
     }
-    let safe_file_path = PathBuf::from(&file_path);
-    if safe_file_path.is_absolute() || file_path.contains("..") {
-        return Err(format!(
-            "Save Project File Failed: Invalid file path: {}",
-            file_path
-        ));
+    if relative.extension().is_none() {
+        return Err(format!("{}: File path is missing a file extension", CONTEXT));
     }
-    let proj_path = PathBuf::from(project_path);
-    let file = proj_path.join(file_path);
-    if file.extension().is_none() {
-        return Err(String::from(
-            "Save Project File Failed: File path is missing a file extension",
-        ));
-    }
-    let file_clone = file.clone();
-    let contents_clone = contents.clone();
     let result = task::spawn_blocking(move || {
-        if let Some(dir) = file_clone.parent() {
-            _ = fs::create_dir_all(dir);
+        let file = root.join(relative);
+        ensure_inside_root(&root, &file).map_err(|err| format!("{}: {}", CONTEXT, err))?;
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir).map_err(|err| format!("{}: {}", CONTEXT, err))?;
         }
-        fs::write(file_clone, contents_clone)
+        fs::write(file, contents).map_err(|err| format!("{}: {}", CONTEXT, err))
     })
     .await;
-    let result = result.map_err(|err| format!("{}", err))?;
-    match result {
-        Ok(()) => Ok(String::from("File saved")),
-        Err(err) => Err(format!("{}", err)),
-    }
+    result.map_err(|err| format!("{}", err))??;
+    Ok(String::from("File saved"))
 }
 
 /// Create or load a project from the given path.
@@ -235,10 +345,8 @@ pub(crate) async fn add_project(
             ));
         }
         projects.push(project);
-        projects.sort_by_key(|p| p.name.clone());
-        let vec_projects = projects.to_vec();
-        *projects = vec_projects.clone();
-        vec_projects
+        sort_projects(&mut projects);
+        projects.to_vec()
     };
     save_projects_to_local_storage(&app_handle, &vec_projects).await?;
     Ok(String::from("Project Successfully Added"))
@@ -292,16 +400,18 @@ pub(crate) async fn add_projects_multi(
             results.push(format!("Added '{}'", project_name));
         }
         if added_any {
-            projects.sort_by_key(|p| p.name.clone());
-            let vec_projects = projects.to_vec();
-            *projects = vec_projects.clone();
-            vec_projects_to_save = Some(vec_projects);
+            sort_projects(&mut projects);
+            vec_projects_to_save = Some(projects.to_vec());
         }
     }
     if let Some(vec_projects) = vec_projects_to_save {
         save_projects_to_local_storage(&app_handle, &vec_projects).await?;
     }
     Ok(results)
+}
+
+fn sort_projects(projects: &mut [Project]) {
+    projects.sort_by_cached_key(|project| project.name.to_lowercase());
 }
 
 /// Example greeting to test interaction from JavaScript to Rust
@@ -315,13 +425,7 @@ pub(crate) fn get_projects(state: State<SharedProjects>) -> Result<Vec<Project>,
     let projects = state
         .lock()
         .map_err(|err| format!("get_projects State failure: {}", err))?;
-    Ok(projects
-        .iter()
-        .map(|p| Project {
-            name: p.name.clone(),
-            path: p.path.clone(),
-        })
-        .collect())
+    Ok(projects.to_vec())
 }
 
 /// Create or load a project from the given path.
@@ -336,15 +440,8 @@ pub(crate) async fn load_projects(
     let mut projects = state
         .lock()
         .map_err(|err| format!("load_projects State failure: {}", err))?;
-    *projects = loaded_projects;
-    let projects = projects
-        .iter()
-        .map(|p| Project {
-            name: p.name.clone(),
-            path: p.path.clone(),
-        })
-        .collect();
-    Ok(projects)
+    *projects = loaded_projects.clone();
+    Ok(loaded_projects)
 }
 
 #[tauri::command]
@@ -352,67 +449,112 @@ pub(crate) async fn save_project_data(
     data: ProjectData,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    if data.id.is_empty() {
-        return Err(format!("Project data is not associated with any project."));
-    }
-    if data.path.is_empty() {
-        return Err(format!("Project data is missing path."));
-    }
-    let project_root = PathBuf::from(&data.path);
-    let data_root = project_root.join(".taskproxy");
-    let nav_file = data_root.join("Navigation.json");
-    let var_file = data_root.join("Variables.json");
-    match to_json(&data.navigation) {
-        Ok(json) => {
-            match fs::write(&nav_file, &json) {
-                Ok(_) => println!("{} Saved!", nav_file.display()),
-                Err(err) => eprintln!("Error saving {}:{}", nav_file.display(), err),
-            };
-        }
-        Err(err) => eprintln!("Error converting navigation to json: {}", err),
-    }
-    match to_json(&data.variables) {
-        Ok(json) => {
-            match fs::write(&var_file, json) {
-                Ok(_) => println!("{} Saved!", var_file.display()),
-                Err(err) => eprintln!("Error saving {}:{}", var_file.display(), err),
-            };
-        }
-        Err(err) => eprintln!("Error converting variables to json: {}", err),
-    };
-    let secrets_path = format!("{}.cp.enc", data.id);
     if let Some(state) = app_handle.try_state::<CurrentProject>() {
         if let Ok(mut project_state) = state.lock() {
-            *project_state = data.clone();
+            // A save for a project that is no longer current must not replace the current one.
+            if project_state.id == data.id {
+                *project_state = data.clone();
+            }
         }
     }
-    match save_json_to_local_storage(
+    persist_project_data(data, &app_handle).await
+}
+
+/// Write project data to disk without changing the in-memory project.
+pub(crate) async fn persist_project_data(
+    data: ProjectData,
+    app_handle: &AppHandle,
+) -> Result<String, String> {
+    if data.id.is_empty() {
+        return Err(String::from("Project data is not associated with any project."));
+    }
+    if data.path.is_empty() {
+        return Err(String::from("Project data is missing path."));
+    }
+    let mut errors = Vec::new();
+    let id = data.id.clone();
+    let root = PathBuf::from(&data.path);
+    let navigation = to_json(&data.navigation)?;
+    let variables = to_json(&data.variables)?;
+    let file_result =
+        task::spawn_blocking(move || save_project_files(&id, &root, navigation, variables))
+            .await
+            .map_err(|err| format!("{}", err))?;
+    if let Err(err) = file_result {
+        errors.push(err);
+    }
+    if let Err(err) = save_json_to_local_storage(
         "Project current page",
-        &app_handle,
+        app_handle,
         data.current_page.clone(),
-        &secrets_path,
+        &format!("{}.cp.enc", data.id),
     )
     .await
     {
-        Ok(_) => println!(
-            "Current page {} at {} Saved!",
-            data.current_page, secrets_path
-        ),
-        Err(err) => eprintln!("Error saving Current Page {}:{}", secrets_path, err),
+        errors.push(err);
     }
-    let secrets_path = format!("{}.enc", data.id);
-    match serde_json::to_string(&data.data) {
-        Ok(json) => {
-            match save_json_to_local_storage("Project secrets", &app_handle, json, &secrets_path)
-                .await
-            {
-                Ok(_) => println!("Secrets at {} Saved!", secrets_path),
-                Err(err) => eprintln!("Error saving secrets {}:{}", secrets_path, err),
-            }
-        }
-        Err(err) => eprintln!("Error converting variable values to json: {}", err),
+    let secrets = serde_json::to_string(&data.data).map_err(|err| err.to_string())?;
+    if let Err(err) = save_json_to_local_storage(
+        "Project secrets",
+        app_handle,
+        secrets,
+        &format!("{}.enc", data.id),
+    )
+    .await
+    {
+        errors.push(err);
     }
-    Ok(format!("Project data saved"))
+    if errors.is_empty() {
+        Ok(String::from("Project data saved"))
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+/// Forget the current project, after saving it.
+#[tauri::command]
+pub(crate) async fn clear_current_project(
+    app_handle: AppHandle,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let current = {
+        let mut project_state = state
+            .lock()
+            .map_err(|err| format!("clear_current_project State failure: {}", err))?;
+        std::mem::replace(&mut *project_state, ProjectData::new())
+    };
+    if !current.id.is_empty() {
+        _ = persist_project_data(current, &app_handle).await;
+    }
+    Ok(String::from("Project closed"))
+}
+
+/// Pick up changes to shared project files, such as those made by a git pull.
+/// Files with unsaved edits in memory are left alone.
+#[tauri::command]
+pub(crate) async fn reload_project_files(
+    state: State<'_, CurrentProject>,
+) -> Result<ProjectData, String> {
+    let data = {
+        let project_state = state
+            .lock()
+            .map_err(|err| format!("reload_project_files State failure: {}", err))?;
+        project_state.clone()
+    };
+    if data.id.is_empty() {
+        return Ok(data);
+    }
+    let reloaded = task::spawn_blocking(move || reload_files_from_disk(data))
+        .await
+        .map_err(|err| format!("{}", err))?;
+    let mut project_state = state
+        .lock()
+        .map_err(|err| format!("reload_project_files State failure: {}", err))?;
+    if project_state.id == reloaded.id {
+        project_state.navigation = reloaded.navigation.clone();
+        project_state.variables = reloaded.variables.clone();
+    }
+    Ok(reloaded)
 }
 
 #[tauri::command]
@@ -448,10 +590,8 @@ pub(crate) async fn rename_project(
         } else {
             return Err(String::from("Project not found."));
         }
-        projects.sort_by_key(|p| p.name.clone());
-        let vec_projects = projects.to_vec();
-        *projects = vec_projects.clone();
-        vec_projects
+        sort_projects(&mut projects);
+        projects.to_vec()
     };
     save_projects_to_local_storage(&app_handle, &vec_projects).await?;
     Ok(String::from("Project Successfully Renamed"))
@@ -473,23 +613,14 @@ pub(crate) async fn remove_project(
         if projects.len() == initial_len {
             return Err(String::from("Project not found."));
         }
-        let vec_projects = projects.to_vec();
-        *projects = vec_projects.clone();
-        vec_projects
+        projects.to_vec()
     };
     save_projects_to_local_storage(&app_handle, &vec_projects).await?;
     Ok(String::from("Project Successfully Removed"))
 }
 
-async fn get_project_docs(project_path: &str) -> Vec<String> {
-    let mut docs = vec![];
-    let root = PathBuf::from(project_path);
-    collect_md_files(&root, &root, &mut docs);
-    docs
-}
-
-fn collect_md_files(current_path: &Path, root: &Path, docs: &mut Vec<String>) {
-    const IGNORED_DIRS: &[&str] = &[
+fn get_project_docs(project_path: &str) -> Vec<String> {
+    const SKIP_DIRS: &[&str] = &[
         ".taskproxy",
         "target",
         "dist",
@@ -497,26 +628,19 @@ fn collect_md_files(current_path: &Path, root: &Path, docs: &mut Vec<String>) {
         "node_modules",
         ".git",
     ];
-    if let Ok(entries) = fs::read_dir(current_path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-
-            if path.is_dir() {
-                if path.file_name().map_or(false, |name| {
-                    let name_str = name.to_string_lossy();
-                    IGNORED_DIRS.contains(&name_str.as_ref())
-                }) {
-                    continue;
-                }
-                collect_md_files(&path, root, docs);
-            } else if path.extension().map_or(false, |ext| ext == "md") {
-                if let Ok(relative_path) = path.strip_prefix(root) {
-                    docs.push(relative_path.to_string_lossy().into_owned());
-                }
+    let root = PathBuf::from(project_path);
+    let mut docs = Vec::new();
+    walk_project_files(&root, SKIP_DIRS, |path| {
+        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md")) {
+            if let Ok(relative_path) = path.strip_prefix(&root) {
+                docs.push(relative_path.to_string_lossy().into_owned());
             }
         }
-    }
+    });
+    docs.sort();
+    docs
 }
+
 #[tauri::command]
 pub(crate) async fn search_project_files(
     state: State<'_, CurrentProject>,
@@ -541,14 +665,11 @@ pub(crate) async fn search_project_files(
     if patterns.is_empty() {
         return Ok(Vec::new());
     }
-    let root = match fs::canonicalize(&project_path) {
-        Ok(p) => p,
-        Err(_) => PathBuf::from(&project_path),
-    };
     let result = task::spawn_blocking(move || {
+        let root = fs::canonicalize(&project_path).unwrap_or_else(|_| PathBuf::from(&project_path));
         let mut matches = Vec::new();
-        collect_filtered_files(&root, &root, &patterns, &display_format, &mut matches);
-        matches.sort_by(|a, b| a.display.to_lowercase().cmp(&b.display.to_lowercase()));
+        collect_filtered_files(&root, &patterns, &display_format, &mut matches);
+        matches.sort_by_cached_key(|item| item.display.to_lowercase());
         matches
     })
     .await
@@ -557,13 +678,12 @@ pub(crate) async fn search_project_files(
 }
 
 fn collect_filtered_files(
-    current_path: &Path,
     root: &Path,
     patterns: &[String],
     display_format: &str,
     results: &mut Vec<DropdownOption>,
 ) {
-    const IGNORED_DIRS: &[&str] = &[
+    const SKIP_DIRS: &[&str] = &[
         ".taskproxy",
         "target",
         "dist",
@@ -575,50 +695,31 @@ fn collect_filtered_files(
         ".vs",
         ".vscode",
     ];
-    if let Ok(entries) = fs::read_dir(current_path) {
-        for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_symlink() {
-                continue;
+    walk_project_files(root, SKIP_DIRS, |path| {
+        let Ok(relative_path) = path.strip_prefix(root) else {
+            return;
+        };
+        let rel_str = relative_path.to_string_lossy().replace('\\', "/");
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let rel_lower = rel_str.to_lowercase();
+        let is_match = patterns.iter().any(|pat| {
+            if pat.contains('/') {
+                wildcard_match(pat, &rel_lower)
+            } else {
+                wildcard_match(pat, &file_name)
             }
-            let path = entry.path();
-            if file_type.is_dir() {
-                if path.file_name().is_some_and(|name| {
-                    let name_str = name.to_string_lossy();
-                    IGNORED_DIRS.contains(&name_str.as_ref())
-                }) {
-                    continue;
-                }
-                collect_filtered_files(&path, root, patterns, display_format, results);
-            } else if file_type.is_file() {
-                if let Ok(relative_path) = path.strip_prefix(root) {
-                    let rel_str = relative_path.to_string_lossy().replace('\\', "/");
-                    let file_name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_lowercase())
-                        .unwrap_or_default();
-                    let rel_lower = rel_str.to_lowercase();
-                    let is_match = patterns.iter().any(|pat| {
-                        if pat.contains('/') {
-                            wildcard_match(pat, &rel_lower)
-                        } else {
-                            wildcard_match(pat, &file_name)
-                        }
-                    });
-                    if is_match {
-                        let display =
-                            format_option_display(relative_path, &rel_str, display_format);
-                        results.push(DropdownOption {
-                            value: rel_str,
-                            display,
-                        });
-                    }
-                }
-            }
+        });
+        if is_match {
+            let display = format_option_display(relative_path, &rel_str, display_format);
+            results.push(DropdownOption {
+                value: rel_str,
+                display,
+            });
         }
-    }
+    });
 }
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {
@@ -679,4 +780,95 @@ fn format_option_display(rel_path: &Path, rel_str: &str, format: &str) -> String
         .replace("[file]", &file_stem)
         .replace("[parent]", &parent)
         .replace("[ext]", &ext)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(json: &str) -> DiskFile {
+        DiskFile::Parsed(json.to_string())
+    }
+
+    #[test]
+    fn unchanged_memory_never_overwrites_the_file() {
+        // A teammate's change arrived through git pull while memory is unchanged.
+        assert_eq!(plan_file_save("old", "old", &parsed("pulled")), SaveAction::Skip);
+        // The file has merge conflicts, which load as an empty list.
+        assert_eq!(
+            plan_file_save(EMPTY_LIST, EMPTY_LIST, &DiskFile::Unparseable),
+            SaveAction::Skip
+        );
+    }
+
+    #[test]
+    fn edits_are_written_only_over_the_version_they_started_from() {
+        assert_eq!(plan_file_save("old", "edit", &parsed("old")), SaveAction::Write);
+        assert_eq!(plan_file_save("old", "edit", &parsed("edit")), SaveAction::Skip);
+        assert_eq!(plan_file_save("old", "edit", &parsed("pulled")), SaveAction::Conflict);
+        assert_eq!(plan_file_save("old", "edit", &DiskFile::Unparseable), SaveAction::Conflict);
+    }
+
+    #[test]
+    fn empty_lists_do_not_create_files_in_untouched_projects() {
+        assert_eq!(plan_file_save("old", EMPTY_LIST, &DiskFile::Missing), SaveAction::Skip);
+        assert_eq!(plan_file_save(EMPTY_LIST, "edit", &DiskFile::Missing), SaveAction::Write);
+    }
+
+    #[test]
+    fn new_project_files_are_written_and_the_folder_is_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let variables = to_json(&vec!["a|text|".to_string()]).unwrap();
+        save_project_files("new-project", dir.path(), EMPTY_LIST.to_string(), variables.clone())
+            .unwrap();
+        let data_root = dir.path().join(".taskproxy");
+        assert_eq!(fs::read_to_string(data_root.join(VARIABLES_FILE)).unwrap(), variables);
+        assert!(!data_root.join(NAVIGATION_FILE).exists());
+    }
+
+    #[test]
+    fn untouched_project_gets_no_taskproxy_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        save_project_files("untouched", dir.path(), EMPTY_LIST.to_string(), EMPTY_LIST.to_string())
+            .unwrap();
+        assert!(!dir.path().join(".taskproxy").exists());
+    }
+
+    #[test]
+    fn conflicted_file_is_left_untouched_and_reports_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_root = dir.path().join(".taskproxy");
+        fs::create_dir_all(&data_root).unwrap();
+        let conflicted = "<<<<<<< HEAD\n[]\n=======\n[]\n>>>>>>> other\n";
+        fs::write(data_root.join(VARIABLES_FILE), conflicted).unwrap();
+        let (_, variables) = load_project_files("conflicted", dir.path());
+        assert!(variables.is_empty());
+        save_project_files("conflicted", dir.path(), EMPTY_LIST.to_string(), EMPTY_LIST.to_string())
+            .unwrap();
+        let edited = to_json(&vec!["a|text|".to_string()]).unwrap();
+        assert!(
+            save_project_files("conflicted", dir.path(), EMPTY_LIST.to_string(), edited).is_err()
+        );
+        assert_eq!(fs::read_to_string(data_root.join(VARIABLES_FILE)).unwrap(), conflicted);
+    }
+
+    #[test]
+    fn reload_picks_up_pulled_changes_but_keeps_unsaved_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_root = dir.path().join(".taskproxy");
+        fs::create_dir_all(&data_root).unwrap();
+        fs::write(data_root.join(VARIABLES_FILE), r#"["a|text|"]"#).unwrap();
+        let (_, variables) = load_project_files("reload", dir.path());
+        let mut data = ProjectData::new();
+        data.id = "reload".to_string();
+        data.path = dir.path().to_string_lossy().into_owned();
+        data.variables = variables;
+        fs::write(data_root.join(VARIABLES_FILE), r#"["pulled|text|"]"#).unwrap();
+        let reloaded = reload_files_from_disk(data.clone());
+        assert_eq!(reloaded.variables, ["pulled|text|"]);
+        let mut edited = reloaded;
+        edited.variables = vec!["edit|text|".to_string()];
+        fs::write(data_root.join(VARIABLES_FILE), r#"["again|text|"]"#).unwrap();
+        assert_eq!(reload_files_from_disk(edited).variables, ["edit|text|"]);
+    }
 }

@@ -1,5 +1,6 @@
 "use strict"
 {
+    const maxConsoleLines = 5000;
     webui.define("app-console-powershell", {
         constructor() {
             const t = this;
@@ -24,29 +25,39 @@
             t._console.appendChild(placeholder);
         },
         appendLine(text, isError) {
+            this.appendLines([{ content: text, isError: isError }]);
+        },
+        /** Add many lines in one DOM update, so fast output only causes one layout. */
+        appendLines(lines) {
             const t = this;
             if (t._console.firstChild && t._console.firstChild.classList.contains('placeholder')) {
                 t._console.innerHTML = '';
             }
-
-            // Handle Clear-Host / clear screen ANSI escape sequences
-            if (text.includes('\x1B[2J') || text.includes('\x1B[3J')) {
-                t.clear();
-                // Strip the clear codes from the text string so they don't render empty spans
-                text = text.replace(/\x1B\[[23]J/g, '').replace(/\x1B\[H/g, '');
+            let fragment = document.createDocumentFragment();
+            lines.forEach(entry => {
+                let text = entry.content;
+                // Handle Clear-Host / clear screen ANSI escape sequences
+                if (text.includes('\x1B[2J') || text.includes('\x1B[3J')) {
+                    t.clear();
+                    fragment = document.createDocumentFragment();
+                    // Strip the clear codes from the text string so they don't render empty spans
+                    text = text.replace(/\x1B\[[23]J/g, '').replace(/\x1B\[H/g, '');
+                }
+                let html = '';
+                if (entry.isError) {
+                    // Strip formatting from errors and strictly color them red
+                    html = `<span style="color: var(--color-danger, #ff4d4d);">${t.escapeHtml(text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, ''))}</span>`;
+                } else {
+                    html = t.ansiToHtml(text);
+                }
+                const line = webui.create('div');
+                line.innerHTML = html || ' '; // Ensure empty lines still take up vertical space
+                fragment.appendChild(line);
+            });
+            t._console.appendChild(fragment);
+            while (t._console.childElementCount > maxConsoleLines) {
+                t._console.firstElementChild.remove();
             }
-
-            let html = '';
-            if (isError) {
-                // Strip formatting from errors and strictly color them red
-                html = `<span style="color: var(--color-danger, #ff4d4d);">${t.escapeHtml(text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, ''))}</span>`;
-            } else {
-                html = t.ansiToHtml(text);
-            }
-
-            const line = webui.create('div');
-            line.innerHTML = html || ' '; // Ensure empty lines still take up vertical space
-            t._console.appendChild(line);
             t._console.scrollTop = t._console.scrollHeight;
         },
         escapeHtml(str) {

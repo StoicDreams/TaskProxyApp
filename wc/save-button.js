@@ -13,9 +13,10 @@
             function saveProject() {
                 if (isSavingProject) return;
                 isSavingProject = true;
-                webui.proxy.saveProjectData().then((msg) => {
+                Promise.resolve(webui.proxy.saveProjectData()).then((msg) => {
                     isSavingProject = false;
-                    webui.alert(msg, 'success');
+                    // Errors have already been shown, and resolve with no message.
+                    if (msg) webui.alert(msg, 'success');
                 }).catch(msg => {
                     isSavingProject = false;
                     webui.alert(msg);
@@ -24,9 +25,9 @@
             function saveApp() {
                 if (isSavingApp) return;
                 isSavingApp = true;
-                webui.proxy.saveAppData().then((msg) => {
+                Promise.resolve(webui.proxy.saveAppData()).then((msg) => {
                     isSavingApp = false;
-                    webui.alert(msg, 'success');
+                    if (msg) webui.alert(msg, 'success');
                 }).catch(msg => {
                     isSavingApp = false;
                     webui.alert(msg);

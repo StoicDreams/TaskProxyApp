@@ -1,5 +1,67 @@
 "use strict"
 {
+    /** The text between the parentheses of a script's param block, if it has one. */
+    function findParamBlock(script) {
+        const start = script.match(/^\s*(?:(?:<#[\s\S]*?#>|#[^\n]*|\[[^\]\n]*\])\s*)*param\s*\(/i);
+        if (!start) return null;
+        let depth = 1;
+        let quote = null;
+        for (let i = start[0].length; i < script.length; ++i) {
+            const c = script[i];
+            if (quote) {
+                if (c === quote) quote = null;
+            } else if (c === '"' || c === "'") {
+                quote = c;
+            } else if (c === '#') {
+                while (i < script.length && script[i] !== '\n') ++i;
+            } else if (c === '(') {
+                ++depth;
+            } else if (c === ')' && --depth === 0) {
+                return script.substring(start[0].length, i);
+            }
+        }
+        return null;
+    }
+    /** Each parameter's name is the first variable outside of its attributes and default value. */
+    function parseParams(script) {
+        const block = findParamBlock(script);
+        if (block === null) return [];
+        let params = [];
+        let depth = 0;
+        let quote = null;
+        let hasName = false;
+        let attributes = '';
+        for (let i = 0; i < block.length; ++i) {
+            const c = block[i];
+            if (quote) {
+                if (c === quote) quote = null;
+            } else if (c === '"' || c === "'") {
+                quote = c;
+            } else if (c === '#') {
+                while (i < block.length && block[i] !== '\n') ++i;
+            } else if ('([{'.includes(c)) {
+                ++depth;
+                if (!hasName) attributes += c;
+            } else if (')]}'.includes(c)) {
+                --depth;
+                if (!hasName) attributes += c;
+            } else if (depth === 0 && c === ',') {
+                hasName = false;
+                attributes = '';
+            } else if (depth === 0 && c === '$' && !hasName) {
+                const name = block.substring(i + 1).match(/^[a-zA-Z0-9_]+/);
+                if (name) {
+                    hasName = true;
+                    if (!params.find(p => p.name === name[0])) {
+                        params.push({ name: name[0], isSwitch: /\[\s*switch\s*\]/i.test(attributes) });
+                    }
+                }
+            } else if (!hasName) {
+                attributes += c;
+            }
+        }
+        return params;
+    }
     webui.define("app-script-runner", {
         linkCss: true,
         preload: 'code input-message',
@@ -44,23 +106,7 @@
         },
         parseParams(scriptContent) {
             const t = this;
-            let params = [];
-            let match = scriptContent.match(/^\s*(?:(?:<#[\s\S]*?#>|#[^\n]*)\s*)*param\s*\(([\s\S]*?)\)/i);
-            if (match) {
-                let paramBlock = match[1];
-                let parts = paramBlock.split('$');
-                for (let i = 1; i < parts.length; i++) {
-                    let prefix = parts[i - 1];
-                    let nameMatch = parts[i].match(/^([a-zA-Z0-9_]+)/);
-                    if (nameMatch) {
-                        let pName = nameMatch[1];
-                        let isSwitch = /\[.*switch.*\]/i.test(prefix);
-                        if (!params.find(p => p.name === pName)) {
-                            params.push({ name: pName, isSwitch: isSwitch });
-                        }
-                    }
-                }
-            }
+            let params = parseParams(scriptContent);
             let currentParams = Array.from(t._paramsContainer.children).map(el => ({
                 name: el.getAttribute('data-param'),
                 isSwitch: el.tagName.toLowerCase() === 'webui-toggle-icon'
@@ -150,8 +196,9 @@
                         webui.alert(msg, 'success');
                         state = webui.proxy.terminalHelpers.getState();
                         state.allScripts.push(targetPath);
-                        webui.setData('app-terminal-state', state);
+                        t._fileName = targetPath;
                         webui.setData('app-terminal-refresh', Date.now());
+                        t.dispatchEvent(new CustomEvent('script-saved', { detail: targetPath }));
                         return true;
                     }
                 }
@@ -160,7 +207,7 @@
         connected() {
             const t = this;
             t._btnReset.addEventListener('click', async () => {
-                if (!t._fileName || !t._fileName.indexOf('.')===-1) {
+                if (!t._fileName || t._fileName.indexOf('.') === -1) {
                     t.setScript('', '');
                     return;
                 };

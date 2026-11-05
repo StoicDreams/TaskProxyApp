@@ -39,6 +39,13 @@
             t._fileSelector.addEventListener('change', ev => {
                 t.loadScript(t._fileSelector.value);
             });
+            t._btnNew.addEventListener('click', () => {
+                t._runner.setScript('', '');
+                t._runner.runSaveAs();
+            });
+            t._runner.addEventListener('script-saved', ev => {
+                t.loadScripts(ev.detail);
+            });
             t.loadScripts();
         },
         disconnected() { },

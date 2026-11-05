@@ -14,41 +14,27 @@ pub(crate) async fn get_scripts(state: State<'_, CurrentProject>) -> Result<Vec<
     let root = PathBuf::from(&project_path);
     let mut scripts = Vec::new();
     let result = task::spawn_blocking(move || {
-        collect_scripts(&root, &root, &mut scripts);
+        collect_scripts(&root, &mut scripts);
         scripts
     })
     .await;
     result.map_err(|err| format!("Failed to scan scripts: {}", err))
 }
 
-fn collect_scripts(current_path: &Path, root: &Path, scripts: &mut Vec<String>) {
-    const IGNORED_DIRS: &[&str] = &["target", "dist", "build", "node_modules", ".git"];
-    if let Ok(entries) = fs::read_dir(current_path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().map_or(false, |name| {
-                    let name_str = name.to_string_lossy();
-                    IGNORED_DIRS.contains(&name_str.as_ref())
-                }) {
-                    continue;
-                }
-                collect_scripts(&path, root, scripts);
-            } else if path
-                .extension()
-                .map_or(false, |ext| ext.eq_ignore_ascii_case("ps1"))
-            {
-                if path.file_name().map_or(false, |name| {
-                    let name_str = name.to_string_lossy();
-                    name_str.starts_with("taskproxy_tmp_")
-                        || name_str.starts_with("taskproxy_live_")
-                }) {
-                    continue;
-                }
-                if let Ok(relative_path) = path.strip_prefix(root) {
-                    scripts.push(relative_path.to_string_lossy().into_owned());
-                }
+fn collect_scripts(root: &Path, scripts: &mut Vec<String>) {
+    walk_project_files(root, COMMON_SKIP_DIRS, |path| {
+        let is_script = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"));
+        let is_temp = path.file_name().is_some_and(|name| {
+            let name = name.to_string_lossy();
+            name.starts_with("taskproxy_tmp_") || name.starts_with("taskproxy_live_")
+        });
+        if is_script && !is_temp {
+            if let Ok(relative_path) = path.strip_prefix(root) {
+                scripts.push(relative_path.to_string_lossy().into_owned());
             }
         }
-    }
+    });
+    scripts.sort();
 }

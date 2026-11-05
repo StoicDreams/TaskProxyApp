@@ -88,7 +88,7 @@
                         t._content.setHtml('TODO: Implement Special Displays');
                         break;
                     default:
-                        t._content.setHtml(webui.applyAppDataToContent(markdown));
+                        t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(markdown)));
                         break;
                 }
             };
@@ -223,7 +223,7 @@
                     t._content.setHtml('TODO: Implement Special Displays');
                     break;
                 default:
-                    t._content.setHtml(webui.applyAppDataToContent(t._markdown));
+                    t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(t._markdown)));
                     break;
             }
         },

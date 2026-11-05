@@ -27,10 +27,14 @@
     <link href="Logo.svg" rel="icon" type="image/svg+xml" sizes="any" />
     <link href="https://cdn.myfi.ws/css/webui.min.css" rel="stylesheet" crossorigin="anonymous" />
     <link data-trunk href="css/app.min.css" rel="css" />
-    <!-- --
-    <script src="https://cdn.myfi.ws/webui/loader.min.js" crossorigin="anonymous"></script>
-    -->
-    <script data-trunk src="root_files/loader.min.js" data-no-minify></script>
+    <script type="text/javascript">
+        {
+            // cargo tauri dev serves from 127.0.0.1, which a released app never does, so only
+            // development uses the local loader. Written inline to load before app.min.js.
+            const loader = location.hostname === '127.0.0.1' ? '/loader.min.js' : 'https://cdn.myfi.ws/webui/loader.min.js';
+            document.write(`<script src="${loader}" crossorigin="anonymous"><\/script>`);
+        }
+    </script>
     <script data-trunk src="root_files/app.min.js" data-no-minify></script>
 </head>
 <body>

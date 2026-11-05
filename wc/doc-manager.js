@@ -50,7 +50,7 @@
             let fileContent = await webui.proxy.getProjectFile(file);
             await customElements.whenDefined('webui-content');
             if (fileContent !== undefined) {
-                t._content.setHtml(webui.parseMarkdown(fileContent));
+                t._content.setHtml(sanitizeProjectHtml(webui.parseMarkdown(fileContent)));
                 t._message.value = fileContent;
             } else {
                 t._content.setHtml('Failed to load content');
@@ -63,7 +63,7 @@
                 t.loadFile(file);
             });
             t._message.addEventListener('input', ev => {
-                t._content.setHtml(webui.parseMarkdown(t._message.value));
+                t._content.setHtml(sanitizeProjectHtml(webui.parseMarkdown(t._message.value)));
             });
             t._btnReset.addEventListener('click', async ev => {
                 let file = t._fileSelector.value;
@@ -98,7 +98,7 @@ display:none;
 <webui-grid columns="1fr 1fr">
 <webui-content></webui-content>
 <webui-input-message></webui-input-message>
-</webui.grid>
+</webui-grid>
 `
     });
 }

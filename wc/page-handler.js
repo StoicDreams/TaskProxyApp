@@ -13,6 +13,9 @@
     let segments = [];
     let pageScripts = [];
     let pageDataComponent = '';
+    let lastScannedMarkdown = null;
+    const variableKeyNames = new Map();
+    const variableRegexes = new Map();
     webui.currentPageVariables = [];
     let onTitleClick = () => {
         webui.dialog({
@@ -116,7 +119,8 @@
             markdown = mdTrimmed;
         }
         comp.innerHTML = '';
-        let hiddenDataNode = webui.create('div', { style: 'display:none;', html: pageDataComponent });
+        lastScannedMarkdown = null;
+        let hiddenDataNode = webui.create('div', { style: 'display:none;', html: sanitizeProjectHtml(pageDataComponent) });
         comp.appendChild(hiddenDataNode);
         webui.currentPageVariables.forEach(key => webui.setData(key, undefined));
         webui.currentPageVariables = [];
@@ -176,6 +180,11 @@
             if (segMd) mdContent.push(segMd);
         });
         let fullMd = mdContent.join('\n\n');
+        if (fullMd === lastScannedMarkdown) {
+            applyScriptUI();
+            return;
+        }
+        lastScannedMarkdown = fullMd;
         const bindRegex = /data-(?:bind|trigger)="([^"]*)"/g;
         let bindMatch;
         while ((bindMatch = bindRegex.exec(fullMd)) !== null) {
@@ -204,7 +213,7 @@
             });
         });
         pageScripts = [];
-        const scriptRegex = /```(?:powershell|pwsh|ps1)\n([\s\S]*?)```/gi;
+        const scriptRegex = /```(?:powershell|pwsh|ps1)\b[^\n]*\n([\s\S]*?)```/gi;
         const varRegex = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
         const ignoreVars = ['null', 'true', 'false', '_'];
         let scriptMatch;
@@ -284,6 +293,16 @@
         updateScriptPreviews();
         injectPlayButtons();
     }
+    function getVariableRegexes(varName) {
+        if (!variableRegexes.has(varName)) {
+            const name = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            variableRegexes.set(varName, [
+                new RegExp(`(\\$${name}\\s*=\\s*)(['"])([\\s\\S]*?)(\\2)`, 'gi'),
+                new RegExp(`(\\$${name}\\s*=\\s*)([^'"\\s][^\\n\\r]*)`, 'gi')
+            ]);
+        }
+        return variableRegexes.get(varName);
+    }
     function injectVariableValues(scriptContent, forPreview) {
         let updatedScript = scriptContent;
         webui.currentPageVariables.forEach(varName => {
@@ -292,7 +311,7 @@
                 return;
             }
             let val = String(rawValue);
-            let stringRegex = new RegExp(`(\\$${varName}\\s*=\\s*)(['"])([\\s\\S]*?)(\\2)`, 'gi');
+            let [stringRegex, nonStringRegex] = getVariableRegexes(varName);
             updatedScript = updatedScript.replace(stringRegex, (match, prefix, quote, oldContent, suffix) => {
                 let formattedVal = val;
                 if (forPreview) {
@@ -308,7 +327,6 @@
                 }
                 return `${prefix}${quote}${formattedVal}${suffix}`;
             });
-            let nonStringRegex = new RegExp(`(\\$${varName}\\s*=\\s*)([^'"\\s][^\\n\\r]*)`, 'gi');
             updatedScript = updatedScript.replace(nonStringRegex, (match, prefix, oldContent) => {
                 if (!isNaN(val)) {
                     return `${prefix}${Number(val)}`;
@@ -322,11 +340,15 @@
         });
         return updatedScript;
     }
+    const scriptLanguages = ['powershell', 'pwsh', 'ps1'];
     function findAllWebuiCodes() {
         let codes = [];
         segments.forEach(seg => {
             webui.querySelectorAll('webui-code', seg).forEach(el => {
-                codes.push(el);
+                // Scripts are only collected from PowerShell blocks, so only those line up with them.
+                if (scriptLanguages.includes((el.getAttribute('lang') || '').toLowerCase())) {
+                    codes.push(el);
+                }
             });
         });
         return codes;
@@ -373,6 +395,8 @@
         });
     }
     async function runPageScript(scriptMeta) {
+        let executableContent = injectVariableValues(scriptMeta.content, false);
+        if (!await webui.proxy.confirmProjectScript(injectVariableValues(scriptMeta.content, true))) return;
         let projProject = webui.getData('app-current-project');
         let projName = projProject ? projProject.display : 'Project';
         let pageName = webui.getData('page-title') || 'Page';
@@ -392,8 +416,6 @@
         webui.setData('app-terminals-page-scripts', true);
         let state = webui.proxy.terminalHelpers.getState();
         state.activeId = totalName;
-        webui.setData('app-terminal-state', state);
-        let executableContent = injectVariableValues(scriptMeta.content, false);
         webui.proxy.terminalHelpers.ensureListeners();
         await new Promise(r => setTimeout(r, 200));
         try {
@@ -413,85 +435,115 @@
             webui.alert(err, 'warning');
         }
     }
-    const segmentType = {
-        INVALID: 0,
-        EMTPY: 1,
-        RAW: 2,
-        COMPONENT: 3,
-        COMPONENTSTART: 4,
-        COMPONENTEND: 5
-    };
-    function getSegmentDetail(line) {
-        if (line.trim() === '') return [segmentType.EMTPY, { mdt: 'empty' }];
-        if (line.startsWith('#')) return [segmentType.RAW, { mdt: 'heading' }];
-        if (line.match(/<([^ >]+)[^>]*>.*<\/\1>\s*$/)) return [segmentType.COMPONENT, { mdt: 'sl-comp' }];
-        let match = line.match(/<\/([^ >]+)[^>]*>/);
-        if (match) {
-            let [_, tag] = match;
-            return [segmentType.COMPONENTEND, { tag: tag }];
+    // Tags with no closing tag, which can never open a multi-line component.
+    const voidTags = ['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr'];
+    /** The tag that opens a component at the start of this line, if any. */
+    function getComponentTag(line) {
+        let match = line.match(/^\s*<([a-zA-Z][a-zA-Z0-9-]*)(?=[\s>\/])/);
+        if (!match) return null;
+        let tag = match[1].toLowerCase();
+        return voidTags.includes(tag) ? null : tag;
+    }
+    /** How much this line changes the number of open tags with this name. */
+    function getTagDepthChange(line, tag) {
+        let change = 0;
+        const tagRegex = new RegExp(`<(\\/?)${tag}(?=[\\s>\\/])[^>]*?(\\/?)>`, 'gi');
+        let match;
+        while ((match = tagRegex.exec(line)) !== null) {
+            if (match[1]) {
+                --change;
+            } else if (!match[2]) {
+                ++change;
+            }
         }
-        match = line.match(/<([^ >]+)[^>]*>/);
-        if (match) {
-            let [_, tag] = match;
-            return [segmentType.COMPONENTSTART, { tag: tag }];
+        return change;
+    }
+    /**
+     * Split a page into editable segments. Saving joins them with a blank line, so every
+     * line must end up in a segment, and only blank lines may separate them.
+     */
+    function splitMarkdownSegments(markdown) {
+        let results = [];
+        let lines = markdown.replace(/\r\n/g, '\n').split('\n');
+        let text = [];
+        const flushText = () => {
+            if (text.length) results.push({ md: text.join('\n'), mdt: 'text' });
+            text = [];
+        };
+        for (let index = 0; index < lines.length; ++index) {
+            let line = lines[index];
+            if (line.trim() === '') {
+                flushText();
+                continue;
+            }
+            let fence = line.match(/^\s*(```+|~~~+)/);
+            if (fence) {
+                flushText();
+                let end = index + 1;
+                const close = new RegExp(`^\\s*${fence[1]}`);
+                while (end < lines.length && !close.test(lines[end])) ++end;
+                results.push({ md: lines.slice(index, end + 1).join('\n'), mdt: 'text' });
+                index = end;
+                continue;
+            }
+            if (line.startsWith('#')) {
+                flushText();
+                results.push({ md: line, mdt: 'heading' });
+                continue;
+            }
+            let tag = getComponentTag(line);
+            if (tag) {
+                flushText();
+                let depth = getTagDepthChange(line, tag);
+                let end = index;
+                let inFence = false;
+                while (depth > 0 && end < lines.length - 1) {
+                    ++end;
+                    // Tags shown as code examples do not open or close anything.
+                    if (/^\s*(```+|~~~+)/.test(lines[end])) {
+                        inFence = !inFence;
+                    } else if (!inFence) {
+                        depth += getTagDepthChange(lines[end], tag);
+                    }
+                }
+                // An unclosed plain tag is prose such as "<string> values", not a component.
+                if (depth > 0 && !tag.includes('-')) {
+                    text.push(line);
+                    continue;
+                }
+                results.push({ md: lines.slice(index, end + 1).join('\n'), mdt: end > index ? 'ml-comp' : 'sl-comp' });
+                index = end;
+                continue;
+            }
+            text.push(line);
         }
-        return [segmentType.RAW, { mdt: 'text' }];
+        flushText();
+        return results;
     }
     function convertMarkdownToSegments(markdown) {
         segments.length = 0;
-        let lines = markdown.replace(/\r\n/g, '\n').split('\n');
-        let s = [];
-        let currentSegment = null;
-        let tag = null;
-        let last = null;
-        for (let index = 0; index < lines.length; ++index) {
-            let line = lines[index];
-            let [st, options] = getSegmentDetail(line);
-            let prev = last;
-            last = st;
-            switch (st) {
-                case segmentType.INVALID:
-                    break;
-                case segmentType.COMPONENTSTART:
-                    if (!currentSegment) {
-                        currentSegment = webui.create('app-markdown-segment');
-                        tag = options.tag;
-                    }
-                    s.push(line);
-                    break;
-                case segmentType.COMPONENTEND:
-                    if (!currentSegment) continue;
-                    s.push(line);
-                    let md = s.join('\n');
-                    let ms = webui.create('app-markdown-segment', { 'data-markdown': md, mdt: 'ml-comp' });
-                    segments.push(ms);
-                    s.length = 0;
-                    currentSegment = null;
-                    break;
-                default:
-                    if (currentSegment) {
-                        s.push(line);
-                    } else {
-                        if (st === segmentType.EMTPY && prev !== segmentType.EMTPY) {
-                            continue;
-                        }
-                        options['data-markdown'] = line;
-                        let ms = webui.create('app-markdown-segment', options);
-                        segments.push(ms);
-                    }
-                    break;
-            }
-        }
+        splitMarkdownSegments(markdown).forEach(item => {
+            segments.push(webui.create('app-markdown-segment', { 'data-markdown': item.md, mdt: item.mdt }));
+        });
     }
     let sharedDrawerObserver = null;
+    function getVariableKeyName(name) {
+        if (!variableKeyNames.has(name)) {
+            variableKeyNames.set(name, webui.toSnake(name, '-'));
+        }
+        return variableKeyNames.get(name);
+    }
     function onAppDataChanged(changes) {
         if (!changes || !changes.property) return;
         let prop = changes.property;
-        let isTracked = webui.currentPageVariables.some(v => webui.toSnake(v, '-') === prop || v === prop);
-        if (isTracked) {
+        let tracked = webui.currentPageVariables.find(v => getVariableKeyName(v) === prop || v === prop);
+        if (tracked) {
+            // Only segments showing this value need rendering. Bound inputs update themselves.
+            let token = `{${webui.toSnake(tracked).toUpperCase()}}`;
             let renders = [];
             segments.forEach(seg => {
-                if (typeof seg.render === 'function' && !seg.classList.contains('isEditing')) {
+                if (typeof seg.render !== 'function' || seg.classList.contains('isEditing')) return;
+                if ((seg.getMarkdown() || '').includes(token)) {
                     renders.push(seg.render());
                 }
             });
@@ -571,6 +623,7 @@
             myId = '';
             myFile = '';
             segments = [];
+            lastScannedMarkdown = null;
             pageDataComponent = '';
         }
     });

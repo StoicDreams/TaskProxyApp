@@ -68,22 +68,26 @@ const procs = {
         const lines = diffText.split("\n");
         let oldLineNum = 0;
         let newLineNum = 0;
+        let inHunk = false;
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             // Match hunk header like: @@ -1,5 +1,6 @@
             const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
             if (hunkMatch) {
+                inHunk = true;
                 oldLineNum = parseInt(hunkMatch[1], 10);
                 newLineNum = parseInt(hunkMatch[2], 10);
                 continue;
             }
-            if (line.startsWith("+") && !line.startsWith("+++")) {
+            // Before the first hunk are file headers. A changed line can also begin with --- or +++.
+            if (!inHunk) continue;
+            if (line.startsWith("+")) {
                 added[newLineNum] = line.slice(1);
                 newLineNum++;
-            } else if (line.startsWith("-") && !line.startsWith("---")) {
+            } else if (line.startsWith("-")) {
                 removed[oldLineNum] = line.slice(1);
                 oldLineNum++;
-            } else {
+            } else if (line.startsWith(" ")) {
                 // Context line, increment both
                 oldLineNum++;
                 newLineNum++;

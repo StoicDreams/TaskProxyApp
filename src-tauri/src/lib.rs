@@ -17,6 +17,7 @@ pub(crate) static PROJECT_LAST_SYNC: LazyLock<Mutex<Option<Instant>>> =
     LazyLock::new(|| Mutex::new(None));
 pub(crate) static APP_LAST_SYNC: LazyLock<Mutex<Option<Instant>>> =
     LazyLock::new(|| Mutex::new(None));
+const MAIN_WINDOW_LABEL: &str = "taskproxy";
 static DID_SAVE_ON_CLOSE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -27,14 +28,6 @@ pub fn run() {
 
     // Setup plugins
     let mut builder = tauri::Builder::default()
-        .setup(|app| {
-            #[cfg(debug_assertions)]
-            {
-                use tauri::Manager;
-                app.get_webview_window("main").unwrap().open_devtools();
-            }
-            Ok(())
-        })
         .plugin(
             tauri_plugin_updater::Builder::new()
                 .header("Accept", "*/*")
@@ -59,20 +52,6 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(crate::services::EmojiState::default())))
         .manage(crate::services::terminal_controller::TerminalManager::default());
 
-    // Setup window positioner
-    builder = builder.setup(|app| {
-        #[cfg(desktop)]
-        {
-            let _ = app.handle().plugin(tauri_plugin_positioner::init());
-            tauri::tray::TrayIconBuilder::new()
-                .on_tray_icon_event(|tray_handle, event| {
-                    tauri_plugin_positioner::on_tray_event(tray_handle.app_handle(), &event);
-                })
-                .build(app)?;
-        }
-        Ok(())
-    });
-
     // Save data on close
     builder = builder.on_window_event(|window, event| match event {
         WindowEvent::CloseRequested { api, .. } => {
@@ -86,7 +65,7 @@ pub fn run() {
             println!("Saving data from window close");
             let app_handle = window.app_handle().clone();
             let _ = window.emit(
-                "webui.isclosing",
+                "webui-isclosing",
                 "Closing, please wait while we save your data!",
             );
             #[cfg(desktop)]
@@ -120,8 +99,8 @@ pub fn run() {
                     }
                 };
                 let save_project_data = async {
-                    if let Some(project_data) = project_data {
-                        let result = save_project_data(project_data, app_handle.clone()).await;
+                    if let Some(project_data) = project_data.filter(|data| !data.id.is_empty()) {
+                        let result = persist_project_data(project_data, &app_handle).await;
                         println!("{:?}", result);
                     }
                 };
@@ -134,24 +113,17 @@ pub fn run() {
         _ => {}
     });
 
-    // App setup
+    // App setup. Tauri keeps only the last setup hook, so all setup belongs here.
     builder = builder.setup(|app| {
-        if let Some(window) = app.get_webview_window("main") {
-            #[cfg(desktop)]
-            {
-                use tauri_plugin_window_state::{StateFlags, WindowExt};
-                let _ = window.restore_state(StateFlags::all());
+        // Opt-in, because attaching the inspector during startup can hang the page in WebKitGTK.
+        // Devtools can still be opened at any time from the page's context menu.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("TASKPROXY_DEVTOOLS").is_some() {
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                window.open_devtools();
             }
-            // Explicit nav required because Tauri initially tries loading page before assets are available.
-            // let url_to_load = "/";
-            // let nav_script = format!("window.location.replace('{}')", url_to_load);
-            // //std::thread::sleep(std::time::Duration::from_millis(100));
-            // let _ = window.eval(&nav_script);
-            #[cfg(debug_assertions)]
-            window.open_devtools();
-        } else {
-            println!("Could not get main window handle");
         }
+        services::terminal_controller::remove_stale_temp_scripts(app.handle());
         // Spawn background task
         let app_handle = app.handle().clone();
         tauri::async_runtime::spawn(background_tasks(app_handle));
@@ -199,6 +171,8 @@ pub fn run() {
             services::projects::rename_project,
             services::projects::remove_project,
             services::projects::save_project_data,
+            services::projects::clear_current_project,
+            services::projects::reload_project_files,
             services::projects::save_project_file,
             services::projects::search_project_files,
             services::projects::sync_project_data,
@@ -212,6 +186,16 @@ pub fn run() {
             services::updates::check_update,
             services::updates::install_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Exiting skips destructors, which would leave scripts and temp files behind.
+                let manager = app_handle
+                    .state::<services::terminal_controller::TerminalManager>()
+                    .processes
+                    .clone();
+                tauri::async_runtime::block_on(services::terminal_controller::shutdown(manager));
+            }
+        });
 }

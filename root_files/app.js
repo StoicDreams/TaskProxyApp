@@ -5,6 +5,9 @@
     const projectRootGetVars = ['id', 'path', 'current_page', 'docs', 'navigation', 'variables', 'data']
     const projectRootSetVars = []
     const AsyncFunction = (async () => { }).constructor;
+    const patKeys = ['git_pat', 'github_pat'];
+    const maxTerminalLines = 5000;
+    const terminalStates = new Map();
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
@@ -26,7 +29,7 @@
         }
         isLoadingDialog = webui.dialog({ isLoading: true, content });
         if (typeof during === 'function') {
-            if (handler.constructor == AsyncFunction) {
+            if (during.constructor == AsyncFunction) {
                 await during();
             } else {
                 during();
@@ -154,7 +157,7 @@
             commit: (repo, files, message, err) => invokeGit('git_commit', { repo, files, message }, err),
             getChanges: (path, err) => invokeGit('get_git_changes', { path }, err),
             getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),
-            getRepos: (path, err) => invokeGit('get_git_repos', { path }, err),
+            getRepos: (err) => invokeGit('get_git_repos', {}, err),
             getBranches: (repo, err) => invokeGit('get_git_branches', { repo }, err),
             switchBranch: (repo, branch, err) => invokeGit('git_switch_branch', { repo, branch }, err),
             createBranch: (repo, branch, baseBranch, err) => invokeGit('git_create_branch', { repo, branch, baseBranch }, err),
@@ -166,6 +169,8 @@
             sync: (repo, err) => invokeGit('git_sync', { repo }, err),
             getRemoteStatus: (repo, err) => invokeGit('get_git_remote_status', { repo }, err),
             fetch: (repo, err) => invokeGit('git_fetch', { repo }, err),
+            // For automatic refreshes, which should not interrupt the user about credentials.
+            fetchQuiet: (repo) => tauri.core.invoke('git_fetch', { repo }).catch(() => undefined),
             stash: (repo, message, err) => invokeGit('git_stash', { repo, message }, err),
             stashPop: (repo, err) => invokeGit('git_stash_pop', { repo }, err),
             restoreFile: (repo, file, err) => invokeGit('git_restore_file', { repo, file }, err),
@@ -174,11 +179,19 @@
         }
         projects = {
             isLoaded: false,
-            runWhenLoaded: async (handler) => {
-                while (!webui.proxy.projects.isLoaded) {
-                    await webui.wait(10);
+            waiting: [],
+            setLoaded(isLoaded) {
+                this.isLoaded = isLoaded;
+                if (isLoaded) {
+                    this.waiting.splice(0).forEach(handler => handler());
                 }
-                handler();
+            },
+            runWhenLoaded(handler) {
+                if (this.isLoaded) {
+                    handler();
+                } else {
+                    this.waiting.push(handler);
+                }
             }
         }
         terminal = {
@@ -313,6 +326,45 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('set_securitykey', { securityKey: secKey }).catch(errHandler);
         }
+        closeProject(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('clear_current_project', {}).catch(errHandler);
+        }
+        /** Pick up changes made to shared project files on disk, such as by a git pull. */
+        async reloadProjectFiles(errHandler) {
+            errHandler ??= defaultErrHandler;
+            if (!webui.projectData || !webui.projectData.id) return;
+            await this.syncProjectData(errHandler);
+            const projectId = webui.projectData.id;
+            const reloaded = await tauri.core.invoke('reload_project_files', {}).catch(errHandler);
+            if (!reloaded || webui.projectData.id !== projectId) return;
+            webui.projectData.navigation = reloaded.navigation;
+            webui.projectData.variables = reloaded.variables;
+            webui.setData('app-nav-routes', reloaded.navigation);
+        }
+        /** Page scripts come from the repository, so ask before running any from a new project. */
+        confirmProjectScript(script) {
+            const path = webui.projectData?.path;
+            const trusted = webui.getData('app-trusted-projects') || [];
+            if (!path || trusted.includes(path)) return Promise.resolve(true);
+            return new Promise(resolve => {
+                webui.dialog({
+                    title: 'Run Script From This Project?',
+                    content: `
+                        <p>This script comes from the files in <strong>${webui.escapeForHTML(path)}</strong> and can do anything your user account can do. Only continue if you trust this project.</p>
+                        <pre style="max-height:40vh;overflow:auto;">${webui.escapeForHTML(script)}</pre>
+                    `,
+                    confirm: 'Trust Project & Run',
+                    cancel: 'Cancel',
+                    onconfirm: () => {
+                        webui.setData('app-trusted-projects', [...trusted, path]);
+                        resolve(true);
+                        return true;
+                    },
+                    oncancel: () => resolve(false)
+                });
+            });
+        }
         syncProjectData(errHandler) {
             errHandler ??= defaultErrHandler;
             if (!webui.projectData || !webui.projectData.id) {
@@ -321,37 +373,24 @@
             return tauri.core.invoke('sync_project_data', { data: webui.projectData }).catch(errHandler);
         }
         terminalHelpers = {
-            _isSessionCleaned: false,
-            _isSessionStarted: false,
-            getState() {
-                let state = !this._isSessionStarted ? null : webui.getData('app-terminal-state');
-                if (!state) {
-                    this._isSessionStarted = true;
-                    state = {
+            _listenersAttached: false,
+            /**
+             * Terminal state for a project. Kept out of webui data because every setData
+             * clones and compares its value, which grows with the amount of script output.
+             */
+            getState(projectId) {
+                const id = projectId ?? webui.projectData?.id ?? '';
+                if (!terminalStates.has(id)) {
+                    terminalStates.set(id, {
                         activeId: 'live',
-                        consoleActiveId: 'live',
                         allScripts: [],
                         queue: [],
                         terminals: {
                             'live': { id: 'live', name: 'Live Command', status: 'Ready', script: '', output: [], isLive: true }
-                        },
-                        listenersAttached: false,
-                        consolePanelState: { isOpen: false, isTop: false, isSticky: false }
-                    };
-                    this._isSessionCleaned = true;
-                    webui.setData('app-terminal-state', state);
-                } else if (!this._isSessionCleaned) {
-                    state.listenersAttached = false;
-                    state.queue = [];
-                    Object.values(state.terminals).forEach(term => {
-                        if (term.status === 'Running') {
-                            term.status = 'Finished';
                         }
                     });
-                    this._isSessionCleaned = true;
-                    webui.setData('app-terminal-state', state);
                 }
-                return state;
+                return terminalStates.get(id);
             },
             async runScript(id, scriptContent, args, inSeparateWindow, useQueue, isPageScript) {
                 let state = this.getState();
@@ -362,7 +401,6 @@
                     let isRunning = Object.values(state.terminals).some(t => t.status === 'Running');
                     if (isRunning) {
                         state.queue.push({ id, scriptContent, args, inSeparateWindow, isPageScript });
-                        webui.setData('app-terminal-state', state);
                         return 'Queued';
                     }
                 }
@@ -380,7 +418,6 @@
                 if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
                     state.allScripts.push(id);
                 }
-                webui.setData('app-terminal-state', state);
                 this.clearOutput(id);
                 webui.setData('app-terminal-refresh', Date.now());
                 try {
@@ -394,38 +431,40 @@
                     throw err;
                 }
             },
-            _scriptFinished(id) {
-                let state = this.getState();
+            _scriptFinished(id, projectId) {
+                let state = this.getState(projectId);
                 if (state.terminals[id]) {
                     state.terminals[id].status = 'Finished';
-                    webui.setData('app-terminal-state', state);
                     webui.setData('app-terminal-refresh', Date.now());
                 }
-                if (state.queue && state.queue.length > 0) {
-                    let next = state.queue.shift();
-                    webui.setData('app-terminal-state', state);
+                this.runNextQueued();
+            },
+            /** Scripts run in the open project, so another project's queue waits until it reopens. */
+            runNextQueued() {
+                let state = this.getState();
+                if (Object.values(state.terminals).some(t => t.status === 'Running')) return;
+                let next = state.queue.shift();
+                if (next) {
                     this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow, next.isPageScript).catch(err => webui.alert(err, 'danger'));
                 }
             },
             ensureListeners() {
-                let state = this.getState();
-                    if (state.listenersAttached || !webui.proxy?.terminal) return;
-                    state.listenersAttached = true;
-                    webui.setData('app-terminal-state', state);
-                    webui.proxy.terminal.onOutput((event) => {
-                        let currentState = this.getState();
-                        const data = event.payload;
-                        const term = currentState.terminals[data.terminalId];
-                        if (term) {
-                            term.output.push({ text: data.content, isError: data.isError });
-                            webui.setData('app-terminal-state', currentState);
-                            document.dispatchEvent(new CustomEvent('term-line-out', { detail: data }));
-                        }
-                    });
-                    webui.proxy.terminal.onFinished((event) => {
-                        const data = event.payload;
-                        this._scriptFinished(data.terminalId);
-                    });
+                if (this._listenersAttached || !webui.proxy?.terminal) return;
+                this._listenersAttached = true;
+                webui.proxy.terminal.onOutput((event) => {
+                    const data = event.payload;
+                    const term = this.getState(data.projectId).terminals[data.terminalId];
+                    if (!term) return;
+                    data.lines.forEach(line => term.output.push({ text: line.content, isError: line.isError }));
+                    if (term.output.length > maxTerminalLines) {
+                        term.output.splice(0, term.output.length - maxTerminalLines);
+                    }
+                    document.dispatchEvent(new CustomEvent('term-lines-out', { detail: data }));
+                });
+                webui.proxy.terminal.onFinished((event) => {
+                    const data = event.payload;
+                    this._scriptFinished(data.terminalId, data.projectId);
+                });
             },
             async getDropdownOptions(state, showAll) {
                 let options = [];
@@ -433,30 +472,19 @@
                 options.push({ id: 'live', value: 'live', display: `Live (${liveTerm.status})` });
                 let showPageScripts = webui.getData('app-terminals-page-scripts') === true || webui.getData('app-terminals-page-scripts') === 'true';
                 if (showAll) {
-                    state.allScripts = await webui.proxy.getScripts();
+                    state.allScripts = await webui.proxy.getScripts() || [];
                     state.allScripts.forEach(path => {
                         if (path.indexOf('taskproxy_tmp_') !== -1) return;
                         const term = state.terminals[path];
                         const status = term ? term.status : 'Ready';
                         options.push({ id: path, value: path, display: `${path} (${status})` });
                     });
-                    webui.setData('app-terminal-state', state);
                 }
                 Object.values(state.terminals).forEach(term => {
                     if (term.id === 'live') return;
-                    if (term.isPageScript) {
-                        if (!showPageScripts && state.activeId !== term.id) return;
-                        if (!options.find(o => o.id === term.id)) {
-                            options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
-                        }
-                    } else if (!showAll) {
-                        if (!options.find(o => o.id === term.id)) {
-                            options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
-                        }
-                    } else {
-                        if (!options.find(o => o.id === term.id)) {
-                            options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
-                        }
+                    if (term.isPageScript && !showPageScripts && state.activeId !== term.id) return;
+                    if (!options.find(o => o.id === term.id)) {
+                        options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
                     }
                 });
                 return options;
@@ -465,7 +493,6 @@
                 let state = this.getState();
                 if (state.terminals[id]) {
                     state.terminals[id].output = [];
-                    webui.setData('app-terminal-state', state);
                     webui.setData('app-terminal-cleared', { terminalId: id, tick: Date.now() });
                 }
             }
@@ -478,11 +505,14 @@
         };
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
+        tauri.event.listen('webui-isclosing', event => webui.isclosing(event.payload));
         let data = await webui.proxy.getAppData();
         let version = await webui.proxy.getVersion();
         if (version) data.data['app-version'] = `v${version}`;
         webui.taskProxyData = data;
-        let keysDeleted = false;
+        // Terminal state used to be stored here, along with all of its output.
+        let keysDeleted = 'app-terminal-state' in webui.taskProxyData.data;
+        delete webui.taskProxyData.data['app-terminal-state'];
         const globalVarKeys = (webui.taskProxyData.variables || []).map(v => v.split('|')[0]);
         Object.keys(webui.taskProxyData.data).forEach(key => {
             const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle", "webui-version"].includes(key);
@@ -504,7 +534,9 @@
             let ks = key.indexOf('.') !== -1 ? key.split('.') : [null, key];
             const scope = ks[0];
             key = ks[1];
-            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle", "git_pat"].includes(key);
+            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle"].includes(key);
+            // Tokens are read with getProjectData or getGlobalData, never by page content.
+            if (patKeys.includes(key)) return undefined;
             if (scope !== projectScope && scope !== globalScope && (isAppKey || getData('app-env-page-enabled'))) {
                 // Check Page Data
                 let value = getData(key);
@@ -560,22 +592,19 @@
         webui.deleteGlobalData = function(key) {
             delete webui.taskProxyData.data[key];
             if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
-            let index = webui.taskProxyData.variables.indexOf(key);
-            if (index !== -1) {
-                webui.taskProxyData.variables.splice(index, 1);
-            }
+            webui.taskProxyData.variables = webui.taskProxyData.variables.filter(v => v.split('|')[0] !== key);
         }
         Object.entries(data.data).forEach(([key, value]) => {
-            if (ignoreAppDataFields.indexOf(key) !== -1) return;
+            if (ignoreAppDataFields.indexOf(key) !== -1 || patKeys.includes(key)) return;
             webui.setData(key, value);
         });
         webui.watchAppDataChanges(queueAppDataChanges);
         let currentProject = webui.getData('app-current-project');
         if (currentProject) {
-            await loadProject({
+            await queueProjectChange(() => loadProject({
                 name: currentProject.display,
                 path: currentProject.value
-            });
+            }));
         }
         hideLoading();
     });
@@ -603,23 +632,42 @@
                 webui.proxy.syncProjectData();
                 break;
             case 'app-current-project':
-                await loadProject({
-                    name: changes.newValue.display,
-                    path: (changes.newValue.value || '').replace(/\\/g, '/')
-                });
+                if (changes.newValue && changes.newValue.value) {
+                    await queueProjectChange(() => loadProject({
+                        name: changes.newValue.display,
+                        path: changes.newValue.value.replace(/\\/g, '/')
+                    }));
+                } else {
+                    await queueProjectChange(closeProject);
+                }
                 break;
         }
 
+    }
+    /** Project changes run one at a time, so a quick switch cannot interleave with the last. */
+    let projectChanges = Promise.resolve();
+    function queueProjectChange(change) {
+        projectChanges = projectChanges.then(change, change);
+        return projectChanges;
+    }
+    async function closeProject() {
+        await webui.proxy.saveProjectData();
+        cache.currentProjectPath = null;
+        webui.proxy.projects.setLoaded(false);
+        webui.projectData = { id: null, path: null, currentPage: '/', navigation: [], data: {} };
+        webui.setData('app-nav-routes', []);
+        await webui.proxy.closeProject();
+        handlePagePath('/', true);
     }
     async function loadProject(project) {
         if (project && project.path) {
             project.path = project.path.replace(/\\/g, '/');
         }
-        if (cache.currentProject === project) return;
-        cache.currentProject = project;
+        if (cache.currentProjectPath === project.path) return;
+        cache.currentProjectPath = project.path;
         showLoading('Saving Project!');
         try {
-            webui.proxy.saveProjectData();
+            await webui.proxy.saveProjectData();
             hideLoading();
             showLoading('Loading Project!');
             webui.setData('app-nav-routes', []);
@@ -628,13 +676,15 @@
             if (webui.projectData && webui.projectData.path) {
                 webui.projectData.path = webui.projectData.path.replace(/\\/g, '/');
             }
-            webui.proxy.projects.isLoaded = !!webui.projectData.id;
+            webui.proxy.projects.setLoaded(!!webui.projectData.id);
+            webui.proxy.terminalHelpers.runNextQueued();
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';
             setTimeout(() => {
                 handlePagePath(startPage, true);
             }, 300);
         } catch (ex) {
+            cache.currentProjectPath = null;
             webui.alert(ex);
             handlePagePath('/', true);
         } finally {
@@ -683,6 +733,43 @@
             hideLoading();
         }
     }
+}
+
+/**
+ * Clean HTML built from project files before it reaches the DOM. Those files come from
+ * repositories, and scripts running in this window could reach every app command.
+ */
+function sanitizeProjectHtml(dirty) {
+    if (typeof dirty !== 'string') return '';
+    const blockedTags = new Set(['script', 'iframe', 'object', 'embed', 'base', 'head', 'link', 'meta', 'applet', 'frame', 'frameset', 'style', 'animate', 'animatetransform', 'animatemotion', 'set']);
+    const urlAttributes = new Set(['href', 'xlink:href', 'src', 'action', 'formaction', 'data', 'poster', 'background']);
+    const unsafeUrl = /^(javascript|vbscript|data:text\/html)/;
+    const doc = new DOMParser().parseFromString(dirty.replace(/\0/g, ''), 'text/html');
+    const clean = (node) => {
+        Array.from(node.childNodes).forEach(child => {
+            if (child.nodeType === Node.COMMENT_NODE) {
+                child.remove();
+                return;
+            }
+            if (child.nodeType !== Node.ELEMENT_NODE) return;
+            if (blockedTags.has(child.localName.toLowerCase())) {
+                child.remove();
+                return;
+            }
+            Array.from(child.attributes).forEach(attr => {
+                const name = attr.name.toLowerCase();
+                const value = attr.value.replace(/[\s\x00-\x1f]+/g, '').toLowerCase();
+                if (name.startsWith('on') || name === 'srcdoc' || (urlAttributes.has(name) && unsafeUrl.test(value))) {
+                    child.removeAttribute(attr.name);
+                }
+            });
+            // Template content is not part of childNodes, and components stamp it out later.
+            if (child.content) clean(child.content);
+            clean(child);
+        });
+    };
+    clean(doc.body);
+    return doc.body.innerHTML;
 }
 
 function getDragNDropSetup(getSegments) {

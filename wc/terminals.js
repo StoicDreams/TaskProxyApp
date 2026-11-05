@@ -4,7 +4,7 @@
         linkCss: false,
         watchVisibility: false,
         isInput: false,
-        preload: 'app:script-runner dropdown toggle-icon input-message dialogs',
+        preload: 'app:script-runner app:console-powershell dropdown toggle-icon input-message dialogs',
         constructor() {
             const t = this;
             t.icon = t.template.querySelector('webui-icon');
@@ -77,7 +77,7 @@
     </webui-flex>
     <webui-flex column style="min-height: 40vh;">
         <label style="font-weight: bold; margin-bottom: 0.25rem;">Console Output:</label>
-        <app-console-powershell id="term-console"></div>
+        <app-console-powershell id="term-console"></app-console-powershell>
     </webui-flex>
 </div>
 <div id="term-install-wrapper" style="display:none; flex-direction:column; gap:var(--padding); align-items:center; text-align:center; padding: 2rem;">
@@ -144,23 +144,15 @@
                     let state = webui.proxy.terminalHelpers.getState();
                     const current = state.terminals[state.activeId];
                     if (!current || current.status !== 'Running') return;
-                    await webui.proxy.terminal.kill(current.id);
-                    state = webui.proxy.terminalHelpers.getState();
-                    if (state.terminals[state.activeId]) {
-                        state.terminals[state.activeId].status = 'Finished';
-                        webui.setData('app-terminal-state', state);
-                    }
-                    webui.setData('app-terminal-refresh', Date.now());
+                    // The finished event updates the status and starts the next queued script.
+                    await webui.proxy.terminal.kill(current.id).catch(() => {
+                        webui.proxy.terminalHelpers._scriptFinished(current.id);
+                    });
                 });
                 btnKillAll.addEventListener('click', async () => {
+                    // Clear the queue first, so finishing scripts do not start the next one.
+                    webui.proxy.terminalHelpers.getState().queue = [];
                     await webui.proxy.terminal.killAll();
-                    let state = webui.proxy.terminalHelpers.getState();
-                    Object.values(state.terminals).forEach(term => {
-                        if (term.status === 'Running') term.status = 'Finished';
-                    });
-                    state.queue = [];
-                    webui.setData('app-terminal-state', state);
-                    webui.setData('app-terminal-refresh', Date.now());
                 });
                 btnClear.addEventListener('click', () => {
                     let state = webui.proxy.terminalHelpers.getState();
@@ -170,11 +162,11 @@
                 t.switchTerminal(initState.activeId);
                 if (!t._streamAttached) {
                     t._streamAttached = true;
-                    document.addEventListener('term-line-out', (ev) => {
-                        let state = webui.proxy.terminalHelpers.getState();
+                    document.addEventListener('term-lines-out', (ev) => {
                         const data = ev.detail;
-                        if (state.activeId === data.terminalId) {
-                            t._activeConsole.appendLine(data.content, data.isError);
+                        let state = webui.proxy.terminalHelpers.getState();
+                        if (data.projectId === webui.projectData?.id && state.activeId === data.terminalId && t._activeConsole.isConnected && t._activeConsole.appendLines) {
+                            t._activeConsole.appendLines(data.lines);
                         }
                     });
                 }
@@ -183,7 +175,7 @@
         },
         async switchTerminal(id) {
             const t = this;
-            await webui.wait(() => t._runner && typeof t._runner.setScript === 'function');
+            await webui.wait(() => t._runner && typeof t._runner.setScript === 'function' && typeof t._activeConsole?.appendLines === 'function');
             let state = webui.proxy.terminalHelpers.getState();
             state.activeId = id;
             if (!state.terminals[id]) {
@@ -193,7 +185,6 @@
                 }
                 state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, output: [], isLive: id === 'live' };
             }
-            webui.setData('app-terminal-state', state);
             const current = state.terminals[id];
             t.renderConsole();
             t.refreshDropdown();
@@ -223,7 +214,7 @@
             if (this._btnKill) this._btnKill.disabled = !isRunning;
         },
         renderConsole() {
-            if (!this._activeConsole) return;
+            if (typeof this._activeConsole?.clear !== 'function') return;
             this._activeConsole.clear();
             const state = webui.proxy.terminalHelpers.getState();
             const current = state.terminals[state.activeId];
@@ -231,14 +222,7 @@
                 this._activeConsole.showPlaceholder();
                 return;
             }
-            current.output.forEach(entry => this._activeConsole.appendLine(entry.text, entry.isError));
-        },
-        onTerminalOutput(data) {
-            if (!data) return;
-            const state = webui.proxy.terminalHelpers.getState();
-            if (state.activeId === data.terminalId) {
-                this._activeConsole.appendLine(data.content, data.isError);
-            }
+            this._activeConsole.appendLines(current.output.map(entry => ({ content: entry.text, isError: entry.isError })));
         },
         onTerminalRefresh() {
             this.refreshDropdown();
@@ -256,7 +240,6 @@
 <style type="text/css">
 :host { display:inline-flex; cursor:pointer; padding:1px; align-items:center; justify-content:center; }
 </style>
-<span style="display:none;" data-subscribe="app-terminal-output:onTerminalOutput"></span>
 <span style="display:none;" data-subscribe="app-terminal-refresh:onTerminalRefresh"></span>
 <span style="display:none;" data-subscribe="app-terminal-cleared:onTerminalCleared"></span>
 

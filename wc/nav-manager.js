@@ -85,7 +85,7 @@
                             return;
                         }
                         if (list[index].children) {
-                            checkChildren(list[index]);
+                            checkChildren(list[index].children);
                         }
                     }
                 }

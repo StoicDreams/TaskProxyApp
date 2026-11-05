@@ -15,16 +15,47 @@ const webui = (() => {
         import(markdownSrc).then((module) => {
             webui.markdown = new module.MarkdownParser();
             webui.loaded = true;
+        }).catch((ex) => {
+            console.error("Failed to load markdown parser", ex);
+            webui.loaded = true;
         });
     }
     const domain = location.hostname;
     const AsyncFunction = (async () => {}).constructor;
     window.AsyncFunction = AsyncFunction;
     const map = {
-        subs: {},
-        triggers: {},
+        subs: Object.create(null),
+        triggers: Object.create(null),
         hides: new Set(),
     };
+    // Normalized base key -> subscribed data keys, so setData only visits relevant subscribers.
+    const subsByBaseKey = new Map();
+    const UNSAFE_DATA_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+    // Case conversion runs on every data read and attribute change over a small set of distinct keys.
+    const CASE_CACHE_LIMIT = 5000;
+    const snakeCaches = new Map();
+    const camelCache = new Map();
+    const pascelCache = new Map();
+    function cachedConvert(cache, key, convert) {
+        let converted = cache.get(key);
+        if (converted === undefined) {
+            converted = convert(key);
+            if (cache.size >= CASE_CACHE_LIMIT) cache.clear();
+            cache.set(key, converted);
+        }
+        return converted;
+    }
+    function capitalizeSeparated(key) {
+        return key.trim().replace(/((-| )[A-Za-z0-9]{1})/g, (a) => a[1].toUpperCase());
+    }
+    function isPersistentDataKey(key) {
+        return (
+            key.startsWith("app-") ||
+            key.startsWith("session-") ||
+            key === "page-path" ||
+            key === "webui-version"
+        );
+    }
     // TODO: Temp debug
     window.subs = map.subs;
     const resizeSubscribers = {};
@@ -52,7 +83,9 @@ const webui = (() => {
                 let expiresAt = lastActive + autoSignout;
                 if (Date.now() < expiresAt) {
                     setTimeout(() => checkForRoleRefresh(), autoSignout);
-                    webui.loadRoles();
+                    webui.loadRoles().catch((ex) => {
+                        webui.log.warn("Failed to refresh roles", ex);
+                    });
                 } else {
                     setTimeout(() => checkForRoleRefresh(), minTimeout);
                 }
@@ -75,18 +108,28 @@ const webui = (() => {
     ];
     const notifyForAppDataChanges = [];
     const notifyForSessionDataChanges = [];
+    // Lookup of {PLACEHOLDER} -> data key, rebuilt only when the set of data keys changes.
+    let dataTokens = null;
+    let sessionPersistQueued = false;
     function notifyAppDataChanged(changeDetails) {
+        if (changeDetails.type !== "update") dataTokens = null;
         notifyForAppDataChanges.forEach((handler) => {
             if (!handler) return;
             handler(changeDetails, watchedAppData);
         });
     }
     function notifySessionDataChanged(changeDetails) {
+        if (changeDetails.type !== "update") dataTokens = null;
         notifyForSessionDataChanges.forEach((handler) => {
             if (!handler) return;
             handler(changeDetails, watchedSessionData);
         });
-        storage.setItem("session-data", JSON.stringify(watchedSessionData));
+        if (sessionPersistQueued) return;
+        sessionPersistQueued = true;
+        queueMicrotask(() => {
+            sessionPersistQueued = false;
+            storage.setItem("session-data", JSON.stringify(watchedSessionData));
+        });
     }
     function getHandler(notifyHandler) {
         const handler = {
@@ -167,12 +210,9 @@ const webui = (() => {
     const STORAGE_ACCEPTED_KEY = "storage_accepted";
     const ACCEPT_SESSION_STORAGE = "1";
     const ACCEPT_LOCAL_STORAGE = "2";
-    const cachedFetches = {};
+    const cachedFetches = new Map();
     let acceptedStorage = ACCEPT_SESSION_STORAGE;
-    if (
-        localStorage.key(STORAGE_ACCEPTED_KEY) &&
-        localStorage.getItem(STORAGE_ACCEPTED_KEY) === ACCEPT_LOCAL_STORAGE
-    ) {
+    if (localStorage.getItem(STORAGE_ACCEPTED_KEY) === ACCEPT_LOCAL_STORAGE) {
         acceptedStorage = ACCEPT_LOCAL_STORAGE;
         Object.keys(localStorage).forEach((key) => {
             memStorageCache[key] = localStorage.getItem(key);
@@ -185,50 +225,33 @@ const webui = (() => {
         });
         localStorage.clear();
     }
-    function getCache() {
-        return new Promise((resolve, reject) => {
-            if (localStorage.getItem(STORAGE_ACCEPTED_KEY)) {
-                resolve(localStorage);
-            } else {
-                resolve(sessionStorage);
-            }
-        });
+    function getActiveStorage() {
+        return acceptedStorage === ACCEPT_LOCAL_STORAGE ? localStorage : sessionStorage;
     }
     class MemStorage {
         STORAGE_ACCEPTED_KEY = STORAGE_ACCEPTED_KEY;
         ACCEPT_SESSION_STORAGE = ACCEPT_SESSION_STORAGE;
         ACCEPT_LOCAL_STORAGE = ACCEPT_LOCAL_STORAGE;
         key(key) {
-            return Object.keys(memStorageCache).filter((m) => m == key).length >
-                0
-                ? key
-                : null;
+            return Object.hasOwn(memStorageCache, key) ? key : null;
         }
         clear() {
             Object.keys(memStorageCache).forEach((key) => {
-                this.removeItem(key);
+                delete memStorageCache[key];
             });
-            getCache().then((cache) => {
-                cache.clear();
-            });
+            getActiveStorage().clear();
         }
         removeItem(key) {
             delete memStorageCache[key];
-            getCache()
-                .then((cache) => {
-                    cache.removeItem(key);
-                })
-                .catch((_) => {});
+            getActiveStorage().removeItem(key);
         }
         setItem(key, value) {
             memStorageCache[key] = value;
-            getCache()
-                .then((cache) => {
-                    cache.setItem(key, value);
-                })
-                .catch((_) => {
-                    // Caching not accepted
-                });
+            try {
+                getActiveStorage().setItem(key, value);
+            } catch (_) {
+                // The value is still available from memory when browser storage is full or unavailable.
+            }
         }
         getItem(key) {
             return memStorageCache[key] ?? "";
@@ -304,7 +327,12 @@ const webui = (() => {
             this.storage = storage;
             let cachedSessionData = this.storage.getItem("session-data") || {};
             if (typeof cachedSessionData === "string") {
-                cachedSessionData = JSON.parse(cachedSessionData);
+                try {
+                    cachedSessionData = JSON.parse(cachedSessionData);
+                } catch (ex) {
+                    console.error("Discarding unreadable session data", ex);
+                    cachedSessionData = {};
+                }
             }
             Object.keys(cachedSessionData).forEach((key) => {
                 watchedSessionData[key] = cachedSessionData[key];
@@ -342,10 +370,7 @@ const webui = (() => {
          * '<p>Hello World</p>\n' == webui.applyAppDataToContent('Hello World');
          */
         applyAppDataToContent(content, preTrim, noParagraph) {
-            let data =
-                typeof preTrim !== undefined && typeof preTrim !== "boolean"
-                    ? preTrim
-                    : undefined;
+            let data = typeof preTrim !== "boolean" ? preTrim : undefined;
             let pt = typeof preTrim == "boolean" ? preTrim : undefined;
             return this.parseWebuiMarkdown(
                 this.replaceAppData(content, data),
@@ -569,15 +594,18 @@ const webui = (() => {
             });
             let defineOptions = {};
             let shadowTemplate = 0;
+            let sharedSheet = null;
+            let hasShadowFields = false;
             if (options.shadowTemplate) {
                 shadowTemplate = webui.create("template");
-                shadowTemplate.setAttribute("shadowrootmode", true);
                 if (options.linkCss) {
                     shadowTemplate.innerHTML = `<link rel="stylesheet" href="https://cdn.myfi.ws/css/webui.min.css">${options.shadowTemplate}`;
                 } else {
                     shadowTemplate.innerHTML = options.shadowTemplate;
                 }
                 delete options.shadowTemplate;
+                sharedSheet = extractSharedStyleSheet(shadowTemplate.content);
+                hasShadowFields = !!shadowTemplate.content.querySelector("input,select");
             }
             if (
                 options.watchVisibility &&
@@ -586,6 +614,29 @@ const webui = (() => {
                 options.attr.push("visible");
             }
             let isInput = options.isInput || name.indexOf("input") !== -1;
+            if (isInput) {
+                // Form values otherwise only update on input and change events, which code setting a value does not fire.
+                const valueProp = options.props?.value;
+                if (valueProp?.set) {
+                    const set = valueProp.set;
+                    options.props.value = {
+                        ...valueProp,
+                        set(value) {
+                            set.call(this, value);
+                            this.internals_.setFormValue(this.value);
+                        },
+                    };
+                }
+                if (typeof options.setValue === "function") {
+                    const setValue = options.setValue;
+                    options.setValue = function (...args) {
+                        const result = setValue.apply(this, args);
+                        this.internals_.setFormValue(this.value);
+                        return result;
+                    };
+                }
+            }
+            const optionKeys = Object.keys(options);
             class CustomElement extends HTMLElement {
                 static formAssociated = isInput;
                 disconnectHandlers = [];
@@ -617,16 +668,6 @@ const webui = (() => {
                                 t.setAttribute("name", v);
                             },
                         });
-                        if (!t.formResetCallback) {
-                            t.formResetCallback = () => {
-                                t.value = "";
-                            };
-                        }
-                        if (!t.formStateRestoreCallback) {
-                            t.formStateRestoreCallback = (state) => {
-                                t.value = state;
-                            };
-                        }
                         t.addEventListener("input", (_) => {
                             t.internals_.setFormValue(t.value);
                         });
@@ -634,15 +675,12 @@ const webui = (() => {
                             t.internals_.setFormValue(t.value);
                         });
                     }
-                    t._id = `d${webui.uuid()}`
-                        .split("-")
-                        .join("")
-                        .toLowerCase();
+                    t._id = `d${webui.uuid()}`.replaceAll("-", "").toLowerCase();
                     t.options = options;
                     if (shadowTemplate) {
                         t.template = shadowTemplate.content.cloneNode(true);
                     }
-                    Object.keys(options).forEach((key) => {
+                    optionKeys.forEach((key) => {
                         if (key === "constructor") {
                             t._constructor = options[key].bind(t);
                         } else if (typeof options[key] === "function") {
@@ -654,32 +692,11 @@ const webui = (() => {
                     if (t._constructor) {
                         t._constructor();
                     }
-                    if (options.watchVisibility) {
-                        let observer = new IntersectionObserver(
-                            onIntersection,
-                            {
-                                root: null,
-                                scrollMargin: "0px",
-                                threshold: 0,
-                                delay: 100,
-                            },
-                        );
-                        function onIntersection(entries, _opts) {
-                            entries.forEach((entry) => {
-                                if (entry.isIntersecting) {
-                                    entry.target.setAttribute("visible", 1);
-                                } else {
-                                    entry.target.removeAttribute("visible");
-                                }
-                            });
-                        }
-                        observer.observe(t);
-                        this.disconnectHandlers.push(() => {
-                            observer.unobserve(t);
-                        });
-                    }
                     if (shadowTemplate) {
                         const shadow = t.attachShadow({ mode: "open" });
+                        if (sharedSheet) {
+                            shadow.adoptedStyleSheets = [sharedSheet];
+                        }
                         // Something is copying attributes from the parent webui-dropdown to the input/select elements on the first click in Edge browser.
                         function removeBugAttributes(el) {
                             [
@@ -692,7 +709,7 @@ const webui = (() => {
                                 el.removeAttribute(key);
                             });
                         }
-                        ["input", "select"].forEach((selector) => {
+                        (hasShadowFields ? ["input", "select"] : []).forEach((selector) => {
                             webui
                                 .querySelectorAll(selector, t.template)
                                 .forEach((el) => {
@@ -710,6 +727,8 @@ const webui = (() => {
                                     );
                                     ["input", "change"].forEach((evname) => {
                                         el.addEventListener(evname, (ev) => {
+                                            // Composed events already reach the host, so re-dispatching would fire them twice.
+                                            if (ev.composed && ev.bubbles && !ev.cancelBubble) return;
                                             t.dispatchEvent(
                                                 new Event(evname, {
                                                     bubbles: true,
@@ -749,22 +768,35 @@ const webui = (() => {
                     if (value === undefined) {
                         return ds.length !== 0;
                     }
-                    let found = false;
-                    ds.forEach((item) => {
-                        let k = item.split(":")[0];
-                        if (k === key) {
-                            found = true;
-                        }
-                    });
-                    return found;
+                    return ds.includes(value);
+                }
+                // Form callbacks are read from the prototype when the element is defined, so instance assignments never run.
+                formResetCallback() {
+                    if (options.formResetCallback) {
+                        options.formResetCallback.call(this);
+                        return;
+                    }
+                    if (this.value === undefined) return;
+                    this.value = "";
+                    this.internals_?.setFormValue(this.value);
+                }
+                formDisabledCallback(isDisabled) {
+                    options.formDisabledCallback?.call(this, isDisabled);
+                }
+                formStateRestoreCallback(state, mode) {
+                    if (options.formStateRestoreCallback) {
+                        options.formStateRestoreCallback.call(this, state, mode);
+                    } else if (this.value !== undefined) {
+                        this.value = state;
+                    }
                 }
                 attributeChangedCallback(property, oldValue, newValue) {
                     const t = this;
                     if (oldValue === newValue) return;
                     let propDefined = property;
                     property = webui.toCamel(property);
-                    if (["class"].indexOf(property) !== -1) {
-                        property = `_${property}`;
+                    if (property === "class") {
+                        property = "_class";
                     }
                     if (
                         property === "_class" &&
@@ -797,6 +829,10 @@ const webui = (() => {
                     if (options.content) {
                         t.classList.add("content");
                     }
+                    t._isConnected = true;
+                    if (options.watchVisibility) {
+                        getVisibilityObserver().observe(t);
+                    }
                     if (t._connectedInit) {
                         if (typeof t.reconnected === "function") {
                             setTimeout(() => {
@@ -806,8 +842,8 @@ const webui = (() => {
                         return;
                     }
                     t._connectedInit = true;
-                    t._isConnected = true;
-                    checkAddedNode(t);
+                    // Descendants are handled by the walk or observer that found this element.
+                    checkAddedNode(t, true);
                     if (t.preload) {
                         await preloadComponents(t.preload);
                     }
@@ -816,11 +852,7 @@ const webui = (() => {
                             t.connected();
                         }, 1);
                     }
-                    if (
-                        t.shadowRoot &&
-                        t.shadowRoot &&
-                        t.shadowRoot.childNodes
-                    ) {
+                    if (t.shadowRoot && t.shadowRoot.childNodes) {
                         t.setAttribute("has-shadow", true);
                         t.shadowRoot.childNodes.forEach((node) => {
                             if (node.nodeName === "SLOT") {
@@ -835,6 +867,9 @@ const webui = (() => {
                 disconnectedCallback() {
                     const t = this;
                     t._isConnected = false;
+                    if (options.watchVisibility) {
+                        getVisibilityObserver().unobserve(t);
+                    }
                     if (resizeSubscribers[t._id]) {
                         delete resizeSubscribers[t._id];
                     }
@@ -1029,7 +1064,8 @@ const webui = (() => {
                 delete data.headers;
             }
             let body = data;
-            headers["Content-Type"] = "text/plain";
+            const contentType = headers["Content-Type"];
+            headers["Content-Type"] = contentType || "text/plain";
             if (!headers["x-cookie-age"]) {
                 headers["x-cookie-age"] =
                     webui.getData("session-autosignout") || 30;
@@ -1037,9 +1073,10 @@ const webui = (() => {
             if (["get"].indexOf(method.toLowerCase()) !== -1) {
                 body = undefined;
             } else if (data instanceof FormData) {
-                headers["Content-Type"] = "multipart/form-data";
+                // The browser must set this itself so the header includes the multipart boundary.
+                delete headers["Content-Type"];
             } else if (typeof data !== "string") {
-                headers["Content-Type"] = "application/json";
+                headers["Content-Type"] = contentType || "application/json";
                 body = JSON.stringify(data);
             }
             return await fetch(url, {
@@ -1061,29 +1098,19 @@ const webui = (() => {
          * @returns {string|any}
          */
         fetchWithCache(url, isJson) {
-            return new Promise((resolve, reject) => {
-                if (cachedFetches[url]) {
-                    resolve(cachedFetches[url]);
-                } else {
-                    fetch(url)
-                        .then(async (res) => {
-                            if (isJson) {
-                                await res.json().then((json) => {
-                                    cachedFetches[url] = json;
-                                    resolve(json);
-                                });
-                            } else {
-                                await res.text().then((text) => {
-                                    cachedFetches[url] = text;
-                                    resolve(text);
-                                });
-                            }
-                        })
-                        .catch((ex) => {
-                            reject(ex);
-                        });
-                }
-            });
+            const key = `${isJson ? "json" : "text"}:${url}`;
+            let request = cachedFetches.get(key);
+            if (!request) {
+                request = fetch(url).then((res) => {
+                    if (!res.ok) {
+                        throw new Error(`Request for ${url} failed with status ${res.status}`);
+                    }
+                    return isJson ? res.json() : res.text();
+                });
+                cachedFetches.set(key, request);
+                request.catch(() => cachedFetches.delete(key));
+            }
+            return request;
         }
         /**
          * Decode base64 string to decoded value.
@@ -1111,8 +1138,11 @@ const webui = (() => {
             if (!+bytes) return "0 Bytes";
             const k = 1024;
             const dm = decimals < 0 ? 0 : decimals;
-            const sizes = ["Bytes", "KB", "MB", "GB"];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB"];
+            const i = Math.min(
+                sizes.length - 1,
+                Math.max(0, Math.floor(Math.log(bytes) / Math.log(k))),
+            );
             return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
         }
         /**
@@ -1177,20 +1207,14 @@ const webui = (() => {
          * @returns {any}
          */
         getNestedData(key, data) {
-            let segments = key.split(".");
             if (!data) return undefined;
-            if (segments.length === 1) {
-                let skey = webui.toSnake(key, "-");
-                return webui.getDefined(data[skey], data[key], undefined);
-            }
-            key = segments.shift();
-            let skey = webui.toSnake(key, "-");
-            data = webui.getDefined(data[skey], data[key], undefined);
-            while (segments.length > 0) {
+            const read = (container, name) =>
+                container[webui.toSnake(name, "-")] ?? container[name] ?? undefined;
+            if (key.indexOf(".") === -1) return read(data, key);
+            let segments = key.split(".");
+            for (let index = 0; index < segments.length; ++index) {
                 if (!data) return undefined;
-                key = segments.shift();
-                skey = webui.toSnake(key, "-");
-                data = webui.getDefined(data[skey], data[key], undefined);
+                data = read(data, segments[index]);
             }
             return data;
         }
@@ -1242,8 +1266,12 @@ const webui = (() => {
             data.substring(1)
                 .split("&")
                 .forEach((kv) => {
-                    kv = kv.split("=");
-                    dict[kv[0]] = kv[1];
+                    const index = kv.indexOf("=");
+                    if (index === -1) {
+                        dict[kv] = undefined;
+                    } else {
+                        dict[kv.substring(0, index)] = kv.substring(index + 1);
+                    }
                 });
             if (!key) return dict;
             return dict[key];
@@ -1285,7 +1313,7 @@ const webui = (() => {
             text = text || "";
             for (let i = 0; i < text.length; i++) {
                 hash ^= text.charCodeAt(i);
-                hash = (hash * 0x01000193) >>> 0;
+                hash = Math.imul(hash, 0x01000193);
             }
             return hash | 0;
         }
@@ -1354,9 +1382,11 @@ const webui = (() => {
          * @returns {boolean}
          */
         get isLocalhost() {
-            if (domain === "localhost") return true;
-            if (parseInt(domain).toString() !== "NaN") return true;
-            return false;
+            return (
+                domain === "localhost" ||
+                domain === "[::1]" ||
+                /^\d{1,3}(\.\d{1,3}){3}$/.test(domain)
+            );
         }
         /**
          * Check if the text content of an element is overflowing its container.
@@ -1375,7 +1405,7 @@ const webui = (() => {
         get isSignedIn() {
             const t = this;
             let role = t.getDefined(t.getData("session-user-role"), 0);
-            return !!((role && 1) !== 0);
+            return (role & 1) !== 0;
         }
         /**
          * Limit the number of characters in a string to the given limit.
@@ -1463,15 +1493,16 @@ const webui = (() => {
          * Update url hashcode with the given hash.
          *
          * @param {string} hash
+         * @param {boolean} replace - Replace the current history entry instead of adding one.
          * @returns {undefined}
          */
-        updateHash(hash) {
+        updateHash(hash, replace = false) {
             hash = typeof hash !== "string" ? "" : hash;
             hash = hash.trim();
             if (hash !== "" && hash[0] !== "#") {
                 hash = `#${hash}`;
             }
-            changePage(`${location.pathname}${hash}${location.search}`);
+            changePage(`${location.pathname}${location.search}${hash}`, replace);
             updatePageTitle();
         }
         /**
@@ -1569,7 +1600,7 @@ const webui = (() => {
                     content: content,
                     confirm: "Close",
                 });
-                return;
+                return content;
             }
             if (el.classList.contains("open")) {
                 el.classList.remove("open");
@@ -1716,36 +1747,20 @@ const webui = (() => {
             if (data) {
                 text = this.replaceData(text, data);
             }
-            [watchedAppData, watchedSessionData].forEach((dataContainer) => {
-                Object.keys(dataContainer).forEach((key) => {
-                    let keys = [];
-                    keys.push(`{${this.toSnake(key).toUpperCase()}}`);
-                    if (key.startsWith("session-")) {
-                        keys.push(
-                            `{${this.toSnake(key.substring(8)).toUpperCase()}}`,
-                        );
-                    } else if (key.startsWith("app-")) {
-                        keys.push(
-                            `{${this.toSnake(key.substring(4)).toUpperCase()}}`,
-                        );
-                    }
-                    let val = webui.getData(key);
-                    if (val === undefined || val === null) {
-                        val = "";
-                    }
-                    keys.forEach((rkey) => {
-                        let limit = 0;
-                        try {
-                            while (text.indexOf(rkey) !== -1 && limit < 5) {
-                                ++limit;
-                                text = text.replaceAll(rkey, val);
-                            }
-                        } catch (ex) {
-                            console.error("text", text, ex);
-                        }
-                    });
+            if (!text.includes("{")) return text;
+            const tokens = getDataTokens();
+            // Multiple passes so values can themselves contain placeholders, bounded to stop self references.
+            for (let pass = 0; pass < 5; ++pass) {
+                let replaced = false;
+                text = text.replace(/\{([^{}\s]+)\}/g, (match, token) => {
+                    const key = tokens.get(token);
+                    if (key === undefined) return match;
+                    replaced = true;
+                    const val = webui.getData(key);
+                    return val === undefined || val === null ? "" : `${val}`;
                 });
-            });
+                if (!replaced) break;
+            }
             return text;
         }
         /**
@@ -1758,6 +1773,7 @@ const webui = (() => {
          * @returns {string}
          */
         replaceData(text, data) {
+            if (!text.includes("{")) return text;
             if (text.indexOf("{TEMPLATE_ROWDATA}") !== -1) {
                 let rowData = webui.escapeForHTML(JSON.stringify(data));
                 let limit = 0;
@@ -1765,7 +1781,7 @@ const webui = (() => {
                     text.indexOf("{TEMPLATE_ROWDATA}") !== -1 &&
                     limit++ < 5
                 ) {
-                    text = text.replaceAll("{TEMPLATE_ROWDATA}", rowData);
+                    text = text.replaceAll("{TEMPLATE_ROWDATA}", () => rowData);
                 }
             }
             Object.keys(data).forEach((key) => {
@@ -1776,15 +1792,17 @@ const webui = (() => {
                 if (val === undefined || val === null) {
                     val = "";
                 }
+                // A replacer function keeps $ sequences in values literal.
+                const replacer = typeof val === "function" ? val : () => val;
                 let limit = 0;
                 while (text.indexOf(rkey) !== -1 && limit < 5) {
                     ++limit;
-                    text = text.replaceAll(rkey, val);
+                    text = text.replaceAll(rkey, replacer);
                 }
                 limit = 0;
                 while (text.indexOf(tkey) !== -1 && limit < 5) {
                     ++limit;
-                    text = text.replaceAll(tkey, val);
+                    text = text.replaceAll(tkey, replacer);
                 }
             });
             return text;
@@ -1839,10 +1857,23 @@ const webui = (() => {
                 "frame",
                 "frameset",
                 "style",
+                "animate",
+                "set",
             ];
+            const urlAttributes = ["href", "xlink:href", "src", "action", "formaction", "data"];
+            const isUnsafeUrl = (url) =>
+                url.startsWith("javascript:") ||
+                url.startsWith("vbscript:") ||
+                url.startsWith("data:text/") ||
+                url.startsWith("data:application/") ||
+                url.startsWith("data:image/svg");
             const clean = (node) => {
                 const childNodes = Array.from(node.childNodes);
                 childNodes.forEach((child) => {
+                    if (child.nodeType === 8) {
+                        child.remove();
+                        return;
+                    }
                     if (child.nodeType !== 1) return;
                     const tagName = child.tagName.toLowerCase();
                     if (blockedTags.includes(tagName)) {
@@ -1854,27 +1885,41 @@ const webui = (() => {
                         const name = attr.name.toLowerCase();
                         const value = attr.value.trim().toLowerCase();
                         if (name.startsWith("on")) {
-                            child.removeAttribute(name);
+                            child.removeAttributeNode(attr);
                             return;
                         }
-                        if (["href", "src", "action", "data"].includes(name)) {
+                        if (urlAttributes.includes(name)) {
                             const checkVal = value.replace(
                                 /[\s\x00-\x1f]+/g,
                                 "",
                             );
-                            if (
-                                checkVal.startsWith("javascript:") ||
-                                checkVal.startsWith("vbscript:")
-                            ) {
-                                child.removeAttribute(name);
+                            if (isUnsafeUrl(checkVal)) {
+                                child.removeAttributeNode(attr);
                             }
                         }
                     });
+                    if (child.content) {
+                        clean(child.content);
+                    }
                     clean(child);
                 });
             };
             clean(doc.body);
             return doc.body.innerHTML;
+        }
+        /**
+         * Sanitize text typed into an input.
+         *
+         * Unlike sanitize, which returns serialized HTML, plain text is returned untouched so characters like & and < are not escaped. Text is only altered when it contains markup that sanitize would remove.
+         *
+         * @param {string} text - The text to sanitize.
+         * @returns {string}
+         */
+        sanitizeInput(text) {
+            if (typeof text !== "string" || !/<[a-z!/?]/i.test(text)) return text;
+            const parsed = new DOMParser().parseFromString(text.replace(/\0/g, ""), "text/html");
+            const clean = this.sanitize(text);
+            return clean === parsed.body.innerHTML ? text : clean;
         }
         /**
          * Set the main application node.
@@ -1896,6 +1941,10 @@ const webui = (() => {
             if (!key) return;
             key = key.split(":")[0];
             let sections = key.split(".");
+            if (sections.some((section) => UNSAFE_DATA_KEYS.has(section))) {
+                webui.log.warn(`Ignoring unsafe data key ${key}`);
+                return;
+            }
             let baseKey = webui.toSnake(sections[0], "-");
             if (appDataLimit.indexOf(baseKey) !== -1) {
                 if (appDataOnce.indexOf(baseKey) !== -1) {
@@ -1906,55 +1955,52 @@ const webui = (() => {
                 }
                 appDataOnce.push(baseKey);
             }
-            let dataContainer = key.startsWith("session-")
-                ? watchedSessionData
-                : watchedAppData;
-            value = webui.clone(value);
+            const isSessionKey = baseKey.startsWith("session-");
+            let dataContainer = isSessionKey ? watchedSessionData : watchedAppData;
             if (sections.length === 1) {
                 key = webui.toSnake(key, "-");
-                if (
-                    JSON.stringify(dataContainer[key]) === JSON.stringify(value)
-                ) {
+                if (isSameData(dataContainer[key], value)) {
                     return;
                 }
                 if (value === null || value === undefined) {
                     delete dataContainer[key];
                 } else {
-                    dataContainer[key] = value;
+                    dataContainer[key] = webui.clone(value);
                 }
             } else {
                 let skey = sections.shift();
                 skey = webui.toSnake(skey, "-");
-                if (!dataContainer[skey]) {
+                if (!dataContainer[skey] || typeof dataContainer[skey] !== "object") {
                     dataContainer[skey] = {};
                 }
                 let segment = dataContainer[skey];
                 while (sections.length > 1) {
                     skey = sections.shift();
                     skey = webui.toSnake(skey, "-");
-                    if (!segment[skey]) {
+                    if (!segment[skey] || typeof segment[skey] !== "object") {
                         segment[skey] = {};
                     }
                     segment = segment[skey];
                 }
                 skey = sections.shift();
-                if (JSON.stringify(segment[skey]) === JSON.stringify(value)) {
+                if (isSameData(segment[skey], value)) {
                     return;
                 }
                 if (value === null || value === undefined) {
                     delete segment[skey];
                 } else {
-                    segment[skey] = value;
+                    segment[skey] = webui.clone(value);
                 }
+                // Nested writes bypass the proxy, so report the change for watchers and session persistence.
+                const notify = isSessionKey ? notifySessionDataChanged : notifyAppDataChanged;
+                notify({ type: "update", property: baseKey, timestamp: new Date() });
             }
-            Object.keys(map.subs).forEach((skey) => {
-                let bkey = skey.split(".")[0];
-                if (bkey !== baseKey) return;
-                map.subs[skey].forEach((node) => {
+            subsByBaseKey.get(baseKey)?.forEach((skey) => {
+                map.subs[skey]?.forEach((node) => {
                     setDataToEl(node, skey);
                 });
             });
-            if (["page-title", "page-subtitle"].indexOf(key) !== -1) {
+            if (baseKey === "page-title" || baseKey === "page-subtitle") {
                 updatePageTitle();
             }
         }
@@ -1990,7 +2036,10 @@ const webui = (() => {
          * @returns {Node}
          */
         querySelector(selector, rootNode = document) {
-            return this.querySelectorAll(selector, rootNode)[0];
+            return (
+                rootNode?.querySelector?.(selector) ??
+                this.querySelectorAll(selector, rootNode)[0]
+            );
         }
         /**
          * Query selector all elements matching the selector, including those in shadow DOMs.
@@ -2158,13 +2207,20 @@ const webui = (() => {
          * @returns {string}
          */
         toSnake(key, delim = "_") {
-            return key
-                .trim()
-                .replace(
-                    /[A-Z]{1}/g,
-                    (letter) => `${delim}${letter.toLowerCase()}`,
-                )
-                .replace(/[-_ ]+/g, (_) => delim);
+            let cache = snakeCaches.get(delim);
+            if (!cache) {
+                cache = new Map();
+                snakeCaches.set(delim, cache);
+            }
+            return cachedConvert(cache, key, (k) =>
+                k
+                    .trim()
+                    .replace(
+                        /[A-Z]{1}/g,
+                        (letter) => `${delim}${letter.toLowerCase()}`,
+                    )
+                    .replace(/[-_ ]+/g, (_) => delim),
+            );
         }
         /**
          * Convert text to camel case syntax.
@@ -2175,14 +2231,9 @@ const webui = (() => {
          * @returns {string}
          */
         toCamel(key) {
-            return key
-                .trim()
-                .replace(/((-| )[A-Za-z0-9]{1})/g, (a) => {
-                    return a[1].toUpperCase();
-                })
-                .replace(/^[A-Z]{1}/, (a) => {
-                    return a.toLowerCase();
-                });
+            return cachedConvert(camelCache, key, (k) =>
+                capitalizeSeparated(k).replace(/^[A-Z]{1}/, (a) => a.toLowerCase()),
+            );
         }
         /**
          * Convert text to pascel case syntax.
@@ -2193,14 +2244,9 @@ const webui = (() => {
          * @returns {string}
          */
         toPascel(key) {
-            return key
-                .trim()
-                .replace(/((-| )[A-Za-z0-9]{1})/g, (a) => {
-                    return a[1].toUpperCase();
-                })
-                .replace(/^[a-z]{1}/, (a) => {
-                    return a.toUpperCase();
-                });
+            return cachedConvert(pascelCache, key, (k) =>
+                capitalizeSeparated(k).replace(/^[a-z]{1}/, (a) => a.toUpperCase()),
+            );
         }
         /**
          * Transfer all children from one node to another.
@@ -2281,11 +2327,7 @@ const webui = (() => {
                 return;
             }
             try {
-                if (handler.constructor == AsyncFunction) {
-                    return await handler();
-                } else {
-                    return handler();
-                }
+                return await handler();
             } catch (ex) {
                 if (typeof onError === "function") {
                     onError(ex);
@@ -2315,11 +2357,7 @@ const webui = (() => {
             if (isProcessing) return;
             isProcessing = true;
             try {
-                if (handler.constructor == AsyncFunction) {
-                    return await handler();
-                } else {
-                    return handler();
-                }
+                return await handler();
             } catch (ex) {
                 if (typeof onError === "function") {
                     onError(ex);
@@ -2348,11 +2386,7 @@ const webui = (() => {
                 if (isProcessing) return;
                 isProcessing = true;
                 try {
-                    if (handler.constructor == AsyncFunction) {
-                        return await handler();
-                    } else {
-                        return handler();
-                    }
+                    return await handler();
                 } catch (ex) {
                     if (typeof onError === "function") {
                         onError(ex);
@@ -2547,12 +2581,7 @@ const webui = (() => {
         if (node.classList.length) {
             segments.push(node.classList[0]);
         }
-        ["id", "name"].forEach((attr) => {
-            let val = node.attributes[attr];
-            if (val && val.value) {
-                segments.join(`${attr}-${val.value}`);
-            }
-        });
+        // Keep this stable across page loads: drawers assign themselves a random id, so id cannot be part of the key.
         return segments.join("_");
     }
     function saveState(node) {
@@ -2570,7 +2599,12 @@ const webui = (() => {
         let key = getNodeKey(node);
         let item = storage.getItem(key);
         if (!item) return;
-        let state = JSON.parse(item);
+        let state;
+        try {
+            state = JSON.parse(item);
+        } catch {
+            return;
+        }
         node.dataset.state.split("|").forEach((attr) => {
             if (state[attr]) {
                 node.setAttribute(attr, state[attr]);
@@ -2594,36 +2628,32 @@ const webui = (() => {
             el.style.display = found ? "" : "none";
         });
     }
-    function checkDataStateMutations(mutations) {
-        updateActivity();
-        mutations.forEach(function (mutation) {
-            if (
-                mutation.target &&
-                mutation.target.dataset &&
-                mutation.target.dataset.state
-            ) {
-                saveState(mutation.target, mutation.attributeName);
-            }
-            Array.from(mutation.addedNodes).forEach((el) => {
-                if (el.dataset && el.dataset.state) {
-                    loadState(el);
+    let dataHideQueued = false;
+    function scheduleDataHide() {
+        if (dataHideQueued || map.hides.size === 0) return;
+        dataHideQueued = true;
+        requestAnimationFrame(() => {
+            dataHideQueued = false;
+            applyDataHide();
+        });
+    }
+    // Data signalling/transfers
+    function handleDataClick(el) {
+        el.dataset.click.split("|").forEach((clickKey) => {
+            const key = clickKey.split(":")[0].trim();
+            map.subs[key]?.forEach((sub) => {
+                if (sub === el) return;
+                let subAttr = sub.getAttribute("data-subscribe") || "";
+                let subscriptions = subAttr.split("|").map((s) => s.trim());
+                if (subscriptions.includes(`${key}:click`)) {
+                    sub.click();
                 }
             });
         });
-        applyDataHide();
-    }
-    // Data signalling/transfers
-    function handleDataClick(_) {
-        map.subs[key].forEach((sub) => {
-            let subAttr = sub.getAttribute("data-subscribe") || "";
-            let subscriptions = subAttr.split("|").map((s) => s.trim());
-            if (subscriptions.includes(`${key}:click`)) {
-                sub.click();
-            }
-        });
     }
     async function handleDataTrigger(ev) {
-        let el = ev.srcElement || ev.target || ev;
+        // May be called with an element, whose target property is the link target rather than an event target.
+        let el = ev instanceof Event ? ev.srcElement || ev.target : ev;
         if (ev.composedPath) {
             for (let path of ev.composedPath()) {
                 if (
@@ -2635,6 +2665,7 @@ const webui = (() => {
                 }
             }
         }
+        if (!el.dataset || !(el.dataset.trigger || el.dataset.bind)) return;
         let tick = 0;
         if (
             el.nodeName.startsWith("APP-") ||
@@ -2686,6 +2717,13 @@ const webui = (() => {
     function setDataToEl(el, key, value) {
         if (typeof key !== "string") {
             console.error("Invalid key for webui.setDataToEl", key, el);
+            return;
+        }
+        // Methods do not exist until the component loads. Registration runs again on connect, so nothing is lost by waiting.
+        if (
+            /^(webui|app)-/.test(el.localName) &&
+            !customElements.get(el.localName)
+        ) {
             return;
         }
         function getToSet(key) {
@@ -2806,9 +2844,14 @@ const webui = (() => {
                                 } else {
                                     switch (toSet) {
                                         case "class":
-                                            if (isNull) {
-                                                el.classList.remove(value);
-                                            } else {
+                                            if (!el.__setclass) {
+                                                el.__setclass = {};
+                                            }
+                                            if (el.__setclass[key]) {
+                                                el.classList.remove(el.__setclass[key]);
+                                            }
+                                            el.__setclass[key] = isNull ? "" : value;
+                                            if (!isNull) {
                                                 el.classList.add(value);
                                             }
                                             break;
@@ -2849,7 +2892,7 @@ const webui = (() => {
         });
     }
     function toggleAttr(el, attr) {
-        if (el.getAttribute(attr)) {
+        if (el.hasAttribute(attr)) {
             el.removeAttribute(attr);
         } else {
             el.setAttribute(attr, true);
@@ -2863,23 +2906,103 @@ const webui = (() => {
         }
     }
     function removeClass(el, cls) {
-        if (el.classList.contains(cls)) {
-            el.classList.remove(cls);
-        }
+        if (!el.classList.contains(cls)) return false;
+        el.classList.remove(cls);
+        return true;
     }
     function setAttr(el, attr, val) {
         el.setAttribute(attr, val);
     }
-    let currentPageUrl = "-";
-    function changePage(url) {
-        if (url === currentPageUrl) return;
-        currentPageUrl = url;
+    function getCurrentPageUrl() {
+        return `${location.pathname}${location.search}${location.hash}`;
+    }
+    let currentPageUrl = getCurrentPageUrl();
+    function changePage(url, replace = false) {
+        const target = new URL(url, document.baseURI);
+        const pageUrl = `${target.pathname}${target.search}${target.hash}`;
+        if (pageUrl === currentPageUrl) return;
+        currentPageUrl = pageUrl;
         const pageState = { appData: JSON.stringify(watchedAppData) };
-        window.history.pushState(pageState, document.title, url);
+        if (replace) {
+            window.history.replaceState(pageState, document.title, pageUrl);
+        } else {
+            window.history.pushState(pageState, document.title, pageUrl);
+        }
         loadPage();
     }
     function updateActivity() {
         lastActive = Date.now();
+    }
+    function isSameData(a, b) {
+        if (a === b) return true;
+        if (typeof a !== "object" || typeof b !== "object") return false;
+        return JSON.stringify(a) === JSON.stringify(b);
+    }
+    function getSubscriptionBaseKey(dataKey) {
+        return webui.toSnake(dataKey.split(".")[0], "-");
+    }
+    function addSubscriber(dataKey, node) {
+        if (!map.subs[dataKey]) {
+            map.subs[dataKey] = new Set();
+            const baseKey = getSubscriptionBaseKey(dataKey);
+            if (!subsByBaseKey.has(baseKey)) subsByBaseKey.set(baseKey, new Set());
+            subsByBaseKey.get(baseKey).add(dataKey);
+        }
+        map.subs[dataKey].add(node);
+    }
+    function getDataTokens() {
+        if (dataTokens) return dataTokens;
+        const tokens = new Map();
+        const addToken = (name, key) => {
+            const token = webui.toSnake(name).toUpperCase();
+            if (!tokens.has(token)) tokens.set(token, key);
+        };
+        [watchedAppData, watchedSessionData].forEach((dataContainer) => {
+            Object.keys(dataContainer).forEach((key) => {
+                addToken(key, key);
+                if (key.startsWith("session-")) {
+                    addToken(key.substring(8), key);
+                } else if (key.startsWith("app-")) {
+                    addToken(key.substring(4), key);
+                }
+            });
+        });
+        dataTokens = tokens;
+        return tokens;
+    }
+    let visibilityObserver = null;
+    function getVisibilityObserver() {
+        if (!visibilityObserver) {
+            visibilityObserver = new IntersectionObserver(
+                (entries) => {
+                    entries.forEach((entry) => {
+                        if (entry.isIntersecting) {
+                            entry.target.setAttribute("visible", 1);
+                        } else {
+                            entry.target.removeAttribute("visible");
+                        }
+                    });
+                },
+                { threshold: 0 },
+            );
+        }
+        return visibilityObserver;
+    }
+    function extractSharedStyleSheet(fragment) {
+        if (!("adoptedStyleSheets" in Document.prototype)) return null;
+        const styles = Array.from(fragment.children).filter(
+            (node) => node.nodeName === "STYLE",
+        );
+        if (styles.length === 0) return null;
+        try {
+            const sheet = new CSSStyleSheet();
+            sheet.replaceSync(styles.map((node) => node.textContent).join("\n"));
+            styles.forEach((node) => node.remove());
+            return sheet;
+        } catch (ex) {
+            webui.log.warn("Falling back to per instance styles", ex);
+            return null;
+        }
     }
     function registerNode(node) {
         if (!node || typeof node.getAttribute !== "function") return;
@@ -2896,8 +3019,7 @@ const webui = (() => {
         if (sub) {
             sub.split("|").forEach((dk) => {
                 let dataKey = dk.split(":")[0].trim();
-                if (!map.subs[dataKey]) map.subs[dataKey] = new Set();
-                map.subs[dataKey].add(node);
+                addSubscriber(dataKey, node);
                 setDataToEl(node, dataKey);
             });
         }
@@ -2914,8 +3036,7 @@ const webui = (() => {
         if (bind) {
             bind.split("|").forEach((bk) => {
                 let bindKey = bk.split(":")[0].trim();
-                if (!map.subs[bindKey]) map.subs[bindKey] = new Set();
-                map.subs[bindKey].add(node);
+                addSubscriber(bindKey, node);
                 setDataToEl(node, bindKey);
                 if (!map.triggers[bindKey]) map.triggers[bindKey] = new Set();
                 map.triggers[bindKey].add(node);
@@ -2939,47 +3060,50 @@ const webui = (() => {
                 if (!el.isConnected) set.delete(el);
             });
         };
-        Object.values(map.subs).forEach(scrubDetached);
+        Object.keys(map.subs).forEach((dataKey) => {
+            scrubDetached(map.subs[dataKey]);
+            if (map.subs[dataKey].size === 0) {
+                delete map.subs[dataKey];
+                const baseKey = getSubscriptionBaseKey(dataKey);
+                subsByBaseKey.get(baseKey)?.delete(dataKey);
+                if (subsByBaseKey.get(baseKey)?.size === 0) {
+                    subsByBaseKey.delete(baseKey);
+                }
+            }
+        });
         Object.values(map.triggers).forEach(scrubDetached);
         scrubDetached(map.hides);
     }
-
-    function checkAttributeMutations(mutation) {
-        if (mutation.type !== "attributes") return;
-        if (
-            mutation.target &&
-            mutation.target.nodeName === "INPUT" &&
-            mutation.target.getAttribute("type") === "hidden" &&
-            mutation.attributeName === "value"
-        ) {
-            handleDataTrigger(mutation.target);
-        }
-        const t = mutation.target;
-        applyAttributeSettings(t, mutation.attributeName);
+    let detachedCleanupTimer = 0;
+    function scheduleDetachedCleanup() {
+        if (detachedCleanupTimer) return;
+        detachedCleanupTimer = setTimeout(() => {
+            detachedCleanupTimer = 0;
+            unregisterDetachedNodes();
+        }, 200);
     }
 
+    const STYLE_ATTRIBUTES = ["elevation", "theme", "top", "right", "bottom", "left"];
+    const REGISTRATION_ATTRIBUTES = new Set([
+        "data-subscribe",
+        "data-trigger",
+        "data-bind",
+        "data-default",
+        "data-hide",
+    ]);
     function applyAttributeSettings(target, attr) {
-        if (webui.closest(target.parentNode, "webui-code,code,template")) {
-            return;
-        }
         if (!attr) {
-            if (target && typeof target.getAttribute === "function") {
-                [
-                    "elevation",
-                    "theme",
-                    "data-subscribe",
-                    "data-bind",
-                    "data-default",
-                    "top",
-                    "right",
-                    "bottom",
-                    "left",
-                ].forEach((attr) => {
-                    if (target.hasAttribute(attr)) {
-                        applyAttributeSettings(target, attr);
+            if (target && typeof target.hasAttribute === "function") {
+                STYLE_ATTRIBUTES.forEach((name) => {
+                    if (target.hasAttribute(name)) {
+                        applyAttributeSettings(target, name);
                     }
                 });
             }
+            return;
+        }
+        if (!STYLE_ATTRIBUTES.includes(attr)) return;
+        if (webui.closest(target.parentNode, "webui-code,code,template")) {
             return;
         }
         let value = target.getAttribute(attr);
@@ -2995,11 +3119,6 @@ const webui = (() => {
                 break;
             case "left":
                 target.style.left = webui.pxIfNumber(value);
-                break;
-            case "data-default":
-            case "data-bind":
-            case "data-subscribe":
-                registerNode(target); // Safely handles specific dynamic attribute changes
                 break;
             case "elevation":
                 webui.removeClass(target, "elevation-");
@@ -3030,31 +3149,6 @@ const webui = (() => {
         }
     }
 
-    function checkDataSubscriptionMutations(mutations) {
-        let needsCleanup = false;
-        mutations.forEach(function (mutation) {
-            checkAttributeMutations(mutation);
-            if (
-                mutation.type === "attributes" &&
-                [
-                    "data-subscribe",
-                    "data-trigger",
-                    "data-bind",
-                    "data-default",
-                    "data-hide",
-                ].includes(mutation.attributeName)
-            ) {
-                unregisterNode(mutation.target);
-                registerNode(mutation.target);
-            }
-            if (mutation.removedNodes.length > 0) {
-                needsCleanup = true;
-            }
-        });
-        if (needsCleanup) {
-            unregisterDetachedNodes();
-        }
-    }
     function transitionDelay(ms) {
         return new Promise((resolve, _) => {
             setTimeout(() => resolve(), ms);
@@ -3062,19 +3156,19 @@ const webui = (() => {
     }
     function clearPageData() {
         Object.keys(watchedAppData).forEach((key) => {
-            let keepKey =
-                key.startsWith("app-") ||
-                key.startsWith("session-") ||
-                ["page-path","webui-version"].indexOf(key) !== -1;
-            if (!keepKey) {
+            if (!isPersistentDataKey(key)) {
                 delete watchedAppData[key];
             }
         });
     }
-    async function fetchRemoteData() {
+    async function fetchRemoteData(contentPage, signal) {
         const pageDataEndpoint = webui.getData("app-data-endpoint");
         if (pageDataEndpoint) {
-            let data = await fetch(`${pageDataEndpoint}${dataUrl}`);
+            const dataUrl = encryptUrl(
+                `${contentPage}${location.search}`,
+                appSettings.encryptPageData,
+            );
+            let data = await fetch(`${pageDataEndpoint}${dataUrl}`, { signal });
             if (!data.ok) {
                 webui.log.warn("Returned page data was not ok for %o", dataUrl);
                 return {};
@@ -3091,9 +3185,9 @@ const webui = (() => {
         if (currentHash === "") return;
         setTimeout(() => {
             if (currentHash !== location.hash) return;
-            let el = webui.querySelectorAll(
-                `[hash="${currentHash.substring(1)}"]`,
-            )[0];
+            let el = webui.querySelector(
+                `[hash="${CSS.escape(currentHash.substring(1))}"]`,
+            );
             if (!el) return;
             if (["WEBUI-BUTTON", "BUTTON"].indexOf(el.nodeName) !== -1) {
                 el.click();
@@ -3103,13 +3197,22 @@ const webui = (() => {
             }
         }, 100);
     }
+    let loadPageWaits = 0;
+    let loadPageWaiting = false;
+    let loadPageToken = 0;
+    let loadPageAbort = null;
     async function loadPage() {
         if (!appSettings.app || !webui.appConfig.appName) {
+            if (loadPageWaiting) return;
+            loadPageWaiting = true;
+            // Back off so a site without a webui-app or a working app config does not poll at full speed forever.
             setTimeout(() => {
+                loadPageWaiting = false;
                 loadPage();
-            }, 10);
+            }, Math.min(250, 10 + 5 * loadPageWaits++));
             return;
         }
+        loadPageWaits = 0;
         let page =
             location.pathname === "/"
                 ? "/" + appSettings.rootPage
@@ -3140,20 +3243,26 @@ const webui = (() => {
             return;
         }
         currentPage = contentPage;
+        const token = ++loadPageToken;
+        const isStale = () => token !== loadPageToken;
+        loadPageAbort?.abort();
+        loadPageAbort = new AbortController();
+        const signal = loadPageAbort.signal;
         let contentUrl = `${contentPage}${appSettings.contentExtension}${location.search}`;
         if (appSettings.encryptPageContent) {
             contentUrl = encryptUrl(contentUrl, appSettings.encryptPageContent);
         }
         let fullContentUrl = `${webui.getData("app-content-endpoint")}${contentUrl}`;
-        let fetchContent = fetch(fullContentUrl);
-        let fetchData = fetchRemoteData();
+        let fetchContent = fetch(fullContentUrl, { signal });
+        let fetchData = fetchRemoteData(contentPage, signal);
+        // A superseded load returns before awaiting this, so its rejection would otherwise go unhandled.
+        fetchData.catch(() => {});
         appSettings.app.main.classList.add("transition");
         webui.setData("page-path", page);
         let timerStart = Date.now();
         let title = location.pathname;
         let subTitle = undefined;
-        let navLink = webui.querySelector(`[url="${location.pathname}"]`)?.innerText;
-        let id = webui.uuid();
+        let navLink = webui.querySelector(`[url="${CSS.escape(location.pathname)}"]`)?.innerText;
         if (navLink) {
             subTitle = location.pathname;
             title = navLink.replace(/[-_]+/g, ' ').trim();
@@ -3168,6 +3277,7 @@ const webui = (() => {
             if (elapsed < 300) {
                 await transitionDelay(300 - elapsed);
             }
+            if (isStale()) return;
             appSettings.app.setPageContent("", watchedAppData, fullContentUrl);
             clearPageData();
             webui.setData('page-title', title);
@@ -3186,14 +3296,19 @@ const webui = (() => {
                 fullContentUrl,
             );
             setTimeout(() => {
+                // Re-sync subscribers, including those in shadow roots, with data cleared by the page change.
+                rescanShadowRoots = true;
                 checkNodes(document.body.childNodes);
+                rescanShadowRoots = false;
                 applyHash();
             }, 100);
         } catch (ex) {
+            if (isStale()) return;
             let elapsed = Date.now() - timerStart;
             if (elapsed < 300) {
                 await transitionDelay(300 - elapsed);
             }
+            if (isStale()) return;
             clearPageData();
             if (!navLink) {
                 webui.setData('page-title', 'Page Not Found');
@@ -3208,6 +3323,7 @@ const webui = (() => {
         }
         try {
             let data = await fetchData;
+            if (isStale()) return;
             webui.setData("page-data", data);
             if (!data.forEach) {
                 Object.keys(data).forEach((key) => {
@@ -3215,6 +3331,7 @@ const webui = (() => {
                 });
             }
         } catch (ex) {
+            if (isStale()) return;
             console.error("Failed loading page data", ex);
         }
         let elapsed = Date.now() - timerStart;
@@ -3223,6 +3340,7 @@ const webui = (() => {
         } else {
             await transitionDelay(100);
         }
+        if (isStale()) return;
         appSettings.app.main.classList.remove("transition");
     }
     function encryptUrl(url, encryption) {
@@ -3237,100 +3355,62 @@ const webui = (() => {
     // Component Watcher
     const appPrefix = `APP-`;
     const wuiPrefix = `WEBUI-`;
-    const wcLoading = {};
-    const wcLoaded = {};
-    const appLoaded = {};
     const wcRoot = location.port === "3180" ? "" : "https://cdn.myfi.ws/";
     const wcMin = ".min";
-    async function processWebUINode(nodeName) {
-        nodeName = nodeName.toUpperCase();
-        if (wcLoading[nodeName]) return;
-        wcLoading[nodeName] = true;
-        let wc = nodeName.split("-").splice(1).join("-").toLowerCase();
-        if (nodeName.startsWith(appPrefix)) {
-            await loadAppComponent(wc).catch(() => {
-                delete wcLoading[nodeName];
-            });
-        } else {
-            await loadWebUIComponent(wc).catch(() => {
-                delete wcLoading[nodeName];
-            });
+    const MAX_COMPONENT_LOAD_ATTEMPTS = 3;
+    const componentLoads = new Map();
+    const componentLoadFailures = new Map();
+    function loadComponentScript(nodeName, src) {
+        let load = componentLoads.get(nodeName);
+        if (load) return load;
+        // Already defined by the page, or given up on, so there is nothing to request.
+        if (
+            customElements.get(nodeName.toLowerCase()) ||
+            (componentLoadFailures.get(nodeName) || 0) >= MAX_COMPONENT_LOAD_ATTEMPTS
+        ) {
+            return Promise.resolve();
         }
+        load = new Promise((resolve, reject) => {
+            let script = webui.create("script");
+            script.setAttribute("async", true);
+            script.setAttribute("src", src);
+            script.setAttribute("crossorigin", "anonymous");
+            script.onload = () => resolve();
+            script.onerror = () => {
+                script.remove();
+                componentLoads.delete(nodeName);
+                componentLoadFailures.set(
+                    nodeName,
+                    (componentLoadFailures.get(nodeName) || 0) + 1,
+                );
+                reject(new Error(`Failed to load component: ${src}`));
+            };
+            document.head.append(script);
+        });
+        componentLoads.set(nodeName, load);
+        return load;
     }
-    async function waitForComponentLoad(name) {
-        const prefix = `${name.split("-")[0]}-`;
-        const wc = name.split("-").splice(1).join("-").toLowerCase();
-        let limit = 0;
-        if (prefix.toLowerCase() === appPrefix.toLowerCase()) {
-            while (wcLoading[name] && !appLoaded[wc] && limit++ < 1000) {
-                await webui.wait(10);
-            }
-        } else {
-            while (wcLoading[name] && !wcLoaded[wc] && limit++ < 1000) {
-                await webui.wait(10);
-            }
-        }
+    function processWebUINode(nodeName) {
+        nodeName = nodeName.toUpperCase();
+        const wc = nodeName.split("-").splice(1).join("-").toLowerCase();
+        const src = nodeName.startsWith(appPrefix)
+            ? `${webui.appSrc}/${wc}${webui.appMin}.js`
+            : `${wcRoot}webui/${wc}${wcMin}.js`;
+        return loadComponentScript(nodeName, src).catch((ex) => {
+            webui.log.warn(ex.message);
+        });
     }
     function loadWebUIComponent(wc) {
-        const nodeName = `${wuiPrefix}${wc}`.toUpperCase();
-        if (wcLoaded[wc]) return Promise.resolve();
-        if (wcLoading[nodeName] instanceof Promise) {
-            return wcLoading[nodeName];
-        }
-        const loadPromise = new Promise(async (resolve, reject) => {
-            await waitForComponentLoad(`${wuiPrefix}${wc}`);
-            if (wcLoaded[wc]) {
-                resolve();
-                return;
-            }
-            let script = webui.create("script");
-            script.setAttribute("async", true);
-            script.setAttribute("src", `${wcRoot}webui/${wc}${wcMin}.js`);
-            script.setAttribute("crossorigin", "anonymous");
-            script.onload = () => {
-                wcLoaded[wc] = true;
-                delete wcLoading[nodeName];
-                resolve();
-            };
-            script.onerror = () => {
-                reject(new Error(`Failed to load component: ${wc}`));
-            };
-            document.head.append(script);
-        });
-        wcLoading[nodeName] = loadPromise;
-        return loadPromise;
+        return processWebUINode(`${wuiPrefix}${wc}`);
     }
-    function loadAppComponent(wc) {
-        return new Promise(async (resolve, reject) => {
-            await waitForComponentLoad(`${appPrefix}${wc}`);
-            if (appLoaded[wc]) {
-                resolve();
-                return;
-            }
-            let script = webui.create("script");
-            script.setAttribute("async", true);
-            script.setAttribute(
-                "src",
-                `${webui.appSrc}/${wc}${webui.appMin}.js`,
-            );
-            script.setAttribute("crossorigin", "anonymous");
-            script.onload = () => {
-                appLoaded[wc] = true;
-                resolve();
-            };
-            script.onerror = () => {
-                reject(new Error(`Failed to load component: ${wc}`));
-            };
-            document.head.append(script);
-        });
-    }
-    async function preloadFromAttribute(componentName) {
+    function preloadFromAttribute(componentName) {
         if (componentName.toLowerCase().startsWith("app:")) {
-            let name = componentName.substring(4);
-            await processWebUINode(`${appPrefix}${name}`);
-        } else {
-            await processWebUINode(`${wuiPrefix}${componentName}`);
+            return processWebUINode(`${appPrefix}${componentName.substring(4)}`);
         }
+        return processWebUINode(`${wuiPrefix}${componentName}`);
+    }
+    function parsePreloadList(list) {
+        return list.split(/[;,\s]+/).filter(Boolean);
     }
     function componentPreload(el) {
         if (!el) return;
@@ -3342,41 +3422,61 @@ const webui = (() => {
         }
         let pl = el.getAttribute("preload");
         if (pl && typeof pl.replace === "function") {
-            pl.replaceAll(";", " ")
-                .replaceAll(",", " ")
-                .split(" ")
-                .forEach(preloadFromAttribute);
+            parsePreloadList(pl).forEach(preloadFromAttribute);
         }
     }
     async function preloadComponents(pl) {
         if (!pl || typeof pl.replace !== "function") return;
-        pl = pl.replaceAll(";", " ").replaceAll(",", " ").split(" ");
-        for (let index = 0; index < pl.length; ++index) {
-            await preloadFromAttribute(pl[index]).catch((err) =>
-                console.error(
-                    "Failed to preload from attribute",
-                    pl[index],
-                    err,
-                ),
-            );
-        }
+        await Promise.all(parsePreloadList(pl).map(preloadFromAttribute));
     }
-    function checkMutation(mutation) {
-        checkAttributeMutations(mutation);
-        let nodeName = mutation.target.nodeName;
-        if (
-            (nodeName.startsWith(wuiPrefix) ||
-                nodeName.startsWith(appPrefix)) &&
-            mutation.type === "attributes" &&
-            mutation.attributeName === "preload"
-        ) {
-            componentPreload(mutation.target);
-        }
-        Array.from(mutation.addedNodes).forEach((el) => {
-            checkAddedNode(el);
+    function processMutations(mutations) {
+        updateActivity();
+        let needsCleanup = false;
+        mutations.forEach((mutation) => {
+            const target = mutation.target;
+            if (mutation.type === "attributes") {
+                const attr = mutation.attributeName;
+                if (target.dataset?.state?.split("|").includes(attr)) {
+                    saveState(target);
+                }
+                if (
+                    attr === "value" &&
+                    target.nodeName === "INPUT" &&
+                    target.getAttribute("type") === "hidden"
+                ) {
+                    handleDataTrigger(target);
+                }
+                if (REGISTRATION_ATTRIBUTES.has(attr)) {
+                    unregisterNode(target);
+                    registerNode(target);
+                } else if (attr === "preload") {
+                    if (
+                        target.nodeName.startsWith(wuiPrefix) ||
+                        target.nodeName.startsWith(appPrefix)
+                    ) {
+                        componentPreload(target);
+                    }
+                } else {
+                    applyAttributeSettings(target, attr);
+                }
+                return;
+            }
+            if (mutation.removedNodes.length > 0) {
+                needsCleanup = true;
+            }
+            mutation.addedNodes.forEach((el) => {
+                checkAddedNode(el);
+            });
         });
+        scheduleDataHide();
+        if (needsCleanup) {
+            scheduleDetachedCleanup();
+        }
     }
-    function checkAddedNode(el) {
+    // Only true during the walk after a page load. Otherwise shadow roots are covered by the observer once found.
+    let rescanShadowRoots = false;
+    function checkAddedNode(el, skipChildren = false) {
+        if (el.nodeType !== 1) return;
         registerNode(el);
         applyAttributeSettings(el);
         if (el.dataset && el.dataset.state) {
@@ -3386,32 +3486,33 @@ const webui = (() => {
             if (!el._isObserved) {
                 el._isObserved = 1;
                 startObserving(el.shadowRoot);
+                checkNodes(el.shadowRoot.childNodes);
+            } else if (rescanShadowRoots) {
+                checkNodes(el.shadowRoot.childNodes);
             }
-            checkNodes(el.shadowRoot.childNodes);
         }
         if (
-            (el.nodeName && el.nodeName.startsWith(wuiPrefix)) ||
+            el.nodeName.startsWith(wuiPrefix) ||
             el.nodeName.startsWith(appPrefix)
         ) {
             processWebUINode(el.nodeName);
         }
-        checkNodes(el.childNodes);
+        if (!skipChildren) {
+            checkNodes(el.childNodes);
+        }
     }
+    // A single observer watches the document and every shadow root, so a batch of changes runs one callback.
+    let domObserver = null;
     const startObserving = (domNode) => {
-        const observer = new MutationObserver((mutations) => {
-            checkDataStateMutations(mutations);
-            checkDataSubscriptionMutations(mutations);
-            mutations.forEach(function (mutation) {
-                checkMutation(mutation);
-            });
-        });
-        observer.observe(domNode, {
+        if (!domObserver) {
+            domObserver = new MutationObserver(processMutations);
+        }
+        domObserver.observe(domNode, {
             childList: true,
             attributes: true,
-            characterData: true,
             subtree: true,
         });
-        return observer;
+        return domObserver;
     };
     let rwrStep = 1;
     function runWhenBodyIsReady(setup) {
@@ -3484,20 +3585,21 @@ const webui = (() => {
                     handleDataTrigger(target);
                 }
                 let href = target.getAttribute("href");
-                if (
-                    href &&
-                    href.indexOf(":") !== -1 &&
-                    href.substr(0, 4) !== "http"
-                ) {
-                    return true;
-                }
-                if (
-                    href &&
-                    target.getAttribute("target") !== "blank" &&
-                    (href[0] === "/" || href.substr(0, 4) !== "http")
-                ) {
-                    stop();
-                    changePage(href);
+                if (href) {
+                    const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(href);
+                    if (hasScheme && !/^https?:/i.test(href)) {
+                        return true;
+                    }
+                    const linkTarget = target.getAttribute("target");
+                    const opensElsewhere =
+                        (linkTarget && linkTarget !== "_self") ||
+                        target.hasAttribute("download") ||
+                        (target.nodeName === "A" &&
+                            (ev.ctrlKey || ev.metaKey || ev.shiftKey));
+                    if (!hasScheme && !href.startsWith("//") && !opensElsewhere) {
+                        stop();
+                        changePage(href);
+                    }
                 }
                 if (target.hasAttribute("data-stopclick")) {
                     stop();
@@ -3534,14 +3636,13 @@ const webui = (() => {
                     target.dataset.removeclass.split(";").forEach((ds) => {
                         let [cls, sel] = ds.split("|").reverse();
                         if (sel) {
-                            webui
-                                .querySelectorAll(sel)
-                                .forEach((el) => removeClass(el, cls));
-                        } else {
-                            removeClass(target, cls);
+                            webui.querySelectorAll(sel).forEach((el) => {
+                                if (removeClass(el, cls)) applyDynStyles = true;
+                            });
+                        } else if (removeClass(target, cls)) {
+                            applyDynStyles = true;
                         }
                     });
-                    applyDynStyles = true;
                 }
                 if (target.dataset.toggleattr) {
                     let [attr, sel] = target.dataset.toggleattr
@@ -3557,10 +3658,12 @@ const webui = (() => {
                     applyDynStyles = true;
                 }
                 if (applyDynStyles) {
-                    webui.applyDynamicStyles();
                     break;
                 }
                 target = target.parentNode || target.host;
+            }
+            if (applyDynStyles) {
+                webui.applyDynamicStyles();
             }
             return retValue;
         });
@@ -3569,7 +3672,9 @@ const webui = (() => {
     window.addEventListener("click", updateActivity);
     window.addEventListener("scroll", updateActivity);
     window.addEventListener("popstate", (ev) => {
-        changePage(`${location.pathname}${location.hash}${location.search}`);
+        // The browser has already moved through history, so pushing here would destroy forward entries.
+        currentPageUrl = getCurrentPageUrl();
+        loadPage();
         if (ev.state) {
             if (ev.state.appData) {
                 const appData = JSON.parse(ev.state.appData);
@@ -3583,7 +3688,7 @@ const webui = (() => {
                     watchedAppData[key] = appData[key];
                 });
                 Object.keys(watchedAppData).forEach((key) => {
-                    if (Object.keys(appData).indexOf(key) !== -1) return;
+                    if (key in appData || isPersistentDataKey(key)) return;
                     delete watchedAppData[key];
                 });
             }
@@ -3616,6 +3721,10 @@ const webui = (() => {
             if (event.promise) {
                 return true;
             }
+            // Browsers report this benign notice as a window error when an observer callback resizes content.
+            if (`${event.message}`.startsWith("ResizeObserver loop")) {
+                return true;
+            }
             event.preventDefault();
             const message = buildMessage(event);
             if (!message) return true;
@@ -3644,13 +3753,15 @@ const webui = (() => {
     return webui;
 })();
 
-setTimeout(() => {
+function setupWebuiTooltips() {
     if (window.tooltipsEnabled === undefined) {
         window.tooltipsEnabled = true;
     }
     const Tooltip = webui.create("div");
     Tooltip.className = "tooltip closed";
     let capturedElement = null;
+    // Element whose own text already shows its label, skipped to avoid forcing layout on every mouse move.
+    let skippedElement = null;
     document.body.appendChild(Tooltip);
     let isShowing = false;
     function CloseIfOpen() {
@@ -3695,21 +3806,25 @@ setTimeout(() => {
                 let [target, display] =
                     CheckContainersForAriaLabel(eventTarget);
                 if (!target) {
+                    skippedElement = null;
                     CloseIfOpen();
                     return;
                 }
-                if (target === capturedElement) {
+                if (target === capturedElement || target === skippedElement) {
                     return;
                 }
-                let client = target.getBoundingClientRect();
-                isShowing = true;
                 let targetDisplay = `${target.innerText}`.trim();
                 if (
                     targetDisplay === display &&
                     !webui.isTextOverflowing(target)
                 ) {
+                    skippedElement = target;
+                    CloseIfOpen();
                     return;
                 }
+                skippedElement = null;
+                let client = target.getBoundingClientRect();
+                isShowing = true;
                 capturedElement = target;
                 Tooltip.innerText = display;
                 Tooltip.className = "tooltip open";
@@ -3733,5 +3848,12 @@ setTimeout(() => {
                 isTooltipTicking = false;
             }
         });
-    });
+    }, { passive: true });
+}
+setTimeout(() => {
+    if (document.body) {
+        setupWebuiTooltips();
+    } else {
+        document.addEventListener("DOMContentLoaded", setupWebuiTooltips, { once: true });
+    }
 }, 100);

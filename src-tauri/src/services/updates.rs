@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use tauri_plugin_updater::UpdaterExt;
 
 #[tauri::command]
@@ -30,6 +31,15 @@ pub(crate) async fn install_update(app: tauri::AppHandle) -> Result<String, Stri
             )
             .await
             .map_err(|e| e.to_string())?;
+        // Restarting skips the save that normally happens when the window closes.
+        if let Ok(data) = get_state_data::<TaskProxyData>(&app) {
+            _ = save_app_data_to_local_storage(&app, &data).await;
+        }
+        if let Ok(data) = get_state_data::<ProjectData>(&app) {
+            if !data.id.is_empty() {
+                _ = persist_project_data(data, &app).await;
+            }
+        }
         app.restart();
         Ok("Update installed and app restarting...".to_string())
     } else {

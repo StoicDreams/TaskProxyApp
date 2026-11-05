@@ -1,5 +1,11 @@
 "use strict"
 {
+    const autoFetchInterval = 60000;
+    /** Stored with the project's data, since only fields known to the backend are saved. */
+    function getIgnoredFiles() {
+        webui.projectData.data._gitIgnoreFiles ??= [];
+        return webui.projectData.data._gitIgnoreFiles;
+    }
     webui.define("app-git-manager", {
         linkCss: true,
         watchVisibility: false,
@@ -41,7 +47,7 @@
         async loadRepos() {
             let t = this;
             await webui.wait(()=>!!webui.proxy);
-            let repos = await webui.proxy.git.getRepos();
+            let repos = await webui.proxy.git.getRepos() || [];
             if (repos.length === 0) {
                 t._repos.classList.add('hidden');
                 webui.setData('git-branches', []);
@@ -104,6 +110,17 @@
                 t._dropdownPatScope.value = 'Global';
             } else {
                 t._inputPat.placeholder = undefined;
+            }
+        },
+        /** Keep remote status current without a network call on every refresh. */
+        async autoFetch(repo) {
+            let t = this;
+            t._lastFetch ??= {};
+            if (Date.now() - (t._lastFetch[repo] || 0) < autoFetchInterval) return;
+            t._lastFetch[repo] = Date.now();
+            let result = await webui.proxy.git.fetchQuiet(repo);
+            if (result && t._repos.value === repo) {
+                t.loadRemoteStatus();
             }
         },
         async loadRemoteStatus() {
@@ -184,10 +201,10 @@
             let repo = t._repos.value;
             if (repo === undefined) return;
             await webui.wait(()=>!!webui.proxy);
-            let changes = await webui.proxy.git.getChanges(repo);
+            let changes = await webui.proxy.git.getChanges(repo) || [];
             await customElements.whenDefined('webui-content-compare');
             t._filesContainer.innerHTML = '';
-            t._hasPendingChanges = changes && changes.length > 0;
+            t._hasPendingChanges = changes.length > 0;
             t._fileName.innerHTML = '';
             t._diffViewer.clear?.();
             let first = null;
@@ -254,15 +271,14 @@
                     }
                 }
                 include.addEventListener('change', _ => {
+                    let ignoredFiles = getIgnoredFiles();
+                    let ignoredIndex = ignoredFiles.indexOf(fullPath);
                     if (include.value === '2') {
-                        if (!webui.projectData.gitIgnoreFiles) {
-                            webui.projectData.gitIgnoreFiles = [];
+                        if (ignoredIndex === -1) {
+                            ignoredFiles.push(fullPath);
                         }
-                        if (webui.projectData.gitIgnoreFiles.indexOf(fullPath) === -1) {
-                            webui.projectData.gitIgnoreFiles.push(fullPath);
-                        }
-                    } else if (webui.projectData.gitIgnoreFiles && webui.projectData.gitIgnoreFiles.indexOf(fullPath) !== -1) {
-                        webui.projectData.gitIgnoreFiles.splice(webui.projectData.gitIgnoreFiles.indexOf(fullPath), 1);
+                    } else if (ignoredIndex !== -1) {
+                        ignoredFiles.splice(ignoredIndex, 1);
                     }
                     webui.proxy.syncProjectData();
                     setTheme();
@@ -290,7 +306,7 @@
                         }
                     });
                 });
-                if (webui.projectData.gitIgnoreFiles && webui.projectData.gitIgnoreFiles.indexOf(fullPath) !== -1) {
+                if (getIgnoredFiles().includes(fullPath)) {
                     include.value = 2;
                 }
                 setTheme();
@@ -303,6 +319,8 @@
                 }
             });
             t.loadRemoteStatus();
+            t.autoFetch(repo);
+            webui.proxy.reloadProjectFiles();
         },
         setAlert(msg, severity) {
             let t = this;
@@ -343,7 +361,6 @@
                         t.setAlert(result, 'success');
                         await t.loadBranches();
                         t.loadRepoChanges();
-                        t.loadRemoteStatus();
                     }
                 } else if (btn.classList.contains('btn-new')) {
                     await webui.dialog({
@@ -538,7 +555,6 @@
                     }
                 }
                 t.loadRepoChanges();
-                t.loadRemoteStatus();
             });
             t._btnPull.addEventListener('click', async _ => {
                 t.setAlert();
@@ -679,9 +695,9 @@ pre {
             <webui-table
                 id="branch-table"
                 theme="secondary"
-                columns="Branch|nameHtml;Created|createdDate;Updated|updatedDate;:Actions:|actionsHtml"
+                columns="Branch|nameHtml;Updated|updatedDate;:Actions:|actionsHtml"
                 column-formats="nameHtml:html;actionsHtml:html"
-                sortable="nameHtml;createdDate;updatedDate"
+                sortable="nameHtml;updatedDate"
                 data-subscribe="git-branches:setData"
                 bordered>
             </webui-table>

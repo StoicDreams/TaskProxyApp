@@ -32,7 +32,7 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
                         Ok(msg) => {
                             println!("{}", msg);
                             last_app_data_json = current_json;
-                        },
+                        }
                         Err(err) => eprintln!("{}", err),
                     }
                 }
@@ -40,14 +40,17 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
         }
 
         if let Ok(data) = get_state_data::<ProjectData>(&app_handle) {
+            if data.id.is_empty() {
+                continue;
+            }
             if let Ok(current_json) = crate::common::to_json(&data) {
                 if current_json != last_project_data_json {
                     println!("Project data changed. Attempting to save...");
-                    match save_project_data(data.clone(), app_handle.clone()).await {
+                    match persist_project_data(data, &app_handle).await {
                         Ok(msg) => {
                             println!("{}", msg);
                             last_project_data_json = current_json;
-                        },
+                        }
                         Err(err) => eprintln!("{}", err),
                     }
                 }

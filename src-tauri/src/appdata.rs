@@ -9,6 +9,9 @@ const KEYCHAIN_USERNAME: &str = "task_proxy_user";
 const PROJECTS_FILENAME: &str = "projects.data.enc";
 const APPDATA_FILENAME: &str = "app.data.enc";
 
+const NONCE_LENGTH: usize = 12;
+const UNREADABLE_SUFFIX: &str = ".unreadable";
+
 static MEMORY_PASSPHRASE: Mutex<Option<String>> = Mutex::new(None);
 
 #[tauri::command]
@@ -87,30 +90,24 @@ pub(crate) async fn save_app_data(
     save_app_data_to_local_storage(&app_handle, &data).await
 }
 
-/// Set the encryption passphrase to the keychain
+/// Set the encryption passphrase to the keychain, carrying existing data over to it.
 #[tauri::command]
 pub(crate) async fn set_securitykey(
     app_handle: AppHandle,
     state: State<'_, SharedProjects>,
     security_key: &str,
 ) -> Result<String, String> {
-    let security_key_clone = security_key.to_owned();
-    let result = task::spawn_blocking(move || {
-        let secret = SecretString::from(security_key_clone.clone());
-        let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
-            .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
-        entry
-            .set_password(secret.expose_secret())
-            .map_err(|e| format!("Failed to store new security key in keychain: {:?}", e))?;
-        if let Ok(mut cache) = MEMORY_PASSPHRASE.lock() {
-            *cache = Some(security_key_clone);
-        }
-        Ok(String::from("Security Key Saved!"))
-    })
-    .await;
+    let new_key = security_key.to_owned();
+    let data_dir = app_data_dir(&app_handle)?;
+    let needs_reload = task::spawn_blocking(move || apply_new_passphrase(&data_dir, new_key))
+        .await
+        .map_err(|err| format!("{}", err))??;
+    if needs_reload {
+        // Memory holds blank defaults while disk holds real data. Restart without saving.
+        app_handle.restart();
+    }
     _ = save_projects_if_any(&app_handle, &state).await;
-    let result = result.map_err(|err| format!("{}", err))?;
-    result
+    Ok(String::from("Security Key Saved!"))
 }
 
 #[tauri::command]
@@ -235,22 +232,7 @@ pub(crate) async fn save_json_to_local_storage(
     let data_type_string = data_type.to_string();
     let result = task::spawn_blocking(move || {
         let passphrase = get_passphrase()?;
-        let mut hasher = Sha256::new();
-        hasher.update(passphrase.expose_secret().as_bytes());
-        let key_bytes = hasher.finalize();
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes).expect("Key length must be 32 bytes");
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; 12 bytes
-        let ciphertext = cipher
-            .encrypt(&nonce, json.as_bytes())
-            .map_err(|err| format!("Failed to encrypt {}: {}", data_type_string, err))?;
-        let mut encrypted_data = nonce.to_vec();
-        encrypted_data.extend_from_slice(&ciphertext);
-        if let Some(parent) = file_path.parent() {
-            if !parent.exists() {
-                let _ = fs::create_dir_all(parent);
-            }
-        }
-        fs::write(&file_path, encrypted_data)
+        store_encrypted(&file_path, passphrase.expose_secret(), json.as_bytes())
             .map_err(|err| format!("Error saving {}: {}", data_type_string, err))?;
         Ok(format!("{} saved", data_type_string))
     })
@@ -288,30 +270,231 @@ pub(crate) async fn get_data_from_local_storage(
             println!("Data file {:?} is empty.", file_path);
             return Ok(Vec::new());
         }
-        if encrypted_data.len() < 12 {
-            return Err(format!("Data file {:?} is corrupted.", file_path));
-        }
         let passphrase = get_passphrase()?;
-        let mut hasher = Sha256::new();
-        hasher.update(passphrase.expose_secret().as_bytes());
-        let key_bytes = hasher.finalize();
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes).expect("Key length must be 32 bytes");
-        let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
-        match cipher.decrypt(nonce, ciphertext) {
-            Ok(decrypted) => Ok(decrypted),
-            Err(err) => Err(format!("Failed to decrypt file: {}", err)),
-        }
+        decrypt_bytes(passphrase.expose_secret(), &encrypted_data)
+            .map_err(|err| format!("{} ({:?})", err, file_path))
     })
     .await;
     result.map_err(|err| format!("Task failed: {}", err))?
 }
 
 async fn get_app_data_path(app_handle: &AppHandle, file_name: &str) -> Result<PathBuf, String> {
-    let data_dir = app_handle
+    Ok(app_data_dir(app_handle)?.join(file_name))
+}
+
+fn app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    app_handle
         .path()
         .app_local_data_dir()
-        .map_err(|err| format!("Could not resolve application data directory.\n{}", err))?;
+        .map_err(|err| format!("Could not resolve application data directory.\n{}", err))
+}
 
-    Ok(data_dir.join(file_name))
+fn cipher_for(passphrase: &str) -> Aes256Gcm {
+    let mut hasher = Sha256::new();
+    hasher.update(passphrase.as_bytes());
+    let key_bytes = hasher.finalize();
+    Aes256Gcm::new_from_slice(&key_bytes).expect("SHA-256 output is always 32 bytes")
+}
+
+fn encrypt_bytes(passphrase: &str, plain: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = cipher_for(passphrase);
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; 12 bytes
+    let ciphertext = cipher
+        .encrypt(&nonce, plain)
+        .map_err(|err| format!("Failed to encrypt: {}", err))?;
+    let mut encrypted = nonce.to_vec();
+    encrypted.extend_from_slice(&ciphertext);
+    Ok(encrypted)
+}
+
+fn decrypt_bytes(passphrase: &str, encrypted: &[u8]) -> Result<Vec<u8>, String> {
+    if encrypted.len() < NONCE_LENGTH {
+        return Err(String::from("Data file is corrupted."));
+    }
+    let (nonce_bytes, ciphertext) = encrypted.split_at(NONCE_LENGTH);
+    cipher_for(passphrase)
+        .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
+        .map_err(|err| format!("Failed to decrypt file: {}", err))
+}
+
+/// Encrypt and write a file without ever destroying data the current key cannot read.
+/// An existing file that fails to decrypt is moved aside so that re-entering the
+/// original key can recover it, see `restore_unreadable_files`.
+fn store_encrypted(path: &Path, passphrase: &str, plain: &[u8]) -> Result<(), String> {
+    if let Ok(existing) = fs::read(path) {
+        if !existing.is_empty() && decrypt_bytes(passphrase, &existing).is_err() {
+            quarantine_file(path).map_err(|err| err.to_string())?;
+        }
+    }
+    let encrypted = encrypt_bytes(passphrase, plain)?;
+    write_atomic(path, &encrypted).map_err(|err| err.to_string())
+}
+
+fn quarantine_file(path: &Path) -> io::Result<()> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut target = path.with_file_name(format!("{}{}", name, UNREADABLE_SUFFIX));
+    if target.exists() {
+        target = path.with_file_name(format!(
+            "{}{}-{}",
+            name,
+            UNREADABLE_SUFFIX,
+            Uuid::now_v7().simple()
+        ));
+    }
+    eprintln!("Preserving unreadable data file at {:?}", target);
+    fs::rename(path, target)
+}
+
+fn encrypted_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "enc"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Decrypt every data file with the old key and encrypt it with the new one, without
+/// writing anything, so a failure before the keychain update changes nothing on disk.
+fn reencrypt_files(
+    dir: &Path,
+    old_key: &str,
+    new_key: &str,
+) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    let mut rekeyed = Vec::new();
+    for path in encrypted_files(dir) {
+        let existing = fs::read(&path).map_err(|err| err.to_string())?;
+        if existing.is_empty() {
+            continue;
+        }
+        match decrypt_bytes(old_key, &existing) {
+            Ok(plain) => rekeyed.push((path, encrypt_bytes(new_key, &plain)?)),
+            Err(_) => eprintln!("Skipping {:?}: not readable with the current key", path),
+        }
+    }
+    Ok(rekeyed)
+}
+
+/// Put quarantined files back when the given key can read them. Returns how many were restored.
+fn restore_unreadable_files(dir: &Path, passphrase: &str) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut quarantined: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().contains(UNREADABLE_SUFFIX))
+        })
+        .collect();
+    quarantined.sort();
+    let mut restored = 0;
+    for path in quarantined {
+        let readable = fs::read(&path)
+            .map(|bytes| decrypt_bytes(passphrase, &bytes).is_ok())
+            .unwrap_or(false);
+        if !readable {
+            continue;
+        }
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let original = name.split(UNREADABLE_SUFFIX).next().unwrap_or_default();
+        if !original.is_empty() && fs::rename(&path, path.with_file_name(original)).is_ok() {
+            restored += 1;
+        }
+    }
+    restored
+}
+
+fn has_readable_files(dir: &Path, passphrase: &str) -> bool {
+    encrypted_files(dir).iter().any(|path| {
+        fs::read(path)
+            .map(|bytes| !bytes.is_empty() && decrypt_bytes(passphrase, &bytes).is_ok())
+            .unwrap_or(false)
+    })
+}
+
+/// Switch to a new passphrase, carrying all stored data over to it.
+/// Returns true when data on disk now differs from what the app has in memory.
+fn apply_new_passphrase(dir: &Path, new_key: String) -> Result<bool, String> {
+    let old_key = get_passphrase()
+        .ok()
+        .map(|key| key.expose_secret().to_string());
+    let rekeyed = match &old_key {
+        Some(old_key) if *old_key != new_key => reencrypt_files(dir, old_key, &new_key)?,
+        _ => Vec::new(),
+    };
+    let secret = SecretString::from(new_key.clone());
+    let entry = Entry::new(KEYCHAIN_SERVICE_NAME, KEYCHAIN_USERNAME)
+        .map_err(|e| format!("Failed to create keychain entry: {:?}", e))?;
+    entry
+        .set_password(secret.expose_secret())
+        .map_err(|e| format!("Failed to store new security key in keychain: {:?}", e))?;
+    if let Ok(mut cache) = MEMORY_PASSPHRASE.lock() {
+        *cache = Some(new_key.clone());
+    }
+    for (path, bytes) in rekeyed {
+        write_atomic(&path, &bytes)
+            .map_err(|err| format!("Failed to re-encrypt {:?}: {}", path, err))?;
+    }
+    let restored = restore_unreadable_files(dir, &new_key);
+    Ok(restored > 0 || (old_key.is_none() && has_readable_files(dir, &new_key)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encrypted_round_trip_requires_the_right_key() {
+        let encrypted = encrypt_bytes("right", b"secret").unwrap();
+        assert_eq!(decrypt_bytes("right", &encrypted).unwrap(), b"secret");
+        assert!(decrypt_bytes("wrong", &encrypted).is_err());
+        assert!(decrypt_bytes("right", b"short").is_err());
+    }
+
+    #[test]
+    fn saving_with_a_different_key_preserves_the_unreadable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.data.enc");
+        store_encrypted(&path, "original", b"precious").unwrap();
+        store_encrypted(&path, "other", b"blank").unwrap();
+        let current = fs::read(&path).unwrap();
+        assert_eq!(decrypt_bytes("other", &current).unwrap(), b"blank");
+        assert_eq!(restore_unreadable_files(dir.path(), "wrong"), 0);
+        assert_eq!(restore_unreadable_files(dir.path(), "original"), 1);
+        let restored = fs::read(&path).unwrap();
+        assert_eq!(decrypt_bytes("original", &restored).unwrap(), b"precious");
+    }
+
+    #[test]
+    fn saving_with_the_same_key_creates_no_quarantine_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.data.enc");
+        store_encrypted(&path, "key", b"one").unwrap();
+        store_encrypted(&path, "key", b"two").unwrap();
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn rekeying_covers_every_data_file_and_writes_nothing_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["app.data.enc", "projects.data.enc", "abc.enc", "abc.cp.enc"] {
+            store_encrypted(&dir.path().join(name), "old", name.as_bytes()).unwrap();
+        }
+        let rekeyed = reencrypt_files(dir.path(), "old", "new").unwrap();
+        assert_eq!(rekeyed.len(), 4);
+        assert!(has_readable_files(dir.path(), "old"));
+        for (path, bytes) in rekeyed {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert_eq!(decrypt_bytes("new", &bytes).unwrap(), name.as_bytes());
+        }
+    }
 }
