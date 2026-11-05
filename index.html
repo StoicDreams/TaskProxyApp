@@ -14,7 +14,10 @@
     <base href="/" />
     <script type="text/javascript">
         {
-            navigator.serviceWorker.register(`service-worker.min.js`);
+            // Service workers only run on http and https, so tauri:// origins on Linux and macOS skip this.
+            if (location.protocol === 'http:' || location.protocol === 'https:') {
+                navigator.serviceWorker.register(`service-worker.min.js`);
+            }
         }
     </script>
     <link rel="dns-prefetch" href="https://cdn.myfi.ws" />
