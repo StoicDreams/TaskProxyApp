@@ -94,8 +94,18 @@ test.describe('environments', () => {
         await page.evaluate(() => webui.projectData.data._environments.push({ name: 'other', variables: {} }));
         await page.locator('#btn-manage-env').click();
         await dialogButton(page, 'Done').click();
+        // Clicking while the drawer is open closes it and rebuilds it about a second later,
+        // so wait for the rebuilt selector to offer the new environment.
         await page.evaluate(() => document.querySelector('app-var-manager').click());
-        await page.waitForTimeout(800);
+        await expect.poll(() => page.evaluate(() => {
+            const el = document.querySelector('#env-selector');
+            if (!el || !document.querySelector('.shared')?.classList.contains('open')) return false;
+            const current = el.value;
+            el.value = 'other';
+            const offered = el.value === 'other';
+            el.value = current;
+            return offered;
+        }), { timeout: 5000 }).toBe(true);
         await selectEnv(page, 'other');
         expect(await page.evaluate(() => webui.getProjectData('old_key'))).toBeUndefined();
         await selectEnv(page, 'dev');

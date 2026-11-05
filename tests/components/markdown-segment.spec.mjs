@@ -9,7 +9,8 @@ async function segment(page, markdown) {
         await customElements.whenDefined('app-markdown-segment');
         await customElements.whenDefined('webui-content');
     }, markdown);
-    await page.waitForFunction(() => document.querySelector('#seg')._options?.setOptions);
+    // connected() waits for every preloaded component, so wait for it to have set the markdown.
+    await page.waitForFunction(() => document.querySelector('#seg')._options?.setOptions && document.querySelector('#seg')._markdown !== undefined);
     await page.waitForTimeout(150);
     return root;
 }
