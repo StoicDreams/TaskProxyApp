@@ -6,9 +6,18 @@ const open = async (page, git = {}, state = {}) => {
 };
 const manager = page => page.locator('app-git-manager');
 const commit = async (page, message = 'msg') => {
-    await manager(page).locator('webui-input-message[label="Commit Message"] textarea').fill(message);
+    // On a slow load the textarea can take text before the component listens to it, so fill until it has the message.
+    await expect(async () => {
+        await manager(page).locator('webui-input-message[label="Commit Message"] textarea').fill(message);
+        expect(await manager(page).evaluate(el => el._message.value)).toBe(message);
+    }).toPass({ timeout: 5000 });
     await manager(page).locator('webui-button[label="Commit"]').click();
 };
+// A click on a tab is ignored until the tabs have loaded, so click until the branch list shows.
+const openBranches = page => expect(async () => {
+    await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Branches' }).click();
+    await expect(manager(page).locator('webui-button.btn-switch').first()).toBeVisible({ timeout: 1000 });
+}).toPass({ timeout: 10000 });
 const include = (page, file) => manager(page).locator(`.files webui-button[title="${file}"]`).evaluateHandle(button => button.previousElementSibling);
 
 test('changes are listed with their type', async ({ page }) => {
@@ -73,7 +82,7 @@ test('markup in a file name is shown as text', async ({ page }) => {
 });
 test('markup in a branch name is shown as text', async ({ page }) => {
     await open(page, { branches: [{ name: 'main', isCurrent: true, updatedDate: '' }, { name: '<img/src=q/onerror=window.__xss=1>', isCurrent: false, updatedDate: '' }] });
-    await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Branches' }).click();
+    await openBranches(page);
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => window.__xss)).toBeUndefined();
     await expect(manager(page).locator('webui-table img')).toHaveCount(0);
@@ -139,7 +148,7 @@ test('revert all asks first', async ({ page }) => {
 });
 test('branches cannot change with uncommitted work', async ({ page }) => {
     await open(page, { branches: [{ name: 'main', isCurrent: true, updatedDate: '' }, { name: 'other', isCurrent: false, updatedDate: '' }] });
-    await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Branches' }).click();
+    await openBranches(page);
     await manager(page).locator('webui-button.btn-switch').click();
     await page.waitForTimeout(100);
     expect(await calls(page, 'git_switch_branch')).toEqual([]);
@@ -147,9 +156,10 @@ test('branches cannot change with uncommitted work', async ({ page }) => {
 });
 test('deleting a remote branch says so', async ({ page }) => {
     await open(page, { branches: [{ name: 'main', isCurrent: true, updatedDate: '' }, { name: 'origin/old', isCurrent: false, updatedDate: '' }] });
-    await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Branches' }).click();
+    await openBranches(page);
     await manager(page).locator('webui-button.btn-delete').click();
-    await expect(page.getByText('from the remote')).toBeVisible();
+    // Scoped to the dialog, because the page's help text also mentions the remote.
+    await expect(page.locator('dialog').getByText('from the remote')).toBeVisible();
 });
 test('pull, push, sync, and fetch call the backend', async ({ page }) => {
     await open(page);

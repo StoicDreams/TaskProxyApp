@@ -5,10 +5,17 @@ async function manager(page, project = { name: 'Repo', path: '/repo' }) {
     const root = await mount(page, '<app-project-manager id="m"></app-project-manager>');
     return root.locator('#m');
 }
+// The dialog fills in the current name once its input has loaded, so wait for that before typing.
+async function openRename(page, el) {
+    await el.locator('#btn-edit').click();
+    const input = page.locator('webui-input-text[name="projectName"] input');
+    await expect(input).toHaveValue('Repo');
+    return input;
+}
 test('renaming sends the new name and updates the current project', async ({ page }) => {
     const el = await manager(page);
-    await el.locator('#btn-edit').click();
-    await page.locator('webui-input-text[name="projectName"] input').fill('New Name');
+    const input = await openRename(page, el);
+    await input.fill('New Name');
     await dialogButton(page, 'Rename').click();
     await expect.poll(async () => (await calls(page, 'rename_project')).length).toBe(1);
     expect((await calls(page, 'rename_project'))[0]).toEqual({ path: '/repo', newName: 'New Name' });
@@ -16,8 +23,8 @@ test('renaming sends the new name and updates the current project', async ({ pag
 });
 test('a blank name is refused', async ({ page }) => {
     const el = await manager(page);
-    await el.locator('#btn-edit').click();
-    await page.locator('webui-input-text[name="projectName"] input').fill('   ');
+    const input = await openRename(page, el);
+    await input.fill('   ');
     await dialogButton(page, 'Rename').click();
     await page.waitForTimeout(100);
     expect(await calls(page, 'rename_project')).toEqual([]);
