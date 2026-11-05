@@ -10,7 +10,7 @@
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: 'tabs table',
+        preload: 'tabs table dropdown input-message input-text toggle-icon alert content-compare',
         constructor() {
             const t = this;
             t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
@@ -83,9 +83,11 @@
             if (!t._branchTable) return;
             let tableData = (t._branchList || []).map(b => {
                 let isCurrent = b.isCurrent;
+                // Branch names come from the remote, and can contain markup.
+                let name = webui.escapeForHTML(b.name);
                 return {
                     ...b,
-                    nameHtml: `${isCurrent ? '<webui-icon icon="star|fill|theme:warning" style="margin-right: 0.5rem;"></webui-icon>' : ''}${b.name}`,
+                    nameHtml: `${isCurrent ? '<webui-icon icon="star|fill|theme:warning" style="margin-right: 0.5rem;"></webui-icon>' : ''}${name}`,
                     actionsHtml: `
                         <webui-flex gap="0.5rem" justify="right" align="center">
                             ${!isCurrent ? `<webui-button theme="info" class="btn-switch" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Switch</webui-button>` : `<span style="padding: 0.25rem 0.5rem; font-size: 0.85rem; color: var(--color-success); font-weight: bold;">Active</span>`}
@@ -135,9 +137,10 @@
                 t._valSyncStatus.innerHTML = '<em style="color: var(--color-danger);">Failed to retrieve remote status.</em>';
                 return;
             }
-            t._valRemoteUrl.innerHTML = status.remoteUrl || 'No origin defined';
+            // A URL can hold a token, as in https://user:token@host.
+            t._valRemoteUrl.textContent = (status.remoteUrl || 'No origin defined').replace(/\/\/[^/@]+@/, '//');
             if (status.hasUpstream) {
-                t._valTrackingBranch.innerHTML = status.upstreamName;
+                t._valTrackingBranch.textContent = status.upstreamName;
                 let syncHtml = '';
                 if (status.ahead === 0 && status.behind === 0) {
                     syncHtml = `<span style="color: var(--color-success);">Up to date with remote</span>`;
@@ -153,6 +156,8 @@
         },
         async loadFileDiff(changeDetail) {
             let t = this;
+            const request = t._diffRequest = {};
+            const showError = msg => t.setAlert(msg, 'warning');
             await customElements.whenDefined('webui-content-compare');
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
             t._diffViewer.clear?.();
@@ -162,7 +167,8 @@
             await webui.wait(()=>!!webui.proxy);
             let data = { change: changeDetail.change, isCompare: false };
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
-            data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName) : '';
+            data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName, showError) : '';
+            if (t._diffRequest !== request) return;
             data.isCompare = data.fileDiff !== undefined && changeDetail.change !== 'Add' && changeDetail.change !== 'Delete';
             if (changeDetail.change === 'Delete') {
                 if (data.fileDiff) {
@@ -185,10 +191,13 @@
                     data.fileContent = '';
                 }
             } else {
-                data.fileContent = await webui.proxy.getProjectFile(fullFilePath);
+                // Binary files cannot be read as text, which is not worth interrupting the user for.
+                data.fileContent = await webui.proxy.getProjectFile(fullFilePath, showError);
+                if (t._diffRequest !== request) return;
             }
             if (data.fileContent !== undefined) {
                 let result = await webui.proxy.worker.send('processFileDiff', data);
+                if (t._diffRequest !== request) return;
                 if (typeof t._diffViewer.setDiff !== 'function') {
                     customElements.upgrade(t._diffViewer);
                 }
@@ -213,7 +222,7 @@
                 if (!line || line.length < 3) return;
                 let status = line.substring(0, 2);
                 let filePath = line.substring(3).trim();
-                if (filePath.includes(' -> ')) {
+                if (status.includes('R') && filePath.includes(' -> ')) {
                     filePath = filePath.split(' -> ')[1];
                 }
                 let changeType = 'Modify';
@@ -234,7 +243,7 @@
                     repo: repo,
                     change: changeType,
                     fileName: filePath,
-                    display: `<span class="change-type">${changeType}</span> <strong>${display}</strong>`,
+                    display: `<span class="change-type">${changeType}</span> <strong>${webui.escapeForHTML(display)}</strong>`,
                     isIncluded: true,
                 };
                 t._files.push(details);
@@ -255,7 +264,7 @@
                 include.setOptions(options);
                 const fullPath = `${details.repo}/${details.fileName}`;
                 function setTheme() {
-                    switch (include.value) {
+                    switch (`${include.value}`) {
                         case '0':
                             include.setAttribute('theme', 'info');
                             details.isIncluded = false;
@@ -287,8 +296,8 @@
                     await webui.dialog({
                         title: isNew ? 'Delete File' : 'Revert File',
                         content: isNew
-                            ? `<p>Are you sure you want to permanently delete <strong>${display}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`
-                            : `<p>Are you sure you want to discard all uncommitted changes in <strong>${display}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                            ? `<p>Are you sure you want to permanently delete <strong>${webui.escapeForHTML(display)}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`
+                            : `<p>Are you sure you want to discard all uncommitted changes in <strong>${webui.escapeForHTML(display)}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
                         confirm: isNew ? 'Delete' : 'Revert',
                         cancel: 'Cancel',
                         onconfirm: async (data, content) => {
@@ -307,7 +316,7 @@
                     });
                 });
                 if (getIgnoredFiles().includes(fullPath)) {
-                    include.value = 2;
+                    include.value = '2';
                 }
                 setTheme();
                 btn.addEventListener('click', _ => {
@@ -324,7 +333,7 @@
         },
         setAlert(msg, severity) {
             let t = this;
-            t._alert.setValue(!msg ? null : { theme: severity, html: msg });
+            t._alert.setValue(!msg ? null : { theme: severity, text: `${msg}` });
         },
         connected() {
             const t = this;
@@ -344,6 +353,7 @@
                 if (!btn) return;
                 let targetBranch = btn.getAttribute('data-branch');
                 if (!targetBranch) return;
+                let safeBranch = webui.escapeForHTML(targetBranch);
                 let repo = t._repos.value;
                 if (btn.classList.contains('btn-switch') || btn.classList.contains('btn-new')) {
                     if (t._hasPendingChanges) {
@@ -364,7 +374,7 @@
                     }
                 } else if (btn.classList.contains('btn-new')) {
                     await webui.dialog({
-                        title: `Create New Branch from '${targetBranch}'`,
+                        title: `Create New Branch from '${safeBranch}'`,
                         content: `<webui-flex column><webui-input-text name="branchName" label="New Branch Name"></webui-input-text></webui-flex>`,
                         confirm: 'Create',
                         cancel: 'Cancel',
@@ -377,6 +387,7 @@
                             if (result) {
                                 t.setAlert(result, 'success');
                                 await t.loadBranches();
+                                t.loadRepoChanges();
                                 return true;
                             }
                         }
@@ -384,7 +395,7 @@
                 } else if (btn.classList.contains('btn-merge')) {
                     await webui.dialog({
                         title: 'Merge Branch',
-                        content: `<p>Are you sure you want to merge <strong>${targetBranch}</strong> into the current branch (<strong>${t._currentBranch}</strong>)?</p>`,
+                        content: `<p>Are you sure you want to merge <strong>${safeBranch}</strong> into the current branch (<strong>${webui.escapeForHTML(t._currentBranch)}</strong>)?</p>`,
                         confirm: 'Merge',
                         cancel: 'Cancel',
                         onconfirm: async (data, content) => {
@@ -400,7 +411,9 @@
                 } else if (btn.classList.contains('btn-delete')) {
                     await webui.dialog({
                         title: 'Delete Branch',
-                        content: `<p>Are you sure you want to delete the branch <strong>${targetBranch}</strong>?</p>`,
+                        content: targetBranch.startsWith('origin/')
+                            ? `<p>Are you sure you want to delete <strong>${safeBranch}</strong> from the remote?</p><p style="color: var(--color-danger);">This removes the branch for everyone using this remote.</p>`
+                            : `<p>Are you sure you want to delete the branch <strong>${safeBranch}</strong>?</p>`,
                         confirm: 'Delete',
                         cancel: 'Cancel',
                         onconfirm: async (data, content) => {
@@ -542,6 +555,10 @@
                     t.setAlert('No repo is set!');
                     return;
                 }
+                if (files.length === 0) {
+                    t.setAlert('Select at least one file to commit.', 'warning');
+                    return;
+                }
                 let result = await webui.proxy.git.commit(repo, files, message, msg => t.setAlert(msg));
                 if (result) {
                     t.setAlert(result, 'success');
@@ -674,7 +691,7 @@ pre {
         <webui-flex justify="flex-end" align="center" gap="var(--padding)" style="margin-bottom: var(--padding);">
             <webui-button theme="info" label="Toggle All"></webui-button>
             <webui-flex grow></webui-flex>
-            <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" data-default="true" theme-on="primary"></webui-toggle-icon>
+            <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" theme-on="primary"></webui-toggle-icon>
             <webui-button theme="primary" label="Commit"></webui-button>
         </webui-flex>
         <webui-grid columns="2fr 3fr" gap="var(--padding)">

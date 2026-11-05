@@ -58,8 +58,12 @@ pub(crate) fn safe_relative_path(path: &str) -> Result<PathBuf, String> {
 
 /// Writing into `.git` could install hooks or change configuration, which run as code.
 pub(crate) fn targets_git_dir(path: &Path) -> bool {
-    path.components()
-        .any(|part| part.as_os_str().to_string_lossy().eq_ignore_ascii_case(".git"))
+    path.components().any(|part| {
+        // Windows ignores trailing dots and spaces in names, and GIT~1 is the short name of .git.
+        let name = part.as_os_str().to_string_lossy();
+        let name = name.trim_end_matches(['.', ' ']);
+        name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
+    })
 }
 
 /// Confirm a path does not leave the root through a symbolic link.
@@ -140,7 +144,15 @@ mod tests {
             PathBuf::from("a").join("b.md")
         );
         assert!(safe_relative_path("name..with..dots.md").is_ok());
-        for bad in ["", ".", "../x", "a/../../x", "a\\..\\x", "/etc/passwd", "\\x"] {
+        for bad in [
+            "",
+            ".",
+            "../x",
+            "a/../../x",
+            "a\\..\\x",
+            "/etc/passwd",
+            "\\x",
+        ] {
             assert!(safe_relative_path(bad).is_err(), "{bad} should be rejected");
         }
     }
@@ -182,7 +194,12 @@ mod tests {
     #[test]
     fn walker_skips_ignored_paths_and_keeps_hidden_project_folders() {
         let dir = tempfile::tempdir().unwrap();
-        for file in ["a.md", ".taskproxy/scripts/b.ps1", "target/c.md", "ignored/d.md"] {
+        for file in [
+            "a.md",
+            ".taskproxy/scripts/b.ps1",
+            "target/c.md",
+            "ignored/d.md",
+        ] {
             let path = dir.path().join(file);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, "x").unwrap();
@@ -195,5 +212,72 @@ mod tests {
         });
         found.sort();
         assert_eq!(found, [".gitignore", ".taskproxy/scripts/b.ps1", "a.md"]);
+    }
+
+    #[test]
+    fn git_folders_are_recognized_under_any_spelling() {
+        for path in [
+            ".git",
+            "a/.git/b",
+            ".GIT/config",
+            "a/.git./b",
+            "a/.git /b",
+            "GIT~1/config",
+            "git~1",
+        ] {
+            assert!(targets_git_dir(Path::new(path)), "{}", path);
+        }
+        for path in [
+            ".github/workflows",
+            "a/.gitignore",
+            "src/git/x",
+            "my.git.txt",
+        ] {
+            assert!(!targets_git_dir(Path::new(path)), "{}", path);
+        }
+    }
+
+    #[test]
+    fn atomic_writes_replace_the_file_and_create_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("deep/folder/file.txt");
+        write_atomic(&path, b"first, and longer").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        let names: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(names, ["file.txt"]);
+    }
+
+    #[test]
+    fn paths_inside_the_root_are_accepted_even_before_they_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(ensure_inside_root(dir.path(), &dir.path().join("new/folder/file.txt")).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_links_out_of_the_root_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(dir.path(), root.join("up")).unwrap();
+        assert!(ensure_inside_root(&root, &root.join("up/x.txt")).is_err());
+        std::os::unix::fs::symlink(&root, root.join("self")).unwrap();
+        assert!(ensure_inside_root(&root, &root.join("self/x.txt")).is_ok());
+    }
+
+    #[test]
+    fn project_ids_are_stable_and_safe_for_file_names() {
+        let id = get_hash_code("/repo/path");
+        assert_eq!(id, get_hash_code("/repo/path"));
+        assert_ne!(id, get_hash_code("/repo/other"));
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
     }
 }

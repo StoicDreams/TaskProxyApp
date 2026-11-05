@@ -16,3 +16,8 @@ taskproxy_live_*
 
 # Downloaded embedding models
 .fastembed_cache/
+
+# Ignore test tooling output
+node_modules
+test-results
+playwright-report

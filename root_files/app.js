@@ -2,7 +2,8 @@
 {
     const globalScope = 'global';
     const projectScope = 'project';
-    const projectRootGetVars = ['id', 'path', 'current_page', 'docs', 'navigation', 'variables', 'data']
+    // The data field holds every project value, including tokens, so it is not readable by name.
+    const projectRootGetVars = ['id', 'path', 'current_page', 'docs', 'navigation', 'variables']
     const projectRootSetVars = []
     const AsyncFunction = (async () => { }).constructor;
     const patKeys = ['git_pat', 'github_pat'];
@@ -52,7 +53,7 @@
                     <p>Your Personal Access Token (PAT) is missing or invalid.</p>
                     <webui-flex column gap="var(--padding)">
                         <webui-input-text name="gitToken" label="Personal Access Token (PAT)"></webui-input-text>
-                        <webui-toggle-icon name="isGlobal" label="Save to Global Scope (Defaults to Project)" data-default="false" theme-on="primary"></webui-toggle-icon>
+                        <webui-toggle-icon name="isGlobal" label="Save to Global Scope (Defaults to Project)" theme-on="primary"></webui-toggle-icon>
                     </webui-flex>
                 `,
                 confirm: 'Save & Retry',
@@ -305,12 +306,16 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(errHandler);
         }
+        /** Update the backend's copy without writing to disk, for changes that happen often. */
+        syncAppData(errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(errHandler);
+        }
         saveProjectData(errHandler) {
             errHandler ??= defaultErrHandler;
             if (!webui.projectData || !webui.projectData.id) {
                 return;
             }
-            webui.setData('app-nav-routes', []);
             webui.setData('app-nav-routes', webui.projectData.navigation);
             return tauri.core.invoke('save_project_data', { data: webui.projectData }).catch(errHandler);
         }
@@ -392,7 +397,11 @@
                 }
                 return terminalStates.get(id);
             },
-            async runScript(id, scriptContent, args, inSeparateWindow, useQueue, isPageScript) {
+            /**
+             * `displayScript` is what the Terminal Manager shows. Page scripts pass a copy with
+             * injected values masked, since what runs can contain secrets.
+             */
+            async runScript(id, scriptContent, args, inSeparateWindow, useQueue, isPageScript, displayScript) {
                 let state = this.getState();
                 if (state.terminals[id] && state.terminals[id].status === 'Running') {
                     throw 'Script is already running. You can manage it in the Terminal Manager.';
@@ -400,21 +409,21 @@
                 if (useQueue) {
                     let isRunning = Object.values(state.terminals).some(t => t.status === 'Running');
                     if (isRunning) {
-                        state.queue.push({ id, scriptContent, args, inSeparateWindow, isPageScript });
+                        state.queue.push({ id, scriptContent, args, inSeparateWindow, isPageScript, displayScript });
                         return 'Queued';
                     }
                 }
-                return await this._executeScript(id, scriptContent, args, inSeparateWindow, isPageScript);
+                return await this._executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript);
             },
-            async _executeScript(id, scriptContent, args, inSeparateWindow, isPageScript) {
+            async _executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript) {
                 let state = this.getState();
                 if (!state.terminals[id]) {
-                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, args: args, output: [], isLive: id === 'live', isPageScript: !!isPageScript };
+                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: '', args: args, output: [], isLive: id === 'live', isPageScript: !!isPageScript };
                 } else {
                     state.terminals[id].isPageScript = !!isPageScript;
                 }
                 state.terminals[id].status = 'Running';
-                state.terminals[id].script = scriptContent;
+                state.terminals[id].script = displayScript ?? scriptContent;
                 if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
                     state.allScripts.push(id);
                 }
@@ -445,8 +454,25 @@
                 if (Object.values(state.terminals).some(t => t.status === 'Running')) return;
                 let next = state.queue.shift();
                 if (next) {
-                    this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow, next.isPageScript).catch(err => webui.alert(err, 'danger'));
+                    this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow, next.isPageScript, next.displayScript).catch(err => webui.alert(err, 'danger'));
                 }
+            },
+            /** Forget a terminal and its output. Running scripts and the live terminal are kept. */
+            removeTerminal(id) {
+                let state = this.getState();
+                const term = state.terminals[id];
+                if (!term || term.isLive || term.status === 'Running') return false;
+                delete state.terminals[id];
+                if (state.activeId === id) state.activeId = 'live';
+                return true;
+            },
+            /** Forget every page script that is not running. Returns how many were removed. */
+            removeFinishedPageScripts() {
+                let state = this.getState();
+                return Object.values(state.terminals)
+                    .filter(term => term.isPageScript && term.status !== 'Running')
+                    .filter(term => this.removeTerminal(term.id))
+                    .length;
             },
             ensureListeners() {
                 if (this._listenersAttached || !webui.proxy?.terminal) return;
@@ -506,7 +532,9 @@
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
         tauri.event.listen('webui-isclosing', event => webui.isclosing(event.payload));
+        // A failure has already been shown. Carrying on with blank data could overwrite what was saved.
         let data = await webui.proxy.getAppData();
+        if (!data) return;
         let version = await webui.proxy.getVersion();
         if (version) data.data['app-version'] = `v${version}`;
         webui.taskProxyData = data;
@@ -543,8 +571,8 @@
                 if (value !== undefined) return value;
             }
             if (scope !== globalScope && (isAppKey || getData('app-env-project-enabled'))) {
-                // Check Project Data
-                let value = projectRootGetVars.indexOf(key) !== -1 ? webui.projectData[key] : webui.projectData.data[key];
+                // Check Project Data. Project fields need the scope, or they would hide variables of the same name.
+                let value = scope === projectScope && projectRootGetVars.indexOf(key) !== -1 ? webui.projectData[key] : webui.projectData.data[key];
                 if (value !== undefined) return value;
             }
             if (!isAppKey && !getData('app-env-global-enabled')) return undefined;
@@ -561,6 +589,23 @@
                 webui.setGlobalData(key, value);
             }
             setData(key, value);
+        }
+        /**
+         * The value of a variable, for injecting into scripts. Unlike getData, this never falls back
+         * to framework settings such as app-name, which a script's $name must not pick up.
+         */
+        webui.getVariable = function (key) {
+            if (patKeys.includes(key)) return undefined;
+            if (/^(app|session|page)-/.test(webui.toSnake(key, '-'))) return undefined;
+            if (getData('app-env-page-enabled')) {
+                let value = webui.getNestedData(key, window.appData);
+                if (value !== undefined) return value;
+            }
+            if (getData('app-env-project-enabled')) {
+                let value = webui.projectData.data[key];
+                if (value !== undefined) return value;
+            }
+            return getData('app-env-global-enabled') ? webui.taskProxyData.data[key] : undefined;
         }
         webui.getProjectData = function (key) {
             if (projectRootGetVars.indexOf(key) !== -1) {
@@ -597,6 +642,10 @@
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1 || patKeys.includes(key)) return;
             webui.setData(key, value);
+        });
+        // Variables work until a scope is switched off, including on a new install.
+        ['app-env-page-enabled', 'app-env-project-enabled', 'app-env-global-enabled'].forEach(key => {
+            if (data.data[key] === undefined) setData(key, true);
         });
         webui.watchAppDataChanges(queueAppDataChanges);
         let currentProject = webui.getData('app-current-project');
@@ -672,6 +721,8 @@
             showLoading('Loading Project!');
             webui.setData('app-nav-routes', []);
             let projectData = await webui.proxy.getProjectData(project);
+            // Selecting a project that failed to load tries again.
+            if (!projectData) cache.currentProjectPath = null;
             webui.projectData = projectData || { id: null, path: null, currentPage: '/', navigation: [], data: {} };
             if (webui.projectData && webui.projectData.path) {
                 webui.projectData.path = webui.projectData.path.replace(/\\/g, '/');
@@ -723,12 +774,17 @@
         await tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
     }
     async function runWhenWebUIReady(action) {
+        // Only waiting for the framework retries. Repeating the action would stack up its side effects.
+        if (typeof webui === 'undefined' || typeof webui.dialog !== 'function') {
+            setTimeout(() => runWhenWebUIReady(action), 10);
+            return;
+        }
         try {
-            webui.getData('test');
             await showLoading('Loading App!');
             await action();
-        } catch {
-            setTimeout(() => runWhenWebUIReady(action), 10);
+        } catch (ex) {
+            console.error('Task Proxy failed to start', ex);
+            webui.alert(`Task Proxy failed to start: ${ex}`);
         } finally {
             hideLoading();
         }

@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use fastembed::{TextEmbedding, TextInitOptions, EmbeddingModel, similarity::cosine_similarity};
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions, similarity::cosine_similarity};
 
 pub(crate) struct EmojiState {
     pub is_initialized: bool,
@@ -26,7 +26,10 @@ fn build_emoji_index(
     supported_emojis: Vec<String>,
     cache_dir: PathBuf,
 ) -> Result<(TextEmbedding, Vec<(String, String, Vec<f32>)>), String> {
-    println!("Initializing embedding model with {} supported emojis...", supported_emojis.len());
+    println!(
+        "Initializing embedding model with {} supported emojis...",
+        supported_emojis.len()
+    );
     let mut model = TextEmbedding::try_new(
         TextInitOptions::new(EmbeddingModel::AllMiniLML6V2)
             .with_cache_dir(cache_dir)
@@ -63,7 +66,9 @@ pub(crate) async fn init_emoji_search(
 ) -> Result<String, String> {
     let shared_state = state.inner().clone();
     {
-        let mut emoji_state = shared_state.lock().map_err(|_| "Failed to lock emoji state")?;
+        let mut emoji_state = shared_state
+            .lock()
+            .map_err(|_| "Failed to lock emoji state")?;
         if emoji_state.is_initialized || emoji_state.is_initializing {
             return Ok("Already initialized".to_string());
         }
@@ -83,7 +88,9 @@ pub(crate) async fn init_emoji_search(
         }
         Err(err) => Err(err),
     };
-    let mut emoji_state = shared_state.lock().map_err(|_| "Failed to lock emoji state")?;
+    let mut emoji_state = shared_state
+        .lock()
+        .map_err(|_| "Failed to lock emoji state")?;
     emoji_state.is_initializing = false;
     let (model, emoji_data) = built?;
     emoji_state.model = Some(model);
@@ -100,27 +107,40 @@ pub(crate) async fn search_emojis(
 ) -> Result<Vec<serde_json::Value>, String> {
     let state_clone = state.inner().clone();
     let result = task::spawn_blocking(move || -> Result<Vec<serde_json::Value>, String> {
-        let mut emoji_state = state_clone.lock().map_err(|_| "Failed to lock emoji state")?;
+        let mut emoji_state = state_clone
+            .lock()
+            .map_err(|_| "Failed to lock emoji state")?;
         if !emoji_state.is_initialized {
             return Err("Model not initialized. Please wait for data to load.".to_string());
         }
         let model = emoji_state.model.as_mut().ok_or("Model not initialized.")?;
-        let query_embedding = model.embed(vec![query], None)
+        let query_embedding = model
+            .embed(vec![query], None)
             .map_err(|e| format!("Failed to embed query: {}", e))?
             .pop()
             .ok_or("Model returned no embedding.")?;
-        let mut scored_emojis: Vec<(&String, &String, f32)> = emoji_state.emoji_data.iter().map(|(emoji_key, name, emb)| {
-            let score = cosine_similarity(&query_embedding, emb);
-            (emoji_key, name, score)
-        }).collect();
-        scored_emojis.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-        let top_results = scored_emojis.into_iter().take(30).map(|(emoji_key, name, _score)| {
-            serde_json::json!({
-                "emoji": emoji_key,
-                "name": name
+        let mut scored_emojis: Vec<(&String, &String, f32)> = emoji_state
+            .emoji_data
+            .iter()
+            .map(|(emoji_key, name, emb)| {
+                let score = cosine_similarity(&query_embedding, emb);
+                (emoji_key, name, score)
             })
-        }).collect();
+            .collect();
+        scored_emojis.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        let top_results = scored_emojis
+            .into_iter()
+            .take(30)
+            .map(|(emoji_key, name, _score)| {
+                serde_json::json!({
+                    "emoji": emoji_key,
+                    "name": name
+                })
+            })
+            .collect();
         Ok(top_results)
-    }).await.map_err(|e| e.to_string())??;
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     Ok(result)
 }

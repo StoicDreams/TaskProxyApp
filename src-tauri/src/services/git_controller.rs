@@ -47,7 +47,7 @@ fn get_git_credentials(app_handle: &AppHandle) -> Option<String> {
 }
 
 /// Helper to construct Git2 remote callbacks for authentication injections.
-fn create_remote_callbacks<'a>(app_handle: AppHandle) -> RemoteCallbacks<'a> {
+fn create_remote_callbacks<'a>(token: impl Fn() -> Option<String> + 'a) -> RemoteCallbacks<'a> {
     let mut callbacks = RemoteCallbacks::new();
     // libgit2 asks again when a server rejects a credential, so a second request means it failed.
     let mut already_tried = false;
@@ -56,7 +56,7 @@ fn create_remote_callbacks<'a>(app_handle: AppHandle) -> RemoteCallbacks<'a> {
             return Err(git2::Error::from_str(CREDENTIALS_ERROR));
         }
         already_tried = true;
-        if let Some(token) = get_git_credentials(&app_handle) {
+        if let Some(token) = token() {
             Cred::userpass_plaintext(username_from_url.unwrap_or("git"), &token)
         } else {
             Err(git2::Error::from_str(CREDENTIALS_ERROR))
@@ -350,9 +350,8 @@ fn file_diff(repository: &Repository, file: &str) -> Result<String, String> {
         if origin == '+' || origin == '-' || origin == ' ' {
             diff_text.push(origin);
         }
-        if let Ok(content) = std::str::from_utf8(line.content()) {
-            diff_text.push_str(content);
-        }
+        // Lines that are not valid UTF-8 must still show, or the diff would look shorter than it is.
+        diff_text.push_str(&String::from_utf8_lossy(line.content()));
         true
     })
     .map_err(|e| e.to_string())?;
@@ -364,11 +363,11 @@ fn file_diff(repository: &Repository, file: &str) -> Result<String, String> {
 fn push_refspec(
     remote: &mut git2::Remote,
     refspec: &str,
-    app_handle: AppHandle,
+    token: impl Fn() -> Option<String>,
 ) -> Result<(), String> {
     let rejections = Arc::new(Mutex::new(Vec::new()));
     let recorded = rejections.clone();
-    let mut callbacks = create_remote_callbacks(app_handle);
+    let mut callbacks = create_remote_callbacks(token);
     callbacks.push_update_reference(move |refname, status| {
         if let (Some(status), Ok(mut recorded)) = (status, recorded.lock()) {
             recorded.push(format!("{}: {}", refname, status));
@@ -386,7 +385,10 @@ fn push_refspec(
     if rejections.is_empty() {
         Ok(())
     } else {
-        Err(format!("Push rejected by remote. {}", rejections.join("; ")))
+        Err(format!(
+            "Push rejected by remote. {}",
+            rejections.join("; ")
+        ))
     }
 }
 
@@ -430,7 +432,7 @@ pub(crate) async fn git_push(
         let head = repository.head().map_err(|e| e.to_string())?;
         let branch_name = head.shorthand().ok_or("Invalid branch name")?;
         let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
-        push_refspec(&mut remote, &refspec, app_handle)?;
+        push_refspec(&mut remote, &refspec, || get_git_credentials(&app_handle))?;
         if let Ok(mut local_branch) = repository.find_branch(branch_name, git2::BranchType::Local) {
             let upstream_name = format!("origin/{}", branch_name);
             let _ = local_branch.set_upstream(Some(&upstream_name));
@@ -464,7 +466,7 @@ pub(crate) async fn git_pull(
                 "No remote tracking branch set. Skipping pull.",
             ));
         }
-        let callbacks = create_remote_callbacks(app_handle_clone);
+        let callbacks = create_remote_callbacks(|| get_git_credentials(&app_handle_clone));
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
         let refspec = format!(
@@ -503,7 +505,7 @@ pub(crate) async fn git_pull_overwrite(
                 "No remote tracking branch set. Skipping pull overwrite.",
             ));
         }
-        let callbacks = create_remote_callbacks(app_handle_clone);
+        let callbacks = create_remote_callbacks(|| get_git_credentials(&app_handle_clone));
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
         let refspec = format!(
@@ -559,105 +561,132 @@ pub(crate) async fn git_commit(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let merge_head_path = repository.path().join("MERGE_HEAD");
-        let is_merging = merge_head_path.exists();
-        let mut index = repository.index().map_err(|e| e.to_string())?;
-        if !is_merging {
-            if let Ok(head) = repository.head() {
-                if let Ok(tree) = head.peel_to_tree() {
-                    let _ = index.read_tree(&tree);
-                }
-            } else {
-                let _ = index.clear();
-            }
-        }
-        for file in &files {
-            let file_path = safe_relative_path(file)?;
-            let file_path = file_path.as_path();
-            if git_path.join(file_path).exists() {
-                index
-                    .add_path(file_path)
-                    .map_err(|e| format!("Failed to add file: {}", e))?;
-            } else {
-                let _ = index.remove_path(file_path);
-            }
-        }
-        if is_merging && index.has_conflicts() {
-            let conflicts: Vec<PathBuf> = index
-                .conflicts()
-                .map_err(|e| e.to_string())?
-                .flatten()
-                .filter_map(|c| {
-                    c.our
-                        .or(c.their)
-                        .or(c.ancestor)
-                        .and_then(|entry| String::from_utf8(entry.path).ok())
-                        .map(PathBuf::from)
-                })
-                .collect();
-            for rel_path in conflicts {
-                let full_path = git_path.join(&rel_path);
-                if full_path.exists() {
-                    if let Ok(content) = fs::read_to_string(&full_path) {
-                        if content.contains("<<<<<<<")
-                            && content.contains("=======")
-                            && content.contains(">>>>>>>")
-                        {
-                            return Err(format!(
-                                "Conflict markers still present in {}",
-                                rel_path.display()
-                            ));
-                        }
-                    }
-                    index
-                        .add_path(&rel_path)
-                        .map_err(|e| format!("Failed to stage resolved file: {}", e))?;
-                } else {
-                    let _ = index.remove_path(&rel_path);
-                }
-            }
-        }
-        index.write().map_err(|e| e.to_string())?;
-        let oid = index.write_tree().map_err(|e| e.to_string())?;
-        let signature = repository
-            .signature()
-            .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
-            .map_err(|e| e.to_string())?;
-        let mut parent_commits = Vec::new();
-        if let Ok(head) = repository.head() {
-            if let Ok(commit) = head.peel_to_commit() {
-                parent_commits.push(commit);
-            }
-        }
-        if is_merging {
-            let merge_head_content = fs::read_to_string(&merge_head_path).unwrap_or_default();
-            for line in merge_head_content.lines() {
-                if let Ok(oid) = git2::Oid::from_str(line.trim()) {
-                    if let Ok(commit) = repository.find_commit(oid) {
-                        parent_commits.push(commit);
-                    }
-                }
-            }
-        }
-        let tree = repository.find_tree(oid).map_err(|e| e.to_string())?;
-        let parents: Vec<&git2::Commit> = parent_commits.iter().collect();
-        repository
-            .commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                &message,
-                &tree,
-                &parents,
-            )
-            .map_err(|e| e.to_string())?;
-        if is_merging {
-            let _ = repository.cleanup_state();
-        }
-        Ok(String::from("Commit successful."))
+        commit_files(&repository, &git_path, &files, &message)
     })
     .await;
     result.map_err(|err| format!("{}", err))?
+}
+
+fn commit_files(
+    repository: &Repository,
+    git_path: &Path,
+    files: &[String],
+    message: &str,
+) -> Result<String, String> {
+    let merge_head_path = repository.path().join("MERGE_HEAD");
+    let is_merging = merge_head_path.exists();
+    let mut index = repository.index().map_err(|e| e.to_string())?;
+    if !is_merging {
+        if let Ok(head) = repository.head() {
+            if let Ok(tree) = head.peel_to_tree() {
+                let _ = index.read_tree(&tree);
+            }
+        } else {
+            let _ = index.clear();
+        }
+    }
+    // Checked before staging anything, because staging a file also clears its conflict.
+    let conflicts: Vec<PathBuf> = if is_merging && index.has_conflicts() {
+        index
+            .conflicts()
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .filter_map(|c| {
+                c.our
+                    .or(c.their)
+                    .or(c.ancestor)
+                    .and_then(|entry| String::from_utf8(entry.path).ok())
+                    .map(PathBuf::from)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for rel_path in &conflicts {
+        if let Ok(content) = fs::read_to_string(git_path.join(rel_path)) {
+            if content.contains("<<<<<<<")
+                && content.contains("=======")
+                && content.contains(">>>>>>>")
+            {
+                return Err(format!(
+                    "Conflict markers still present in {}",
+                    rel_path.display()
+                ));
+            }
+        }
+    }
+    for file in files {
+        let file_path = safe_relative_path(file)?;
+        let file_path = file_path.as_path();
+        // A broken symbolic link does not "exist", though it is a file to add.
+        if fs::symlink_metadata(git_path.join(file_path)).is_ok() {
+            index
+                .add_path(file_path)
+                .map_err(|e| format!("Failed to add file: {}", e))?;
+        } else {
+            let _ = index.remove_path(file_path);
+        }
+    }
+    // A merge cannot be committed while any file is left unresolved, selected or not.
+    for rel_path in conflicts {
+        if fs::symlink_metadata(git_path.join(&rel_path)).is_ok() {
+            index
+                .add_path(&rel_path)
+                .map_err(|e| format!("Failed to stage resolved file: {}", e))?;
+        } else {
+            let _ = index.remove_path(&rel_path);
+        }
+    }
+    let oid = index.write_tree().map_err(|e| e.to_string())?;
+    let mut parent_commits = Vec::new();
+    if let Ok(head) = repository.head() {
+        if let Ok(commit) = head.peel_to_commit() {
+            parent_commits.push(commit);
+        }
+    }
+    // Finishing a merge records the merge itself, so it can have no changes of its own.
+    if !is_merging {
+        let unchanged = match parent_commits.first() {
+            Some(parent) => parent.tree_id() == oid,
+            None => index.is_empty(),
+        };
+        if unchanged {
+            // Put back the index, which still holds the staged changes of files left out.
+            let _ = index.read(true);
+            return Err(String::from("There are no changes to commit."));
+        }
+    }
+    index.write().map_err(|e| e.to_string())?;
+    let signature = repository
+        .signature()
+        .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
+        .map_err(|e| e.to_string())?;
+    if is_merging {
+        let merge_head_content = fs::read_to_string(&merge_head_path).unwrap_or_default();
+        for line in merge_head_content.lines() {
+            if let Ok(oid) = git2::Oid::from_str(line.trim()) {
+                if let Ok(commit) = repository.find_commit(oid) {
+                    parent_commits.push(commit);
+                }
+            }
+        }
+    }
+    let tree = repository.find_tree(oid).map_err(|e| e.to_string())?;
+    let parents: Vec<&git2::Commit> = parent_commits.iter().collect();
+    repository
+        .commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parents,
+        )
+        .map_err(|e| e.to_string())?;
+    if is_merging {
+        let _ = repository.cleanup_state();
+    }
+    Ok(String::from("Commit successful."))
 }
 
 #[tauri::command]
@@ -676,66 +705,74 @@ pub(crate) async fn get_git_changes(
     let git_path = get_repo_path(&state, &path)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let mut options = git2::StatusOptions::new();
-        options.include_untracked(true).recurse_untracked_dirs(true);
-        let statuses = repository
-            .statuses(Some(&mut options))
-            .map_err(|e| e.to_string())?;
-        let mut files = Vec::new();
-        for entry in statuses.iter() {
-            let status = entry.status();
-            if status.is_ignored() {
-                continue;
-            }
-            let mut status_str = String::with_capacity(2);
-            if status.contains(git2::Status::CONFLICTED) {
-                status_str = "C ".to_string();
-            } else {
-                if status.contains(git2::Status::INDEX_NEW) {
-                    status_str.push('A');
-                } else if status.contains(git2::Status::INDEX_MODIFIED) {
-                    status_str.push('M');
-                } else if status.contains(git2::Status::INDEX_DELETED) {
-                    status_str.push('D');
-                } else if status.contains(git2::Status::INDEX_RENAMED) {
-                    status_str.push('R');
-                } else {
-                    status_str.push(' ');
-                }
-                if status.contains(git2::Status::WT_NEW) {
-                    if status_str == " " {
-                        status_str = "??".to_string();
-                    } else {
-                        status_str.push('?');
-                    }
-                } else if status.contains(git2::Status::WT_MODIFIED) {
-                    status_str.push('M');
-                } else if status.contains(git2::Status::WT_DELETED) {
-                    status_str.push('D');
-                } else if status.contains(git2::Status::WT_RENAMED) {
-                    status_str.push('R');
-                } else if status_str != "??" {
-                    status_str.push(' ');
-                }
-            }
-            let path_val = if status.contains(git2::Status::INDEX_RENAMED)
-                || status.contains(git2::Status::WT_RENAMED)
-            {
-                let old_path = entry
-                    .head_to_index()
-                    .and_then(|d| d.old_file().path().and_then(|p| p.to_str()))
-                    .unwrap_or("");
-                let new_path = entry.path().unwrap_or("");
-                format!("{} -> {}", old_path, new_path)
-            } else {
-                entry.path().unwrap_or("").to_string()
-            };
-            files.push(format!("{} {}", status_str, path_val));
-        }
-        Ok(files)
+        collect_changes(&repository)
     })
     .await;
     result.map_err(|err| format!("{}", err))?
+}
+
+fn collect_changes(repository: &Repository) -> Result<Vec<String>, String> {
+    let mut options = git2::StatusOptions::new();
+    options.include_untracked(true).recurse_untracked_dirs(true);
+    let statuses = repository
+        .statuses(Some(&mut options))
+        .map_err(|e| e.to_string())?;
+    let mut files = Vec::new();
+    for entry in statuses.iter() {
+        let status = entry.status();
+        if status.is_ignored() {
+            continue;
+        }
+        let mut status_str = String::with_capacity(2);
+        if status.contains(git2::Status::CONFLICTED) {
+            status_str = "C ".to_string();
+        } else {
+            if status.contains(git2::Status::INDEX_NEW) {
+                status_str.push('A');
+            } else if status.contains(git2::Status::INDEX_MODIFIED) {
+                status_str.push('M');
+            } else if status.contains(git2::Status::INDEX_DELETED) {
+                status_str.push('D');
+            } else if status.contains(git2::Status::INDEX_RENAMED) {
+                status_str.push('R');
+            } else if status.contains(git2::Status::INDEX_TYPECHANGE) {
+                status_str.push('T');
+            } else {
+                status_str.push(' ');
+            }
+            if status.contains(git2::Status::WT_NEW) {
+                if status_str == " " {
+                    status_str = "??".to_string();
+                } else {
+                    status_str.push('?');
+                }
+            } else if status.contains(git2::Status::WT_MODIFIED) {
+                status_str.push('M');
+            } else if status.contains(git2::Status::WT_DELETED) {
+                status_str.push('D');
+            } else if status.contains(git2::Status::WT_RENAMED) {
+                status_str.push('R');
+            } else if status.contains(git2::Status::WT_TYPECHANGE) {
+                status_str.push('T');
+            } else if status_str != "??" {
+                status_str.push(' ');
+            }
+        }
+        let path_val = if status.contains(git2::Status::INDEX_RENAMED)
+            || status.contains(git2::Status::WT_RENAMED)
+        {
+            let old_path = entry
+                .head_to_index()
+                .and_then(|d| d.old_file().path().and_then(|p| p.to_str()))
+                .unwrap_or("");
+            let new_path = entry.path().unwrap_or("");
+            format!("{} -> {}", old_path, new_path)
+        } else {
+            entry.path().unwrap_or("").to_string()
+        };
+        files.push(format!("{} {}", status_str, path_val));
+    }
+    Ok(files)
 }
 
 #[tauri::command]
@@ -798,44 +835,46 @@ pub(crate) async fn get_git_branches(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let mut branches = Vec::new();
-        let mut current_branch = String::new();
-        let head = repository.head().ok();
-        let head_name = head.as_ref().and_then(|h| h.name());
-        let iterator = repository.branches(None).map_err(|e| e.to_string())?;
-        for branch_res in iterator {
-            if let Ok((branch, _branch_type)) = branch_res {
-                // A symbolic reference such as origin/HEAD is an alias, not a branch.
-                if branch.get().kind() == Some(git2::ReferenceType::Symbolic) {
-                    continue;
-                }
-                if let Ok(Some(name)) = branch.name() {
-                    let is_current = head_name == branch.get().name();
-                    if is_current {
-                        current_branch = name.to_string();
-                    }
-                    let mut updated_date = String::new();
-                    if let Ok(commit) = branch.get().peel_to_commit() {
-                        let time = commit.time();
-                        if let Some(dt) = chrono::DateTime::from_timestamp(time.seconds(), 0) {
-                            updated_date = dt.format("%Y-%m-%d").to_string();
-                        }
-                    }
-                    branches.push(GitBranchDetail {
-                        name: name.to_string(),
-                        is_current,
-                        updated_date,
-                    });
-                }
-            }
-        }
-        Ok(GitBranchInfo {
-            branches,
-            current_branch,
-        })
+        list_branches(&repository)
     })
     .await;
     result.map_err(|err| format!("{}", err))?
+}
+
+fn list_branches(repository: &Repository) -> Result<GitBranchInfo, String> {
+    let mut branches = Vec::new();
+    let mut current_branch = String::new();
+    let head = repository.head().ok();
+    let head_name = head.as_ref().and_then(|h| h.name());
+    let iterator = repository.branches(None).map_err(|e| e.to_string())?;
+    for (branch, _branch_type) in iterator.flatten() {
+        // A symbolic reference such as origin/HEAD is an alias, not a branch.
+        if branch.get().kind() == Some(git2::ReferenceType::Symbolic) {
+            continue;
+        }
+        if let Ok(Some(name)) = branch.name() {
+            let is_current = head_name == branch.get().name();
+            if is_current {
+                current_branch = name.to_string();
+            }
+            let mut updated_date = String::new();
+            if let Ok(commit) = branch.get().peel_to_commit() {
+                let time = commit.time();
+                if let Some(dt) = chrono::DateTime::from_timestamp(time.seconds(), 0) {
+                    updated_date = dt.format("%Y-%m-%d").to_string();
+                }
+            }
+            branches.push(GitBranchDetail {
+                name: name.to_string(),
+                is_current,
+                updated_date,
+            });
+        }
+    }
+    Ok(GitBranchInfo {
+        branches,
+        current_branch,
+    })
 }
 
 #[tauri::command]
@@ -863,28 +902,36 @@ pub(crate) async fn git_create_branch(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let target_commit = if !base_branch.is_empty() {
-            let reference = repository
-                .resolve_reference_from_short_name(&base_branch)
-                .map_err(|e| format!("Base branch not found: {}", e))?;
-            reference.peel_to_commit().map_err(|e| e.to_string())?
-        } else {
-            let head = repository.head().map_err(|e| e.to_string())?;
-            head.peel_to_commit().map_err(|e| e.to_string())?
-        };
-        let mut new_branch = repository
-            .branch(&branch, &target_commit, false)
-            .map_err(|e| format!("Failed to create branch: {}", e))?;
-        if let Some(name) = new_branch.get().name().map(str::to_string) {
-            if let Err(err) = switch_to_reference(&repository, &name, &target_commit) {
-                let _ = new_branch.delete();
-                return Err(err);
-            }
-        }
-        Ok(format!("Branch '{}' created.", branch))
+        create_branch(&repository, &branch, &base_branch)
     })
     .await;
     result.map_err(|err| format!("{}", err))?
+}
+
+fn create_branch(
+    repository: &Repository,
+    branch: &str,
+    base_branch: &str,
+) -> Result<String, String> {
+    let target_commit = if !base_branch.is_empty() {
+        let reference = repository
+            .resolve_reference_from_short_name(base_branch)
+            .map_err(|e| format!("Base branch not found: {}", e))?;
+        reference.peel_to_commit().map_err(|e| e.to_string())?
+    } else {
+        let head = repository.head().map_err(|e| e.to_string())?;
+        head.peel_to_commit().map_err(|e| e.to_string())?
+    };
+    let mut new_branch = repository
+        .branch(branch, &target_commit, false)
+        .map_err(|e| format!("Failed to create branch: {}", e))?;
+    if let Some(name) = new_branch.get().name().map(str::to_string) {
+        if let Err(err) = switch_to_reference(repository, &name, &target_commit) {
+            let _ = new_branch.delete();
+            return Err(err);
+        }
+    }
+    Ok(format!("Branch '{}' created.", branch))
 }
 
 #[tauri::command]
@@ -913,7 +960,9 @@ pub(crate) async fn git_delete_branch(
                     .find_remote(remote_name)
                     .map_err(|e| e.to_string())?;
                 let refspec = format!(":refs/heads/{}", remote_branch);
-                push_refspec(&mut remote, &refspec, app_handle_clone)?;
+                push_refspec(&mut remote, &refspec, || {
+                    get_git_credentials(&app_handle_clone)
+                })?;
                 return Ok(format!("Remote branch '{}' deleted.", branch));
             }
         }
@@ -948,54 +997,58 @@ pub(crate) async fn get_git_remote_status(
     state: State<'_, CurrentProject>,
 ) -> Result<GitRemoteStatus, String> {
     let git_path = get_repo_path(&state, &repo)?;
-    let result = task::spawn_blocking(move || -> Result<GitRemoteStatus, String> {
+    let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let mut upstream_name = String::new();
-        let mut has_upstream = false;
-        let mut ahead = 0;
-        let mut behind = 0;
-        let remote_url = repository
-            .find_remote("origin")
-            .map(|remote| remote.url().unwrap_or("").to_string())
-            .unwrap_or_default();
-        if let Ok(head) = repository.head() {
-            if head.is_branch() {
-                if let Some(branch_name) = head.shorthand() {
-                    if let Ok(local_branch) =
-                        repository.find_branch(branch_name, git2::BranchType::Local)
-                    {
-                        if let Ok(upstream) = local_branch.upstream() {
-                            has_upstream = true;
-                            upstream_name = upstream
-                                .name()
-                                .unwrap_or(Some(""))
-                                .unwrap_or("")
-                                .to_string();
-                            if let (Some(local_oid), Some(upstream_oid)) =
-                                (local_branch.get().target(), upstream.get().target())
+        remote_status(&repository)
+    })
+    .await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+fn remote_status(repository: &Repository) -> Result<GitRemoteStatus, String> {
+    let mut upstream_name = String::new();
+    let mut has_upstream = false;
+    let mut ahead = 0;
+    let mut behind = 0;
+    let remote_url = repository
+        .find_remote("origin")
+        .map(|remote| remote.url().unwrap_or("").to_string())
+        .unwrap_or_default();
+    if let Ok(head) = repository.head() {
+        if head.is_branch() {
+            if let Some(branch_name) = head.shorthand() {
+                if let Ok(local_branch) =
+                    repository.find_branch(branch_name, git2::BranchType::Local)
+                {
+                    if let Ok(upstream) = local_branch.upstream() {
+                        has_upstream = true;
+                        upstream_name = upstream
+                            .name()
+                            .unwrap_or(Some(""))
+                            .unwrap_or("")
+                            .to_string();
+                        if let (Some(local_oid), Some(upstream_oid)) =
+                            (local_branch.get().target(), upstream.get().target())
+                        {
+                            if let Ok((a, b)) =
+                                repository.graph_ahead_behind(local_oid, upstream_oid)
                             {
-                                if let Ok((a, b)) =
-                                    repository.graph_ahead_behind(local_oid, upstream_oid)
-                                {
-                                    ahead = a as u32;
-                                    behind = b as u32;
-                                }
+                                ahead = a as u32;
+                                behind = b as u32;
                             }
                         }
                     }
                 }
             }
         }
-        Ok(GitRemoteStatus {
-            has_upstream,
-            upstream_name,
-            ahead,
-            behind,
-            remote_url,
-        })
+    }
+    Ok(GitRemoteStatus {
+        has_upstream,
+        upstream_name,
+        ahead,
+        behind,
+        remote_url,
     })
-    .await;
-    result.map_err(|err| format!("{}", err))?
 }
 
 #[tauri::command]
@@ -1011,7 +1064,7 @@ pub(crate) async fn git_fetch(
         let mut remote = repository
             .find_remote("origin")
             .map_err(|e| e.to_string())?;
-        let callbacks = create_remote_callbacks(app_handle_clone);
+        let callbacks = create_remote_callbacks(|| get_git_credentials(&app_handle_clone));
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
         remote
@@ -1095,25 +1148,31 @@ pub(crate) async fn git_delete_file(
     state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
     let git_path = get_repo_path(&state, &repo)?;
-    let relative_path = safe_relative_path(&file)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let mut index = repository.index().map_err(|e| e.to_string())?;
-        let path = relative_path.as_path();
-        let _ = index.remove_path(path);
-        index.write().map_err(|e| e.to_string())?;
-        let target_path = git_path.join(path);
-        ensure_inside_root(&git_path, &target_path)?;
-        if target_path.exists() {
-            fs::remove_file(&target_path)
-                .map_err(|e| format!("Failed to delete file {}: {}", file, e))?;
-        } else {
-            return Err(format!("File {} does not exist", file));
-        }
-        Ok(format!("Successfully deleted {}", file))
+        delete_file(&repository, &git_path, &file)
     })
     .await;
     result.map_err(|err| format!("{}", err))?
+}
+
+fn delete_file(repository: &Repository, git_path: &Path, file: &str) -> Result<String, String> {
+    let relative_path = safe_relative_path(file)?;
+    if targets_git_dir(&relative_path) {
+        return Err(format!("Cannot delete inside a .git folder: {}", file));
+    }
+    let target_path = git_path.join(&relative_path);
+    // Only the folder needs checking. Deleting a symbolic link removes the link, not its target.
+    let parent = target_path.parent().unwrap_or(git_path);
+    ensure_inside_root(git_path, parent)?;
+    if fs::symlink_metadata(&target_path).is_err() {
+        return Err(format!("File {} does not exist", file));
+    }
+    let mut index = repository.index().map_err(|e| e.to_string())?;
+    let _ = index.remove_path(&relative_path);
+    index.write().map_err(|e| e.to_string())?;
+    fs::remove_file(&target_path).map_err(|e| format!("Failed to delete file {}: {}", file, e))?;
+    Ok(format!("Successfully deleted {}", file))
 }
 
 #[tauri::command]
@@ -1124,33 +1183,47 @@ pub(crate) async fn git_restore_all(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let mut checkout_builder = git2::build::CheckoutBuilder::new();
-        checkout_builder.force();
-        repository
-            .checkout_head(Some(&mut checkout_builder))
-            .map_err(|e| e.to_string())?;
-        let mut status_opts = git2::StatusOptions::new();
-        status_opts
-            .include_untracked(true)
-            .recurse_untracked_dirs(true);
-        if let Ok(statuses) = repository.statuses(Some(&mut status_opts)) {
-            for entry in statuses.iter() {
-                if entry.status().contains(git2::Status::WT_NEW) {
-                    if let Some(path_str) = entry.path() {
-                        let target_path = git_path.join(path_str);
-                        if target_path.is_dir() {
-                            let _ = fs::remove_dir_all(&target_path);
-                        } else {
-                            let _ = fs::remove_file(&target_path);
-                        }
+        restore_all(&repository, &git_path)
+    })
+    .await;
+    result.map_err(|err| format!("{}", err))?
+}
+
+/// Discard every change, including staged files and any merge in progress.
+fn restore_all(repository: &Repository, git_path: &Path) -> Result<String, String> {
+    let head = repository
+        .head()
+        .and_then(|head| head.peel_to_commit())
+        .map_err(|e| e.to_string())?;
+    let mut checkout_builder = git2::build::CheckoutBuilder::new();
+    checkout_builder.force();
+    repository
+        .reset(
+            head.as_object(),
+            git2::ResetType::Hard,
+            Some(&mut checkout_builder),
+        )
+        .map_err(|e| e.to_string())?;
+    repository.cleanup_state().map_err(|e| e.to_string())?;
+    let mut status_opts = git2::StatusOptions::new();
+    status_opts
+        .include_untracked(true)
+        .recurse_untracked_dirs(true);
+    if let Ok(statuses) = repository.statuses(Some(&mut status_opts)) {
+        for entry in statuses.iter() {
+            if entry.status().contains(git2::Status::WT_NEW) {
+                if let Some(path_str) = entry.path() {
+                    let target_path = git_path.join(path_str);
+                    if target_path.is_dir() {
+                        let _ = fs::remove_dir_all(&target_path);
+                    } else {
+                        let _ = fs::remove_file(&target_path);
                     }
                 }
             }
         }
-        Ok(String::from("All changes have been successfully reverted."))
-    })
-    .await;
-    result.map_err(|err| format!("{}", err))?
+    }
+    Ok(String::from("All changes have been successfully reverted."))
 }
 
 #[cfg(test)]
@@ -1167,8 +1240,15 @@ mod tests {
         let signature = git2::Signature::now("Test", "test@example.com").unwrap();
         let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
         let parents: Vec<&git2::Commit> = parent.iter().collect();
-        repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &parents)
-            .unwrap()
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parents,
+        )
+        .unwrap()
     }
 
     fn write(repo: &Repository, file: &str, contents: &str) {
@@ -1192,11 +1272,8 @@ mod tests {
         write(&upstream, "a.txt", "one\n");
         write(&upstream, "other.txt", "original\n");
         commit_all(&upstream, "first");
-        let local = Repository::clone(
-            dir.join("upstream").to_str().unwrap(),
-            dir.join("local"),
-        )
-        .unwrap();
+        let local =
+            Repository::clone(dir.join("upstream").to_str().unwrap(), dir.join("local")).unwrap();
         write(&upstream, "a.txt", "two\n");
         commit_all(&upstream, "second");
         fetch(&local);
@@ -1327,7 +1404,10 @@ mod tests {
         write(&repo, "a.txt", "two\n");
         commit_all(&repo, "feature work");
         write(&repo, "a.txt", "my work\n");
-        assert_eq!(switch_branch(&repo, &main).unwrap_err(), LOCAL_CHANGES_ERROR);
+        assert_eq!(
+            switch_branch(&repo, &main).unwrap_err(),
+            LOCAL_CHANGES_ERROR
+        );
         assert_eq!(head_branch(&repo), "feature");
         assert_eq!(read(&repo, "a.txt"), "my work\n");
     }
@@ -1365,6 +1445,451 @@ mod tests {
         assert_eq!(read(&repo, "a.txt"), "original\n");
         let statuses = repo.statuses(None).unwrap();
         assert_eq!(statuses.len(), 0);
+    }
+
+    fn all_changes(repo: &Repository) -> Vec<String> {
+        let mut changes = collect_changes(repo).unwrap();
+        changes.sort();
+        changes
+    }
+
+    fn committed_files(repo: &Repository) -> Vec<String> {
+        let tree = repo.head().unwrap().peel_to_tree().unwrap();
+        let mut names: Vec<String> = tree
+            .iter()
+            .map(|entry| entry.name().unwrap().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn new_repo(dir: &Path) -> Repository {
+        let repo = Repository::init(dir.join("repo")).unwrap();
+        write(&repo, "a.txt", "one\n");
+        commit_all(&repo, "first");
+        repo
+    }
+
+    fn root_of(repo: &Repository) -> PathBuf {
+        repo.workdir().unwrap().to_path_buf()
+    }
+
+    fn files(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn commit_only_includes_the_selected_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "b.txt", "b\n");
+        write(&repo, "c.txt", "c\n");
+        commit_files(&repo, &root_of(&repo), &files(&["b.txt"]), "msg").unwrap();
+        assert_eq!(committed_files(&repo), ["a.txt", "b.txt"]);
+        assert_eq!(all_changes(&repo), ["?? c.txt"]);
+        assert_eq!(
+            repo.head().unwrap().peel_to_commit().unwrap().message(),
+            Some("msg")
+        );
+    }
+
+    #[test]
+    fn commit_records_deleted_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "b.txt", "b\n");
+        commit_all(&repo, "second");
+        fs::remove_file(root_of(&repo).join("b.txt")).unwrap();
+        commit_files(&repo, &root_of(&repo), &files(&["b.txt"]), "remove").unwrap();
+        assert_eq!(committed_files(&repo), ["a.txt"]);
+    }
+
+    #[test]
+    fn commit_with_no_changes_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        let before = repo.head().unwrap().target();
+        write(&repo, "b.txt", "b\n");
+        let err = commit_files(&repo, &root_of(&repo), &[], "msg").unwrap_err();
+        assert!(err.contains("no changes"));
+        assert_eq!(repo.head().unwrap().target(), before);
+    }
+
+    #[test]
+    fn commit_works_in_a_new_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path().join("repo")).unwrap();
+        write(&repo, "a.txt", "one\n");
+        commit_files(&repo, &root_of(&repo), &files(&["a.txt"]), "first").unwrap();
+        assert_eq!(committed_files(&repo), ["a.txt"]);
+    }
+
+    #[test]
+    fn commit_refuses_paths_outside_the_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        assert!(commit_files(&repo, &root_of(&repo), &files(&["../x"]), "msg").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_adds_a_broken_symbolic_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        std::os::unix::fs::symlink("missing-target", root_of(&repo).join("link")).unwrap();
+        commit_files(&repo, &root_of(&repo), &files(&["link"]), "msg").unwrap();
+        assert_eq!(committed_files(&repo), ["a.txt", "link"]);
+    }
+
+    #[test]
+    fn finishing_a_merge_commits_with_both_parents() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        write(&local, "a.txt", "conflicting\n");
+        commit_all(&local, "local commit");
+        let branch = head_branch(&local);
+        integrate_remote_branch(&local, &branch).unwrap_err();
+        let root = root_of(&local);
+        let err = commit_files(&local, &root, &files(&["a.txt"]), "merge").unwrap_err();
+        assert!(err.contains("Conflict markers"));
+        write(&local, "a.txt", "resolved\n");
+        commit_files(&local, &root, &files(&["a.txt"]), "merge").unwrap();
+        assert_eq!(
+            local
+                .head()
+                .unwrap()
+                .peel_to_commit()
+                .unwrap()
+                .parent_count(),
+            2
+        );
+        assert_eq!(local.state(), git2::RepositoryState::Clean);
+    }
+
+    #[test]
+    fn changes_report_each_kind_of_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "gone.txt", "x\n");
+        write(&repo, "staged.txt", "x\n");
+        commit_all(&repo, "second");
+        write(&repo, "a.txt", "changed\n");
+        write(&repo, "new file.txt", "x\n");
+        fs::remove_file(root_of(&repo).join("gone.txt")).unwrap();
+        write(&repo, "staged.txt", "changed\n");
+        write(&repo, "added.txt", "x\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("staged.txt")).unwrap();
+        index.add_path(Path::new("added.txt")).unwrap();
+        index.write().unwrap();
+        assert_eq!(
+            all_changes(&repo),
+            [
+                " D gone.txt",
+                " M a.txt",
+                "?? new file.txt",
+                "A  added.txt",
+                "M  staged.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn changes_list_files_inside_new_folders_and_skip_ignored_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, ".gitignore", "skip.txt\n");
+        commit_all(&repo, "ignore");
+        fs::create_dir_all(root_of(&repo).join("sub/deep")).unwrap();
+        write(&repo, "sub/deep/b.txt", "x\n");
+        write(&repo, "skip.txt", "x\n");
+        assert_eq!(all_changes(&repo), ["?? sub/deep/b.txt"]);
+    }
+
+    #[test]
+    fn conflicts_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        write(&local, "a.txt", "conflicting\n");
+        commit_all(&local, "local commit");
+        let branch = head_branch(&local);
+        integrate_remote_branch(&local, &branch).unwrap_err();
+        assert_eq!(all_changes(&local), ["C  a.txt"]);
+    }
+
+    #[test]
+    fn diff_keeps_lines_that_are_not_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        fs::write(root_of(&repo).join("a.txt"), b"caf\xE9 changed\n").unwrap();
+        let diff = file_diff(&repo, "a.txt").unwrap();
+        assert!(diff.contains("-one"));
+        assert!(diff.contains("+caf\u{FFFD} changed"));
+    }
+
+    #[test]
+    fn restoring_everything_removes_all_kinds_of_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "a.txt", "changed\n");
+        write(&repo, "untracked.txt", "x\n");
+        fs::create_dir_all(root_of(&repo).join("new/deep")).unwrap();
+        write(&repo, "new/deep/x.txt", "x\n");
+        write(&repo, "staged-new.txt", "x\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("staged-new.txt")).unwrap();
+        index.write().unwrap();
+        restore_all(&repo, &root_of(&repo)).unwrap();
+        assert_eq!(all_changes(&repo), Vec::<String>::new());
+        assert_eq!(read(&repo, "a.txt"), "one\n");
+        assert!(!root_of(&repo).join("staged-new.txt").exists());
+    }
+
+    #[test]
+    fn restoring_everything_ends_a_merge_in_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        write(&local, "a.txt", "conflicting\n");
+        let kept = commit_all(&local, "local commit");
+        let branch = head_branch(&local);
+        integrate_remote_branch(&local, &branch).unwrap_err();
+        assert_eq!(local.state(), git2::RepositoryState::Merge);
+        restore_all(&local, &root_of(&local)).unwrap();
+        assert_eq!(local.state(), git2::RepositoryState::Clean);
+        assert_eq!(local.head().unwrap().target(), Some(kept));
+        assert_eq!(read(&local, "a.txt"), "conflicting\n");
+    }
+
+    #[test]
+    fn deleting_a_file_removes_it_and_any_staged_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "b.txt", "x\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("b.txt")).unwrap();
+        index.write().unwrap();
+        delete_file(&repo, &root_of(&repo), "b.txt").unwrap();
+        assert!(!root_of(&repo).join("b.txt").exists());
+        assert_eq!(all_changes(&repo), Vec::<String>::new());
+    }
+
+    #[test]
+    fn deleting_refuses_git_internals_and_outside_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        let root = root_of(&repo);
+        assert!(delete_file(&repo, &root, ".git/config").is_err());
+        assert!(root.join(".git/config").exists());
+        assert!(delete_file(&repo, &root, "../outside.txt").is_err());
+        assert!(delete_file(&repo, &root, "missing.txt").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deleting_a_symbolic_link_keeps_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        let outside = dir.path().join("outside.txt");
+        fs::write(&outside, "keep\n").unwrap();
+        std::os::unix::fs::symlink(&outside, root_of(&repo).join("link")).unwrap();
+        delete_file(&repo, &root_of(&repo), "link").unwrap();
+        assert!(fs::symlink_metadata(root_of(&repo).join("link")).is_err());
+        assert_eq!(fs::read_to_string(outside).unwrap(), "keep\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deleting_through_a_linked_folder_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), "keep\n").unwrap();
+        std::os::unix::fs::symlink(&outside, root_of(&repo).join("linked")).unwrap();
+        assert!(delete_file(&repo, &root_of(&repo), "linked/keep.txt").is_err());
+        assert!(outside.join("keep.txt").exists());
+    }
+
+    #[test]
+    fn branches_list_local_and_remote_without_aliases() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        let main = head_branch(&local);
+        create_branch(&local, "feature", "").unwrap();
+        let info = list_branches(&local).unwrap();
+        assert_eq!(info.current_branch, "feature");
+        let names: Vec<&str> = info.branches.iter().map(|b| b.name.as_str()).collect();
+        assert!(names.contains(&"feature"));
+        assert!(names.contains(&main.as_str()));
+        assert!(names.contains(&format!("origin/{}", main).as_str()));
+        assert!(!names.contains(&"origin/HEAD"));
+        assert_eq!(info.branches.iter().filter(|b| b.is_current).count(), 1);
+        assert!(info.branches.iter().all(|b| b.updated_date.len() == 10));
+    }
+
+    #[test]
+    fn a_branch_can_start_from_another_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        let main = head_branch(&local);
+        create_branch(&local, "from-remote", &format!("origin/{}", main)).unwrap();
+        assert_eq!(head_branch(&local), "from-remote");
+        assert_eq!(read(&local, "a.txt"), "two\n");
+    }
+
+    #[test]
+    fn creating_a_branch_that_would_overwrite_changes_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        let main = head_branch(&local);
+        write(&local, "a.txt", "my work\n");
+        assert!(create_branch(&local, "bad", &format!("origin/{}", main)).is_err());
+        assert_eq!(head_branch(&local), main);
+        assert!(local.find_branch("bad", git2::BranchType::Local).is_err());
+        assert_eq!(read(&local, "a.txt"), "my work\n");
+    }
+
+    #[test]
+    fn creating_a_branch_that_exists_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        create_branch(&repo, "feature", "").unwrap();
+        let main_tip = repo.head().unwrap().target();
+        assert!(create_branch(&repo, "feature", "").is_err());
+        assert_eq!(repo.head().unwrap().target(), main_tip);
+    }
+
+    #[test]
+    fn switching_to_a_remote_branch_creates_a_tracking_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        let tip = local.head().unwrap().peel_to_commit().unwrap();
+        local
+            .reference("refs/remotes/origin/topic/one", tip.id(), true, "test")
+            .unwrap();
+        switch_branch(&local, "origin/topic/one").unwrap();
+        assert_eq!(head_branch(&local), "topic/one");
+        let branch = local
+            .find_branch("topic/one", git2::BranchType::Local)
+            .unwrap();
+        assert_eq!(
+            branch.upstream().unwrap().name().unwrap(),
+            Some("origin/topic/one")
+        );
+    }
+
+    #[test]
+    fn switching_to_an_unknown_branch_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        assert!(
+            switch_branch(&repo, "nope")
+                .unwrap_err()
+                .contains("not found")
+        );
+    }
+
+    #[test]
+    fn remote_status_reports_ahead_and_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        let status = remote_status(&local).unwrap();
+        assert!(status.has_upstream);
+        assert_eq!((status.ahead, status.behind), (0, 1));
+        assert!(status.upstream_name.starts_with("origin/"));
+        assert!(status.remote_url.contains("upstream"));
+        write(&local, "local.txt", "x\n");
+        commit_all(&local, "local");
+        assert_eq!(remote_status(&local).unwrap().ahead, 1);
+    }
+
+    #[test]
+    fn remote_status_with_no_remote_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        let status = remote_status(&repo).unwrap();
+        assert!(!status.has_upstream);
+        assert_eq!(status.remote_url, "");
+    }
+
+    #[test]
+    fn push_updates_the_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = Repository::init_bare(dir.path().join("remote.git")).unwrap();
+        let local = new_repo(dir.path());
+        local
+            .remote("origin", dir.path().join("remote.git").to_str().unwrap())
+            .unwrap();
+        let branch = head_branch(&local);
+        let refspec = format!("refs/heads/{0}:refs/heads/{0}", branch);
+        let mut remote = local.find_remote("origin").unwrap();
+        push_refspec(&mut remote, &refspec, || None).unwrap();
+        let pushed = bare.find_branch(&branch, git2::BranchType::Local).unwrap();
+        assert_eq!(pushed.get().target(), local.head().unwrap().target());
+    }
+
+    #[test]
+    fn push_that_is_not_a_fast_forward_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        Repository::init_bare(dir.path().join("remote.git")).unwrap();
+        local.remote_delete("origin").unwrap();
+        local
+            .remote("origin", dir.path().join("remote.git").to_str().unwrap())
+            .unwrap();
+        let branch = head_branch(&local);
+        let refspec = format!("refs/heads/{0}:refs/heads/{0}", branch);
+        write(&local, "x.txt", "1\n");
+        let first = commit_all(&local, "one");
+        let mut remote = local.find_remote("origin").unwrap();
+        push_refspec(&mut remote, &refspec, || None).unwrap();
+        // Rewrite history locally, so the remote has a commit this branch does not.
+        local
+            .find_commit(first)
+            .unwrap()
+            .parent(0)
+            .and_then(|parent| local.reset(parent.as_object(), git2::ResetType::Hard, None))
+            .unwrap();
+        write(&local, "y.txt", "2\n");
+        commit_all(&local, "two");
+        let mut remote = local.find_remote("origin").unwrap();
+        assert!(push_refspec(&mut remote, &refspec, || None).is_err());
+    }
+
+    #[test]
+    fn credential_errors_are_recognized_by_the_frontend() {
+        let err = git2::Error::from_str("too many redirects or authentication replays");
+        assert_eq!(remote_error(err), CREDENTIALS_ERROR);
+        let err = git2::Error::from_str(CREDENTIALS_ERROR);
+        assert_eq!(remote_error(err), CREDENTIALS_ERROR);
+        let err = git2::Error::from_str("network down");
+        assert_ne!(remote_error(err), CREDENTIALS_ERROR);
+    }
+
+    #[test]
+    fn pattern_characters_are_escaped() {
+        assert_eq!(escape_pathspec("a[b]*?\\c.txt"), "a\\[b\\]\\*\\?\\\\c.txt");
+        assert_eq!(escape_pathspec("plain/path.txt"), "plain/path.txt");
+    }
+
+    #[test]
+    fn repositories_inside_a_repository_are_not_searched() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        Repository::init(&root).unwrap();
+        Repository::init(root.join("nested")).unwrap();
+        assert_eq!(find_git_repos(&root), [""]);
+    }
+
+    #[test]
+    fn build_folders_are_not_searched_for_repositories() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        Repository::init(root.join("node_modules/pkg")).unwrap();
+        Repository::init(root.join("target/x")).unwrap();
+        Repository::init(root.join("apps/web")).unwrap();
+        let expected = Path::new("apps").join("web").to_string_lossy().into_owned();
+        assert_eq!(find_git_repos(&root), [expected]);
     }
 
     #[test]

@@ -17,6 +17,8 @@
         },
         connected() {
             const t = this;
+            // Subscribed here, since a subscriber's handler must be a method of that element.
+            t.dataset.subscribe = 'app-terminal-refresh:onTerminalRefresh|app-terminal-cleared:onTerminalCleared';
             t.addEventListener('click', () => {
                 t.openDrawer();
                 return true;
@@ -63,12 +65,14 @@
 <div id="term-content-wrapper" style="display:none; flex-direction:column; gap:var(--padding); height:100%;">
     <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="center">
         <webui-dropdown label="Script" id="term-dropdown"></webui-dropdown>
-        <webui-toggle-icon id="term-page-scripts-toggle" data-bind="app-terminals-page-scripts" data-default="true" label="Page" title="Show Activated Page Scripts" theme-on="primary"></webui-toggle-icon>
+        <webui-toggle-icon id="term-page-scripts-toggle" data-bind="app-terminals-page-scripts" data-default="app-terminals-page-scripts:true" label="Page" title="Show Activated Page Scripts" theme-on="primary"></webui-toggle-icon>
         <webui-toggle-icon id="term-filter-toggle" data-bind="app-terminals-all-scripts" label="All" title="Show All Scripts" theme-on="primary"></webui-toggle-icon>
     </webui-grid>
     <webui-flex gap="0.5rem" align="center" wrap="wrap">
         <webui-button id="btn-kill" theme="warning" label="Kill"></webui-button>
         <webui-button id="btn-kill-all" theme="danger" label="Kill All"></webui-button>
+        <webui-button id="btn-remove-script" theme="secondary" label="Remove" title="Remove this finished page script from the list"></webui-button>
+        <webui-button id="btn-remove-finished" theme="secondary" label="Remove Finished Page Scripts"></webui-button>
         <webui-button id="btn-clear" theme="secondary" label="Clear Output" style="margin-left: auto;"></webui-button>
     </webui-flex>
     <webui-flex column>
@@ -125,6 +129,20 @@
                 t._btnKill = container.querySelector('#btn-kill');
                 const btnKillAll = container.querySelector('#btn-kill-all');
                 const btnClear = container.querySelector('#btn-clear');
+                t._btnRemove = container.querySelector('#btn-remove-script');
+                t._btnRemoveFinished = container.querySelector('#btn-remove-finished');
+                t._btnRemove.addEventListener('click', () => {
+                    const helpers = webui.proxy.terminalHelpers;
+                    if (helpers.removeTerminal(helpers.getState().activeId)) {
+                        t.switchTerminal(helpers.getState().activeId);
+                    }
+                });
+                t._btnRemoveFinished.addEventListener('click', () => {
+                    const helpers = webui.proxy.terminalHelpers;
+                    if (helpers.removeFinishedPageScripts() > 0) {
+                        t.switchTerminal(helpers.getState().activeId);
+                    }
+                });
                 let initState = webui.proxy.terminalHelpers.getState();
                 initState.allScripts = await webui.proxy.getScripts() || [];
                 t._pageScriptsToggle.addEventListener('change', () => {
@@ -152,7 +170,7 @@
                 btnKillAll.addEventListener('click', async () => {
                     // Clear the queue first, so finishing scripts do not start the next one.
                     webui.proxy.terminalHelpers.getState().queue = [];
-                    await webui.proxy.terminal.killAll();
+                    await webui.proxy.terminal.killAll().catch(err => webui.alert(err));
                 });
                 btnClear.addEventListener('click', () => {
                     let state = webui.proxy.terminalHelpers.getState();
@@ -191,12 +209,17 @@
             t.refreshButtons();
             setTimeout(() => {
                 t._runner.setScript(current.id, current.script || '');
+                t._runner.setReadOnly(!!current.isPageScript);
             }, 10);
         },
         async refreshDropdown() {
             const t = this;
             if (!t._activeDropdown) return;
-            if (t._isRefreshing) return;
+            // A status change during a refresh must not be lost, so refresh once more afterwards.
+            if (t._isRefreshing) {
+                t._refreshAgain = true;
+                return;
+            }
             t._isRefreshing = true;
             const state = webui.proxy.terminalHelpers.getState();
             t._activeDropdown.setOptions(await webui.proxy.terminalHelpers.getDropdownOptions(state, !!t._filterToggle.value));
@@ -206,12 +229,24 @@
                 await webui.wait(50);
             }
             t._isRefreshing = false;
+            if (t._refreshAgain) {
+                t._refreshAgain = false;
+                t.refreshDropdown();
+            }
         },
         refreshButtons() {
             const state = webui.proxy.terminalHelpers.getState();
             const current = state.terminals[state.activeId];
             const isRunning = current && current.status === 'Running';
             if (this._btnKill) this._btnKill.disabled = !isRunning;
+            if (this._btnRemove) {
+                this._btnRemove.style.display = current?.isPageScript ? '' : 'none';
+                this._btnRemove.disabled = isRunning;
+            }
+            if (this._btnRemoveFinished) {
+                const hasFinished = Object.values(state.terminals).some(term => term.isPageScript && term.status !== 'Running');
+                this._btnRemoveFinished.style.display = hasFinished ? '' : 'none';
+            }
         },
         renderConsole() {
             if (typeof this._activeConsole?.clear !== 'function') return;
@@ -240,9 +275,6 @@
 <style type="text/css">
 :host { display:inline-flex; cursor:pointer; padding:1px; align-items:center; justify-content:center; }
 </style>
-<span style="display:none;" data-subscribe="app-terminal-refresh:onTerminalRefresh"></span>
-<span style="display:none;" data-subscribe="app-terminal-cleared:onTerminalCleared"></span>
-
 <webui-icon icon="emoji-pager|theme:black|shape:circle|fill"></webui-icon>
 `
     });

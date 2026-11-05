@@ -207,8 +207,10 @@ pub(crate) async fn get_projects_from_local_storage(
     if decrypted.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(serde_json::from_slice::<Vec<Project>>(&decrypted)
-        .map_err(|err| format!("Failed to deserialize projects: {}", err))?)
+    parse_or_preserve(
+        &app_data_dir(app_handle)?.join(PROJECTS_FILENAME),
+        &decrypted,
+    )
 }
 
 pub(crate) async fn get_app_data_from_local_storage(
@@ -218,8 +220,19 @@ pub(crate) async fn get_app_data_from_local_storage(
     if decrypted.is_empty() {
         return Ok(TaskProxyData::new());
     }
-    Ok(serde_json::from_slice::<TaskProxyData>(&decrypted)
-        .map_err(|err| format!("Failed to deserialize app data: {}", err))?)
+    parse_or_preserve(
+        &app_data_dir(app_handle)?.join(APPDATA_FILENAME),
+        &decrypted,
+    )
+}
+
+/// The app carries on with blank data when a file cannot be parsed, and its next save would
+/// replace that file. It decrypts fine, so the save would not move it aside on its own.
+fn parse_or_preserve<T: DeserializeOwned>(path: &Path, decrypted: &[u8]) -> Result<T, String> {
+    serde_json::from_slice::<T>(decrypted).map_err(|err| {
+        let _ = quarantine_file(path);
+        format!("Failed to read {:?}, so it was kept aside: {}", path, err)
+    })
 }
 
 pub(crate) async fn save_json_to_local_storage(
@@ -404,7 +417,11 @@ fn restore_unreadable_files(dir: &Path, passphrase: &str) -> usize {
         if !readable {
             continue;
         }
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         let original = name.split(UNREADABLE_SUFFIX).next().unwrap_or_default();
         if !original.is_empty() && fs::rename(&path, path.with_file_name(original)).is_ok() {
             restored += 1;
@@ -496,5 +513,31 @@ mod tests {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             assert_eq!(decrypt_bytes("new", &bytes).unwrap(), name.as_bytes());
         }
+    }
+
+    #[test]
+    fn data_that_cannot_be_parsed_is_kept_aside_instead_of_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(APPDATA_FILENAME);
+        store_encrypted(&path, "key", b"{\"unexpected\": true").unwrap();
+        let result = parse_or_preserve::<TaskProxyData>(&path, b"{\"unexpected\": true");
+        assert!(result.is_err());
+        assert!(!path.exists());
+        assert!(
+            dir.path()
+                .join(format!("{}{}", APPDATA_FILENAME, UNREADABLE_SUFFIX))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn data_that_parses_is_returned_and_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PROJECTS_FILENAME);
+        let json = br#"[{"name":"A","path":"/a"}]"#;
+        store_encrypted(&path, "key", json).unwrap();
+        let projects = parse_or_preserve::<Vec<Project>>(&path, json).unwrap();
+        assert_eq!(projects[0].name, "A");
+        assert!(path.exists());
     }
 }

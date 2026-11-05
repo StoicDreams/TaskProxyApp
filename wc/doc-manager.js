@@ -3,7 +3,7 @@
 {
     webui.define("app-doc-manager", {
         linkCss: true,
-        preload: '',
+        preload: 'dropdown input-message content',
         constructor() {
             const t = this;
             t._fileSelector = t.template.querySelector('webui-dropdown[label="File"]');
@@ -30,7 +30,7 @@
                         value: fileName,
                         display: fileName
                     };
-                    if (['readme.md', 'docs\\readme.md'].indexOf(fileName.toLowerCase()) !== -1) {
+                    if (['readme.md', 'docs/readme.md'].indexOf(fileName.toLowerCase()) !== -1) {
                         options.unshift(item);
                     } else {
                         options.push(item);
@@ -44,12 +44,17 @@
         },
         async loadFile(file) {
             let t = this;
+            t._loadedFile = null;
+            t._loadingFile = file;
             t._message.value = '';
             if (!file) return;
             await webui.wait(() => !!webui.proxy);
             let fileContent = await webui.proxy.getProjectFile(file);
             await customElements.whenDefined('webui-content');
+            // Another file was selected while this one loaded.
+            if (t._loadingFile !== file) return;
             if (fileContent !== undefined) {
+                t._loadedFile = file;
                 t._content.setHtml(sanitizeProjectHtml(webui.parseMarkdown(fileContent)));
                 t._message.value = fileContent;
             } else {
@@ -73,6 +78,11 @@
             t._btnSave.addEventListener('click', async ev => {
                 let file = t._fileSelector.value;
                 if (!file) return;
+                // Until a file has loaded, the editor is empty and saving would erase it.
+                if (t._loadedFile !== file) {
+                    webui.alert('This file has not loaded, so it was not saved.', 'warning');
+                    return;
+                }
                 let msg = await webui.proxy.saveProjectFile(file, t._message.value);
                 if (msg) { webui.alert(msg, 'success'); }
             });

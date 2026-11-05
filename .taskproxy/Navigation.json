@@ -13,6 +13,12 @@
     ]
   },
   {
+    "name": "Dev",
+    "icon": "emoji-gear",
+    "url": "/0a574ff4-f8b3-49ec-b391-76a1722a80b9",
+    "children": null
+  },
+  {
     "name": "Release",
     "icon": "emoji-package",
     "url": "/901091c2-ba23-481a-8fd2-534467758277",

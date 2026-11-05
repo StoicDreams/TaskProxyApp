@@ -14,9 +14,16 @@
         },
         connected() {
             const t = this;
-            t.dataset.subscribe = 'app-current-project:setProject';
+            // Subscribers are not told when a value is cleared, and closing a project clears it.
+            t._onDataChange = changes => {
+                if (changes.property === 'app-current-project') t.setProject(changes.newValue);
+            };
+            webui.watchAppDataChanges(t._onDataChange);
+            t.setProject(webui.getData('app-current-project'));
         },
-        disconnected() { },
+        disconnected() {
+            webui.unwatchAppDataChanges(this._onDataChange);
+        },
         shadowTemplate: `
 <webui-nav-link icon="emoji-compass|fill|bordered|theme:success|backing|shape:circle" url="/nav-manager" title="Navigation Manager"></webui-nav-link>
 <webui-nav-link icon="emoji-books|fill|theme:success|shape:circle|inverted" url="/docs" title="Docs Manager"></webui-nav-link>

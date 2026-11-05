@@ -2,6 +2,40 @@
 {
     const globalIgnorePrefixes = ['app-', 'page-'];
     const globalIgnoreKeys = ['webui-version', 'app-home-source'];
+    // Tokens belong to the project, not to one of its environments.
+    const patKeys = ['git_pat', 'github_pat'];
+    const appDataSaveDelay = 500;
+    let appDataSaveTimer = null;
+    /** Disk writes are saved for a pause in typing. Closing the app saves the backend's copy. */
+    function saveAppDataSoon() {
+        webui.proxy.syncAppData();
+        clearTimeout(appDataSaveTimer);
+        appDataSaveTimer = setTimeout(() => webui.proxy.saveAppData(), appDataSaveDelay);
+    }
+    function definedProjectKeys() {
+        return (webui.projectData.variables || []).map(def => def.split('|')[0]).filter(key => !patKeys.includes(key));
+    }
+    /** Keep values not yet stored with the active environment, such as ones set before environments existed. */
+    function captureEnvironmentValues(env) {
+        if (!env) return;
+        env.variables ??= {};
+        definedProjectKeys().forEach(key => {
+            let value = webui.getProjectData(key);
+            if (value !== undefined && value !== '') env.variables[key] = value;
+        });
+    }
+    function loadEnvironmentValues(env) {
+        definedProjectKeys().forEach(key => {
+            webui.deleteProjectData(key);
+            // Clearing with undefined lets a global value of the same name show through.
+            webui.setData(key, undefined);
+        });
+        Object.entries(env?.variables || {}).forEach(([key, value]) => {
+            if (patKeys.includes(key)) return;
+            webui.setProjectData(key, value);
+            webui.setData(key, value);
+        });
+    }
     function getEnvironments() {
         if (!webui.projectData) webui.projectData = {};
         if (!webui.projectData.data) webui.projectData.data = {};
@@ -54,17 +88,16 @@
         }
         variables.forEach(v => {
             const wrap = webui.create('webui-grid', { columns: '1fr 2fr max-content', gap: 'var(--padding)', style: 'margin-bottom: 0.5rem; align-items: center;' });
-            wrap.appendChild(webui.create('span', { html: v.key }));
-            const input = webui.create('webui-input-text', {
-                value: v.value || '',
-                disabled: isReadOnly
-            });
+            wrap.appendChild(webui.create('span', { text: v.key }));
+            const input = webui.create('webui-input-text', { value: v.value || '' });
+            // Setting this attribute to false would still disable the input.
+            if (isReadOnly) input.setAttribute('disabled', 'true');
             if (!isReadOnly) {
                 input.addEventListener('input', (ev) => {
                     if (scope === 'Global') {
                         webui.setGlobalData(v.key, ev.target.value);
                         webui.setData(v.key, ev.target.value);
-                        webui.proxy.saveAppData();
+                        saveAppDataSoon();
                     } else if (scope === 'Project') {
                         webui.setProjectData(v.key, ev.target.value);
                         webui.setData(v.key, ev.target.value);
@@ -129,7 +162,7 @@
             const clearValue = () => {
                 webui.dialog({
                     title: 'Clear Variable',
-                    content: `<p>Are you sure you want to clear the value of <strong>${v.key}</strong>?</p>`,
+                    content: `<p>Are you sure you want to clear the value of <strong>${webui.escapeForHTML(v.key)}</strong>?</p>`,
                     confirm: 'Clear',
                     cancel: 'Cancel',
                     onconfirm: () => {
@@ -142,14 +175,14 @@
             const deleteVar = () => {
                 webui.dialog({
                     title: 'Delete Variable',
-                    content: `<p>Are you sure you want to delete the variable <strong>${v.key}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                    content: `<p>Are you sure you want to delete the variable <strong>${webui.escapeForHTML(v.key)}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
                     confirm: 'Delete',
                     cancel: 'Cancel',
                     onconfirm: () => {
                         if (scope === 'Project') {
                             webui.projectData.variables = webui.projectData.variables.filter(def => def.split('|')[0] !== v.key);
                             webui.deleteProjectData(v.key);
-                            webui.setData(v.key, '');
+                            webui.setData(v.key, undefined);
                             const envs = getEnvironments();
                             envs.forEach(e => {
                                 if (e.variables && e.variables[v.key] !== undefined) {
@@ -160,7 +193,7 @@
                         } else if (scope === 'Global') {
                             webui.taskProxyData.variables = webui.taskProxyData.variables.filter(def => def.split('|')[0] !== v.key);
                             webui.deleteGlobalData(v.key);
-                            webui.setData(v.key, '');
+                            webui.setData(v.key, undefined);
                             webui.proxy.saveAppData();
                         }
                         if (refreshCallback) refreshCallback();
@@ -196,9 +229,9 @@
         container.innerHTML = `
 <webui-flex align="center" justify="start">
     <label>Enabled</label>
-    <webui-toggle-icon data-bind="app-env-page-enabled" data-default="true" label="Page" theme-on="primary"></webui-toggle-icon>
-    <webui-toggle-icon data-bind="app-env-project-enabled" data-default="true" label="Project" theme-on="primary"></webui-toggle-icon>
-    <webui-toggle-icon data-bind="app-env-global-enabled" data-default="true" label="Global" theme-on="primary"></webui-toggle-icon>
+    <webui-toggle-icon data-bind="app-env-page-enabled" label="Page" theme-on="primary"></webui-toggle-icon>
+    <webui-toggle-icon data-bind="app-env-project-enabled" label="Project" theme-on="primary"></webui-toggle-icon>
+    <webui-toggle-icon data-bind="app-env-global-enabled" label="Global" theme-on="primary"></webui-toggle-icon>
 </webui-flex>
 <webui-tabs theme="secondary" index="1" transition-timing="200">
     <webui-button slot="tabs">Page</webui-button>
@@ -286,7 +319,7 @@
             const pageVars = (webui.currentPageVariables || []).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())).map(k => ({
                 key: k,
                 type: 'text',
-                value: webui.getData(k) || ''
+                value: webui.getVariable(k) || ''
             }));
             renderVariableList(container.querySelector('#var-page-list'), 'Page', pageVars, false, renderAllLists);
             renderVariableList(container.querySelector('#var-project-list'), 'Project', projectVars, false, renderAllLists);
@@ -299,21 +332,9 @@
                     let newName = ev.target.value;
                     if (newName === getActiveEnvName()) return;
                     let envs = getEnvironments();
-                    let newEnv = envs.find(e => e.name === newName);
-                    if (webui.projectData.variables) {
-                        webui.projectData.variables.forEach(def => {
-                            let k = def.split('|')[0];
-                            webui.deleteProjectData(k);
-                            webui.setData(k, '');
-                        });
-                    }
+                    captureEnvironmentValues(envs.find(e => e.name === getActiveEnvName()));
                     setActiveEnvName(newName);
-                    if (newEnv && newEnv.variables) {
-                        Object.keys(newEnv.variables).forEach(k => {
-                            webui.setProjectData(k, newEnv.variables[k]);
-                            webui.setData(k, newEnv.variables[k]);
-                        });
-                    }
+                    loadEnvironmentValues(envs.find(e => e.name === newName));
                     if (webui.proxy && webui.proxy.syncProjectData) webui.proxy.syncProjectData();
                     renderAllLists();
                 });
@@ -322,13 +343,17 @@
             if (manageEnvBtn) {
                 manageEnvBtn.addEventListener('click', () => {
                     const dialogId = webui.uuid();
-                    let envsHtml = getEnvironments().map(e => `
+                    const envRowHtml = name => {
+                        const escaped = webui.escapeForHTML(name);
+                        return `
                         <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="center" style="margin-bottom: 0.5rem;">
-                            <webui-input-text value="${e.name}"></webui-input-text>
-                            <webui-button theme="success" class="env-save-btn" data-env="${e.name}">Save</webui-button>
-                            <webui-button theme="danger" class="env-del-btn" data-env="${e.name}">Delete</webui-button>
+                            <webui-input-text value="${escaped}"></webui-input-text>
+                            <webui-button theme="success" class="env-save-btn" data-env="${escaped}">Save</webui-button>
+                            <webui-button theme="danger" class="env-del-btn" data-env="${escaped}">Delete</webui-button>
                         </webui-grid>
-                    `).join('');
+                    `;
+                    };
+                    let envsHtml = getEnvironments().map(e => envRowHtml(e.name)).join('');
                     let content = `
                         <div id="manage-envs-${dialogId}">
                             <webui-flex column gap="var(--padding)" style="margin-bottom: 1rem;">
@@ -388,7 +413,9 @@
                                 }
                                 webui.projectData.data._environments = envs.filter(e => e.name !== envName);
                                 if (getActiveEnvName() === envName) {
-                                    setActiveEnvName(webui.projectData.data._environments[0].name);
+                                    const nextEnv = webui.projectData.data._environments[0];
+                                    setActiveEnvName(nextEnv.name);
+                                    loadEnvironmentValues(nextEnv);
                                 }
                                 webui.proxy.syncProjectData();
                                 let grid = webui.closest(delBtn, 'webui-grid');
@@ -412,13 +439,7 @@
                                 webui.proxy.syncProjectData();
                                 input.value = '';
                                 webui.dialog.alert('Environment added', 'success');
-                                let newGrid = webui.createFromHTML(`
-                                    <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="center" style="margin-bottom: 0.5rem;">
-                                        <webui-input-text value="${envName}"></webui-input-text>
-                                        <webui-button theme="success" class="env-save-btn" data-env="${envName}">Save</webui-button>
-                                        <webui-button theme="danger" class="env-del-btn" data-env="${envName}">Delete</webui-button>
-                                    </webui-grid>
-                                `);
+                                let newGrid = webui.createFromHTML(envRowHtml(envName).trim());
                                 let flex = manageContainer.querySelector('webui-flex');
                                 if (flex) flex.appendChild(newGrid);
                                 renderAllLists();
@@ -469,6 +490,12 @@
                 }
             });
             renderAllLists();
+            // Tabs disable named inputs in tabs that are not shown. Web UI versions before the
+            // index attribute worked left the starting tab's inputs disabled, so select it again.
+            const tabs = container.querySelector('webui-tabs');
+            webui.wait(() => typeof tabs.setTab === 'function').then(() => webui.wait(50)).then(() => {
+                tabs.setTab(Number(tabs.getAttribute('index')) || 0);
+            });
         }, 0);
         return container;
     }

@@ -62,6 +62,11 @@
         }
         return params;
     }
+    /** Page scripts and the live terminal have names, but no file to save to. */
+    function isScriptFile(name) {
+        if (!/\.ps1$/i.test(name || '')) return false;
+        return !webui.proxy?.terminalHelpers?.getState().terminals[name]?.isPageScript;
+    }
     webui.define("app-script-runner", {
         linkCss: true,
         preload: 'code input-message',
@@ -76,7 +81,9 @@
             t._btnParamsClear = t.template.querySelector('webui-button[label="Clear Params"]');
             t._previewPanel = t.template.querySelector('webui-code');
             t._toggleFullPath = t.template.querySelector('webui-toggle-icon[label="Full Path"]');
+            t._readOnlyNote = t.template.querySelector('.read-only-note');
             t._fileName = '';
+            t._isReadOnly = false;
         },
         attr: ['src'],
         attrChanged(property, value) {
@@ -91,15 +98,43 @@
             const t = this;
             t._fileName = file;
             await webui.wait(()=>!!webui.proxy);
-            t._message.value = await webui.proxy.getProjectFile(file) || '';
+            let content = await webui.proxy.getProjectFile(file);
+            if (t._fileName !== file) return;
+            if (content === undefined) {
+                // The failure has been shown. Saving now would replace the file with an empty script.
+                t.setScript('', '');
+                return;
+            }
+            t._message.value = content;
             t.parseParams(t._message.value);
         },
-        setScript(file, content) {
+        async setScript(file, content) {
             const t = this;
             t._fileName = file;
+            // This can be called before the editor component has loaded.
+            await customElements.whenDefined('webui-input-message');
+            if (t._fileName !== file) return;
             t._message.setValue(content || '');
             t.parseParams(content || '');
             t.updatePreview();
+        },
+        /**
+         * Page scripts are shown with their injected values masked, so running or saving
+         * what is shown would not do what the page does.
+         */
+        setReadOnly(isReadOnly) {
+            const t = this;
+            t._isReadOnly = !!isReadOnly;
+            t.classList.toggle('read-only', t._isReadOnly);
+            // Set on each control, since webui-flex manages its own display.
+            [t._btnRun, t._btnReset, t._btnSave, t._btnSaveAs, t._btnParamsClear, t._toggleFullPath, t._paramsContainer].forEach(el => {
+                el.style.display = t._isReadOnly ? 'none' : '';
+            });
+            if (t._isReadOnly) {
+                t._message.setAttribute('disabled', 'true');
+            } else {
+                t._message.removeAttribute('disabled');
+            }
         },
         get scriptContent() {
             return this._message ? this._message.value : '';
@@ -207,14 +242,16 @@
         connected() {
             const t = this;
             t._btnReset.addEventListener('click', async () => {
-                if (!t._fileName || t._fileName.indexOf('.') === -1) {
-                    t.setScript('', '');
+                if (t._isReadOnly) return;
+                if (!isScriptFile(t._fileName)) {
+                    t.setScript(t._fileName, '');
                     return;
                 };
                 t.loadScript(t._fileName);
             });
             t._btnSave.addEventListener('click', async () => {
-                if (!t._fileName || t._fileName.indexOf('.') === -1) {
+                if (t._isReadOnly) return;
+                if (!isScriptFile(t._fileName)) {
                     t.runSaveAs();
                     return;
                 }
@@ -222,9 +259,11 @@
                 if (msg) { webui.alert(msg, 'success'); }
             });
             t._btnSaveAs.addEventListener('click', () => {
+                if (t._isReadOnly) return;
                 t.runSaveAs();
             });
             t._btnRun.addEventListener('click', async () => {
+                if (t._isReadOnly) return;
                 let scriptContent = t._message.value;
                 if (!scriptContent.trim()) {
                     webui.alert('Script is empty.', 'warning');
@@ -249,7 +288,7 @@
                         }
                     }
                 });
-                if (t._fileName && t._fileName.indexOf('.') !== -1) {
+                if (isScriptFile(t._fileName)) {
                     await webui.proxy.saveProjectFile(t._fileName, scriptContent);
                 }
                 webui.proxy.terminalHelpers.ensureListeners();
@@ -299,14 +338,21 @@
 .params-container:empty {
     display: none;
 }
+.read-only-note {
+    display: none;
+}
+:host(.read-only) .read-only-note {
+    display: block;
+}
 </style>
+<p class="read-only-note">Page scripts run from their page, which fills in their variables. Values are masked here.</p>
 <webui-flex align="center">
     <webui-button theme="info" label="Run"></webui-button>
     <webui-button theme="warning" label="Reset"></webui-button>
     <webui-button theme="success" label="Save"></webui-button>
     <webui-button theme="info" label="Save As"></webui-button>
     <webui-button theme="secondary" label="Clear Params"></webui-button>
-    <webui-toggle-icon label="Full Path" data-default="false" theme-on="primary"></webui-toggle-icon>
+    <webui-toggle-icon label="Full Path" theme-on="primary"></webui-toggle-icon>
 </webui-flex>
 <div class="params-container"></div>
 <webui-flex column>

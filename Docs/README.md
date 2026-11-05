@@ -2,7 +2,7 @@
 
 <img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
-[Version: 0.1.82](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.83](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
@@ -107,6 +107,32 @@ Use `cargo tauri dev` to build and run the Tauri app being developed.
 ```terminal
 cargo tauri dev
 ```
+
+### Testing
+
+Backend tests are Rust tests. Run `trunk build` once first on a new checkout, because the tests embed `dist/`.
+
+```terminal
+cargo test -p taskproxy
+```
+
+UI tests use [Playwright](https://playwright.dev) and need no running app, since they serve the frontend straight from the repo and stand in for the backend. They do load the shared Web UI components from cdn.myfi.ws, so they need network access.
+
+```terminal
+npm install
+npx playwright install chromium
+```
+
+On Linux the tests use `/usr/bin/chromium` if it exists, so the second command can be skipped. Set `PW_CHROMIUM_PATH` to use a different browser. Set `WEBUI_CDN_ROOT` to the `cdn` folder of a MyFiCDN checkout to test against Web UI changes before they are deployed.
+
+| Command | Purpose |
+|---|---|
+| `npm test` | Run everything against the source files. Use this while working |
+| `npm run test:ui` | Open the interactive runner, with watch mode and a timeline for each test |
+| `npm run test:min` | Run everything against the `.min.js` files. Use this before pushing |
+| `npm run test:report` | Open the last report, with a screenshot and trace for each failure |
+| `npx playwright test tests/components/git-manager.spec.mjs` | Run one file |
+| `npx playwright test -g "commit"` | Run tests by name |
 
 ## Tauri Docs
 

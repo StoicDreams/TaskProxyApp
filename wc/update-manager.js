@@ -5,7 +5,7 @@
             const t = this;
             t._btnCheck = t.template.querySelector('#btn-check');
             t._btnInstall = t.template.querySelector('#btn-install');
-            t._alert = t.template.querySelector('webui-alert');
+            t._alert = t.template.querySelector('webui-alert:not([fixed])');
         },
         connected() {
             const t = this;

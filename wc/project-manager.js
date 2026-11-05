@@ -14,10 +14,14 @@
                     webui.alert('No project is currently selected.', 'warning');
                     return;
                 }
+                // Set after opening, because markup in a dialog's content is processed before it renders.
+                webui.wait(() => webui.querySelector('webui-input-text[name="projectName"]')?.setValue).then(() => {
+                    webui.querySelector('webui-input-text[name="projectName"]').value = currentProject.display;
+                });
                 webui.dialog({
                     title: 'Rename Project',
                     content: `
-                        <webui-flex column><webui-input-text name="projectName" label="New Project Name" value="${currentProject.display}">
+                        <webui-flex column><webui-input-text name="projectName" label="New Project Name">
                         </webui-input-text></webui-flex>
                         `,
                     confirm: 'Rename',
@@ -47,7 +51,7 @@
                 webui.dialog({
                     title: 'Remove Project',
                     content: `
-                    <p>Are you sure you want to remove the project <strong>${currentProject.display}</strong>?</p>
+                    <p>Are you sure you want to remove the project <strong>${webui.escapeForHTML(currentProject.display)}</strong>?</p>
                     <p style="color: var(--color-danger);">This will only remove the project from Task Proxy. No files or folders will be deleted.</p>
                     `,
                     confirm: 'Remove',

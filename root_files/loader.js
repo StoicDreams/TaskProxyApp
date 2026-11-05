@@ -3004,12 +3004,22 @@ const webui = (() => {
             return null;
         }
     }
+    /** The first key in an element's data-bind or data-trigger. */
+    function getBoundKey(node) {
+        const bound = node.getAttribute("data-bind") || node.getAttribute("data-trigger") || "";
+        return bound.split("|")[0].split(":")[0].trim();
+    }
     function registerNode(node) {
         if (!node || typeof node.getAttribute !== "function") return;
         let def = node.getAttribute("data-default");
         if (def) {
             def.split("|").forEach((pair) => {
                 let [defKey, defVal] = pair.split(":");
+                if (defVal === undefined) {
+                    // A value on its own is the default for the key this element binds to.
+                    defVal = defKey;
+                    defKey = getBoundKey(node);
+                }
                 if (defKey && defVal !== undefined) {
                     webui.setDefault(defKey.trim(), defVal.trim());
                 }

@@ -14,15 +14,21 @@
     let pageScripts = [];
     let pageDataComponent = '';
     let lastScannedMarkdown = null;
+    let currentLoad = 0;
     const variableKeyNames = new Map();
     const variableRegexes = new Map();
     webui.currentPageVariables = [];
     let onTitleClick = () => {
+        // Set after opening, because markup in a dialog's content is processed before it renders.
+        webui.wait(() => webui.querySelector('webui-input-text[name="pageSubtitle"]')?.setValue).then(() => {
+            webui.querySelector('webui-input-text[name="pageTitle"]').value = webui.getData('page-title') || '';
+            webui.querySelector('webui-input-text[name="pageSubtitle"]').value = webui.getData('page-subtitle') || '';
+        });
         webui.dialog({
             title: 'Edit Page Title',
             content: `<webui-flex column gap="var(--padding)">
-                <webui-input-text name="pageTitle" label="Page Title" value="${webui.escapeForHTML(webui.getData('page-title') || '')}"></webui-input-text>
-                <webui-input-text name="pageSubtitle" label="Page Subtitle" value="${webui.escapeForHTML(webui.getData('page-subtitle') || '')}"></webui-input-text>
+                <webui-input-text name="pageTitle" label="Page Title"></webui-input-text>
+                <webui-input-text name="pageSubtitle" label="Page Subtitle"></webui-input-text>
             </webui-flex>`,
             confirm: 'Save',
             cancel: 'Cancel',
@@ -47,14 +53,23 @@
         });
     };
     async function loadProject() {
+        const load = ++currentLoad;
         myId = location.pathname.substring(1);
-        myFile = `.taskproxy/pages/${myId}.md`;
+        const file = `.taskproxy/pages/${myId}.md`;
+        myFile = file;
         await webui.wait(()=>!!webui.proxy);
-        let md = await webui.proxy.getProjectFile(myFile, err => { webui.log.warn('getProjectFile:%o', err); });
-        if (!md) {
-            md = '';
+        let error = null;
+        let md = await webui.proxy.getProjectFile(file, err => { error = `${err}`; });
+        // Leaving this page while it loads must not put its content on the next page.
+        if (load !== currentLoad || myFile !== file) return;
+        if (error && !error.includes('File not found')) {
+            // Saving now would replace the file with an empty page.
+            myFile = '';
+            comp.innerHTML = '';
+            comp.appendChild(webui.create('webui-alert', { show: true, variant: 'danger', html: webui.escapeForHTML(`This page could not be loaded. ${error}`) }));
+            return;
         }
-        setMarkdown(md);
+        setMarkdown(md || '');
     }
     function setupBar(isEnd) {
         let wrap = webui.create('webui-flex', { column: true, gap: 0 });
@@ -115,7 +130,9 @@
             pageDataComponent = match[0];
             markdown = mdTrimmed.substring(pageDataComponent.length).trim();
         } else {
-            pageDataComponent = `<webui-data data-page-title="${webui.escapeForHTML(webui.getData('page-title') || '')}" data-page-subtitle="${webui.escapeForHTML(webui.getData('page-subtitle') || '')}"></webui-data>`;
+            pageDataComponent = `<webui-data data-page-title="" data-page-subtitle=""></webui-data>`;
+            webui.setData('page-title', '');
+            webui.setData('page-subtitle', '');
             markdown = mdTrimmed;
         }
         comp.innerHTML = '';
@@ -297,7 +314,7 @@
         if (!variableRegexes.has(varName)) {
             const name = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             variableRegexes.set(varName, [
-                new RegExp(`(\\$${name}\\s*=\\s*)(['"])([\\s\\S]*?)(\\2)`, 'gi'),
+                new RegExp(`(\\$${name}\\s*=\\s*)('(?:[^']|'')*'|"(?:[^"\`]|\`[\\s\\S]|"")*")`, 'gi'),
                 new RegExp(`(\\$${name}\\s*=\\s*)([^'"\\s][^\\n\\r]*)`, 'gi')
             ]);
         }
@@ -306,29 +323,29 @@
     function injectVariableValues(scriptContent, forPreview) {
         let updatedScript = scriptContent;
         webui.currentPageVariables.forEach(varName => {
-            let rawValue = webui.getData(varName);
-            if (rawValue === undefined || rawValue === null || rawValue === '') {
+            let rawValue = webui.getVariable(varName);
+            if (rawValue === undefined || rawValue === null || rawValue === '' || typeof rawValue === 'object') {
                 return;
             }
             let val = String(rawValue);
             let [stringRegex, nonStringRegex] = getVariableRegexes(varName);
-            updatedScript = updatedScript.replace(stringRegex, (match, prefix, quote, oldContent, suffix) => {
+            updatedScript = updatedScript.replace(stringRegex, (match, prefix, oldString) => {
+                const quote = oldString[0];
                 let formattedVal = val;
                 if (forPreview) {
                     if (formattedVal.length > 6) {
                         formattedVal = `${formattedVal.substring(0, 3)}***${formattedVal.substring(formattedVal.length - 3)}`;
                     }
+                } else if (quote === "'") {
+                    // PowerShell also accepts typographic quotes as string delimiters.
+                    formattedVal = formattedVal.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&');
                 } else {
-                    if (quote === "'") {
-                        formattedVal = formattedVal.replace(/'/g, "''");
-                    } else if (quote === '"') {
-                        formattedVal = formattedVal.replace(/"/g, '`"');
-                    }
+                    formattedVal = formattedVal.replace(/[`$"\u201C\u201D\u201E]/g, '`$&');
                 }
-                return `${prefix}${quote}${formattedVal}${suffix}`;
+                return `${prefix}${quote}${formattedVal}${quote}`;
             });
             updatedScript = updatedScript.replace(nonStringRegex, (match, prefix, oldContent) => {
-                if (!isNaN(val)) {
+                if (val.trim() !== '' && Number.isFinite(Number(val))) {
                     return `${prefix}${Number(val)}`;
                 } else if (val.toLowerCase() === 'true' || val.toLowerCase() === 'false') {
                     return `${prefix}$${val.toLowerCase()}`;
@@ -396,7 +413,8 @@
     }
     async function runPageScript(scriptMeta) {
         let executableContent = injectVariableValues(scriptMeta.content, false);
-        if (!await webui.proxy.confirmProjectScript(injectVariableValues(scriptMeta.content, true))) return;
+        let maskedContent = injectVariableValues(scriptMeta.content, true);
+        if (!await webui.proxy.confirmProjectScript(maskedContent)) return;
         let projProject = webui.getData('app-current-project');
         let projName = projProject ? projProject.display : 'Project';
         let pageName = webui.getData('page-title') || 'Page';
@@ -425,7 +443,8 @@
                 [],
                 false,
                 false,
-                true
+                true,
+                maskedContent
             );
             let terminalsApp = document.querySelector('app-terminals');
             if (terminalsApp) {

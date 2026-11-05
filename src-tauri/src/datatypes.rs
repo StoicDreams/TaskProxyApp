@@ -128,3 +128,35 @@ impl Project {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_data_uses_camel_case_and_drops_unknown_fields() {
+        let json = r#"{"id":"1","path":"/p","currentPage":"/x","docs":[],"navigation":[],"variables":["a|text|"],"data":{"a":"b"},"unknown":5}"#;
+        let data: ProjectData = serde_json::from_str(json).unwrap();
+        assert_eq!(data.current_page, "/x");
+        let out = serde_json::to_string(&data).unwrap();
+        assert!(out.contains("\"currentPage\":\"/x\""));
+        assert!(!out.contains("unknown"));
+    }
+
+    #[test]
+    fn navigation_reads_both_name_styles_and_keeps_nesting() {
+        let json = r#"[{"Name":"Folder","Icon":"i","Url":null,"Children":[{"name":"Page","icon":"j","url":"/p","children":null}]}]"#;
+        let nav: Vec<ProjectNavItem> = serde_json::from_str(json).unwrap();
+        let out = serde_json::to_value(&nav).unwrap();
+        assert_eq!(out[0]["name"], "Folder");
+        assert_eq!(out[0]["children"][0]["url"], "/p");
+    }
+
+    #[test]
+    fn new_data_has_sensible_defaults() {
+        let data = TaskProxyData::new();
+        assert!(!data.is_saved);
+        assert_eq!(data.save_interval_minutes, 20);
+        assert_eq!(ProjectData::new().current_page, "/");
+    }
+}

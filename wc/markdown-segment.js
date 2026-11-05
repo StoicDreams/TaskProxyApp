@@ -28,16 +28,18 @@
         segmentOptions[2],
         segmentOptions[1],
         segmentOptions[7],
+        segmentOptions[8],
         segmentOptions[9],
     ];
     function getOption(value) {
         for (let option of segmentOptions) {
             if (option.value === value) return option;
         }
-        return segmentOptions.slice(-1);
+        return segmentOptions.at(-1);
     }
     webui.define("app-markdown-segment", {
         linkCss: true,
+        preload: 'dropdown input-text input-message content',
         constructor() {
             const t = this;
             t._content = t.template.querySelector('webui-content');
@@ -49,8 +51,8 @@
             t._inputOptions = t.template.querySelector('.input-options');
             t._isEditing = false;
             t._inputValue = '';
-            t._currentOption = segmentOptions.slice(-1).value;
-            t._inputType = segmentOptions.slice(-1).inputType;
+            t._currentOption = segmentOptions.at(-1).value;
+            t._inputType = segmentOptions.at(-1).inputType;
         },
         attr: [],
         attrChanged(property, value) {
@@ -70,7 +72,8 @@
                 default:
                     return t._currentOption;
             }
-            return t._currentOption.replace('{}', t._inputValue);
+            // A function, because a replacement string would treat $' and $& in the text as patterns.
+            return t._currentOption.replace('{}', () => t._inputValue);
         },
         connected() {
             const t = this;
@@ -135,8 +138,8 @@
                     t._inputOptions.classList.add('it-multi');
                     break;
                 case inputTypes.SINGLE_LINE:
-                    if (t._inputMessage.value !== t._inputValue) {
-                        t._inputMessage.value = t._inputValue;
+                    if (t._inputText.value !== t._inputValue) {
+                        t._inputText.value = t._inputValue;
                     }
                     t._inputOptions.classList.remove('it-multi');
                     t._inputOptions.classList.add('it-single');
@@ -164,6 +167,10 @@
                     return;
                 }
                 let [left, right] = option.value.split('{}');
+                // A single line input would drop line breaks, and rewrite #text as # text.
+                if (option.inputType === inputTypes.SINGLE_LINE && (mdTrimmed.includes('\n') || !mdTrimmed.startsWith(left))) {
+                    return;
+                }
                 let leftTrimmed = left.trim();
                 let rightTrimmed = right.trim();
                 if (mdTrimmed.startsWith(leftTrimmed) && mdTrimmed.endsWith(rightTrimmed)) {

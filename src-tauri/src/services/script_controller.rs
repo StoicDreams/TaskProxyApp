@@ -32,9 +32,47 @@ fn collect_scripts(root: &Path, scripts: &mut Vec<String>) {
         });
         if is_script && !is_temp {
             if let Ok(relative_path) = path.strip_prefix(root) {
-                scripts.push(relative_path.to_string_lossy().into_owned());
+                // The frontend compares these paths, and joins them with forward slashes.
+                scripts.push(relative_path.to_string_lossy().replace('\\', "/"));
             }
         }
     });
     scripts.sort();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scripts_are_found_sorted_and_with_forward_slashes() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("sub/deep")).unwrap();
+        for file in ["z.ps1", "A.PS1", "sub/deep/b.ps1", "notes.txt"] {
+            fs::write(dir.path().join(file), "x").unwrap();
+        }
+        let mut scripts = Vec::new();
+        collect_scripts(dir.path(), &mut scripts);
+        assert_eq!(scripts, ["A.PS1", "sub/deep/b.ps1", "z.ps1"]);
+    }
+
+    #[test]
+    fn temp_scripts_build_output_and_ignored_files_are_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("target")).unwrap();
+        fs::create_dir_all(dir.path().join("generated")).unwrap();
+        fs::write(dir.path().join(".gitignore"), "generated/\n").unwrap();
+        for file in [
+            "keep.ps1",
+            "taskproxy_tmp_1_a.ps1",
+            "taskproxy_live_1.ps1",
+            "target/build.ps1",
+            "generated/made.ps1",
+        ] {
+            fs::write(dir.path().join(file), "x").unwrap();
+        }
+        let mut scripts = Vec::new();
+        collect_scripts(dir.path(), &mut scripts);
+        assert_eq!(scripts, ["keep.ps1"]);
+    }
 }

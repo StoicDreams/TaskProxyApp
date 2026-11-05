@@ -253,19 +253,43 @@ pub(crate) async fn get_project_file(
     state: State<'_, CurrentProject>,
     file_path: String,
 ) -> Result<String, String> {
-    const CONTEXT: &str = "Get Project File";
-    let root = current_project_path(&state, CONTEXT)?;
-    let relative = safe_relative_path(&file_path).map_err(|err| format!("{}: {}", CONTEXT, err))?;
-    let result = task::spawn_blocking(move || {
-        let file = root.join(relative);
-        if !file.is_file() {
-            return Err(format!("{}: File not found", CONTEXT));
-        }
-        ensure_inside_root(&root, &file).map_err(|err| format!("{}: {}", CONTEXT, err))?;
-        fs::read_to_string(file).map_err(|err| format!("Failed to load file: {}", err))
-    })
-    .await;
+    let root = current_project_path(&state, GET_FILE_CONTEXT)?;
+    let result = task::spawn_blocking(move || read_project_file(&root, &file_path)).await;
     result.map_err(|err| format!("{}", err))?
+}
+
+const GET_FILE_CONTEXT: &str = "Get Project File";
+const SAVE_FILE_CONTEXT: &str = "Save Project File Failed";
+
+/// The frontend treats this exact error as a page that has not been created yet.
+fn read_project_file(root: &Path, file_path: &str) -> Result<String, String> {
+    let relative =
+        safe_relative_path(file_path).map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))?;
+    let file = root.join(relative);
+    if !file.is_file() {
+        return Err(format!("{}: File not found", GET_FILE_CONTEXT));
+    }
+    ensure_inside_root(root, &file).map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))?;
+    fs::read_to_string(file).map_err(|err| format!("Failed to load file: {}", err))
+}
+
+fn write_project_file(root: &Path, file_path: &str, contents: &str) -> Result<(), String> {
+    let error = |err: String| format!("{}: {}", SAVE_FILE_CONTEXT, err);
+    let relative = safe_relative_path(file_path).map_err(error)?;
+    if targets_git_dir(&relative) {
+        return Err(error(String::from("Cannot write inside a .git folder.")));
+    }
+    if relative.extension().is_none() {
+        return Err(error(String::from("File path is missing a file extension")));
+    }
+    let file = root.join(relative);
+    ensure_inside_root(root, &file).map_err(error)?;
+    let mut contents = contents.to_string();
+    if !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    // A crash during a plain write would leave the file cut short.
+    write_atomic(&file, contents.as_bytes()).map_err(|err| error(err.to_string()))
 }
 
 #[tauri::command]
@@ -274,28 +298,9 @@ pub(crate) async fn save_project_file(
     file_path: String,
     contents: String,
 ) -> Result<String, String> {
-    const CONTEXT: &str = "Save Project File Failed";
-    let mut contents = contents;
-    if !contents.ends_with('\n') {
-        contents.push('\n');
-    }
-    let root = current_project_path(&state, CONTEXT)?;
-    let relative = safe_relative_path(&file_path).map_err(|err| format!("{}: {}", CONTEXT, err))?;
-    if targets_git_dir(&relative) {
-        return Err(format!("{}: Cannot write inside a .git folder.", CONTEXT));
-    }
-    if relative.extension().is_none() {
-        return Err(format!("{}: File path is missing a file extension", CONTEXT));
-    }
-    let result = task::spawn_blocking(move || {
-        let file = root.join(relative);
-        ensure_inside_root(&root, &file).map_err(|err| format!("{}: {}", CONTEXT, err))?;
-        if let Some(dir) = file.parent() {
-            fs::create_dir_all(dir).map_err(|err| format!("{}: {}", CONTEXT, err))?;
-        }
-        fs::write(file, contents).map_err(|err| format!("{}: {}", CONTEXT, err))
-    })
-    .await;
+    let root = current_project_path(&state, SAVE_FILE_CONTEXT)?;
+    let result =
+        task::spawn_blocking(move || write_project_file(&root, &file_path, &contents)).await;
     result.map_err(|err| format!("{}", err))??;
     Ok(String::from("File saved"))
 }
@@ -466,7 +471,9 @@ pub(crate) async fn persist_project_data(
     app_handle: &AppHandle,
 ) -> Result<String, String> {
     if data.id.is_empty() {
-        return Err(String::from("Project data is not associated with any project."));
+        return Err(String::from(
+            "Project data is not associated with any project.",
+        ));
     }
     if data.path.is_empty() {
         return Err(String::from("Project data is missing path."));
@@ -631,9 +638,13 @@ fn get_project_docs(project_path: &str) -> Vec<String> {
     let root = PathBuf::from(project_path);
     let mut docs = Vec::new();
     walk_project_files(&root, SKIP_DIRS, |path| {
-        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md")) {
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        {
             if let Ok(relative_path) = path.strip_prefix(&root) {
-                docs.push(relative_path.to_string_lossy().into_owned());
+                // The frontend compares these paths, and joins them with forward slashes.
+                docs.push(relative_path.to_string_lossy().replace('\\', "/"));
             }
         }
     });
@@ -793,7 +804,10 @@ mod tests {
     #[test]
     fn unchanged_memory_never_overwrites_the_file() {
         // A teammate's change arrived through git pull while memory is unchanged.
-        assert_eq!(plan_file_save("old", "old", &parsed("pulled")), SaveAction::Skip);
+        assert_eq!(
+            plan_file_save("old", "old", &parsed("pulled")),
+            SaveAction::Skip
+        );
         // The file has merge conflicts, which load as an empty list.
         assert_eq!(
             plan_file_save(EMPTY_LIST, EMPTY_LIST, &DiskFile::Unparseable),
@@ -803,34 +817,65 @@ mod tests {
 
     #[test]
     fn edits_are_written_only_over_the_version_they_started_from() {
-        assert_eq!(plan_file_save("old", "edit", &parsed("old")), SaveAction::Write);
-        assert_eq!(plan_file_save("old", "edit", &parsed("edit")), SaveAction::Skip);
-        assert_eq!(plan_file_save("old", "edit", &parsed("pulled")), SaveAction::Conflict);
-        assert_eq!(plan_file_save("old", "edit", &DiskFile::Unparseable), SaveAction::Conflict);
+        assert_eq!(
+            plan_file_save("old", "edit", &parsed("old")),
+            SaveAction::Write
+        );
+        assert_eq!(
+            plan_file_save("old", "edit", &parsed("edit")),
+            SaveAction::Skip
+        );
+        assert_eq!(
+            plan_file_save("old", "edit", &parsed("pulled")),
+            SaveAction::Conflict
+        );
+        assert_eq!(
+            plan_file_save("old", "edit", &DiskFile::Unparseable),
+            SaveAction::Conflict
+        );
     }
 
     #[test]
     fn empty_lists_do_not_create_files_in_untouched_projects() {
-        assert_eq!(plan_file_save("old", EMPTY_LIST, &DiskFile::Missing), SaveAction::Skip);
-        assert_eq!(plan_file_save(EMPTY_LIST, "edit", &DiskFile::Missing), SaveAction::Write);
+        assert_eq!(
+            plan_file_save("old", EMPTY_LIST, &DiskFile::Missing),
+            SaveAction::Skip
+        );
+        assert_eq!(
+            plan_file_save(EMPTY_LIST, "edit", &DiskFile::Missing),
+            SaveAction::Write
+        );
     }
 
     #[test]
     fn new_project_files_are_written_and_the_folder_is_created() {
         let dir = tempfile::tempdir().unwrap();
         let variables = to_json(&vec!["a|text|".to_string()]).unwrap();
-        save_project_files("new-project", dir.path(), EMPTY_LIST.to_string(), variables.clone())
-            .unwrap();
+        save_project_files(
+            "new-project",
+            dir.path(),
+            EMPTY_LIST.to_string(),
+            variables.clone(),
+        )
+        .unwrap();
         let data_root = dir.path().join(".taskproxy");
-        assert_eq!(fs::read_to_string(data_root.join(VARIABLES_FILE)).unwrap(), variables);
+        assert_eq!(
+            fs::read_to_string(data_root.join(VARIABLES_FILE)).unwrap(),
+            variables
+        );
         assert!(!data_root.join(NAVIGATION_FILE).exists());
     }
 
     #[test]
     fn untouched_project_gets_no_taskproxy_folder() {
         let dir = tempfile::tempdir().unwrap();
-        save_project_files("untouched", dir.path(), EMPTY_LIST.to_string(), EMPTY_LIST.to_string())
-            .unwrap();
+        save_project_files(
+            "untouched",
+            dir.path(),
+            EMPTY_LIST.to_string(),
+            EMPTY_LIST.to_string(),
+        )
+        .unwrap();
         assert!(!dir.path().join(".taskproxy").exists());
     }
 
@@ -843,13 +888,21 @@ mod tests {
         fs::write(data_root.join(VARIABLES_FILE), conflicted).unwrap();
         let (_, variables) = load_project_files("conflicted", dir.path());
         assert!(variables.is_empty());
-        save_project_files("conflicted", dir.path(), EMPTY_LIST.to_string(), EMPTY_LIST.to_string())
-            .unwrap();
+        save_project_files(
+            "conflicted",
+            dir.path(),
+            EMPTY_LIST.to_string(),
+            EMPTY_LIST.to_string(),
+        )
+        .unwrap();
         let edited = to_json(&vec!["a|text|".to_string()]).unwrap();
         assert!(
             save_project_files("conflicted", dir.path(), EMPTY_LIST.to_string(), edited).is_err()
         );
-        assert_eq!(fs::read_to_string(data_root.join(VARIABLES_FILE)).unwrap(), conflicted);
+        assert_eq!(
+            fs::read_to_string(data_root.join(VARIABLES_FILE)).unwrap(),
+            conflicted
+        );
     }
 
     #[test]
@@ -870,5 +923,216 @@ mod tests {
         edited.variables = vec!["edit|text|".to_string()];
         fs::write(data_root.join(VARIABLES_FILE), r#"["again|text|"]"#).unwrap();
         assert_eq!(reload_files_from_disk(edited).variables, ["edit|text|"]);
+    }
+
+    #[test]
+    fn project_files_are_read_from_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".taskproxy/pages")).unwrap();
+        fs::write(dir.path().join(".taskproxy/pages/a.md"), "# A").unwrap();
+        assert_eq!(
+            read_project_file(dir.path(), ".taskproxy/pages/a.md").unwrap(),
+            "# A"
+        );
+        assert_eq!(
+            read_project_file(dir.path(), ".taskproxy\\pages\\a.md").unwrap(),
+            "# A"
+        );
+    }
+
+    #[test]
+    fn a_missing_file_reports_the_error_the_frontend_expects() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = read_project_file(dir.path(), "missing.md").unwrap_err();
+        assert!(err.ends_with("File not found"));
+        fs::create_dir_all(dir.path().join("folder.md")).unwrap();
+        assert!(
+            read_project_file(dir.path(), "folder.md")
+                .unwrap_err()
+                .ends_with("File not found")
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_text_reports_a_different_error() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("bin.md"), b"\xFF\xFE").unwrap();
+        let err = read_project_file(dir.path(), "bin.md").unwrap_err();
+        assert!(!err.contains("File not found"));
+    }
+
+    #[test]
+    fn paths_that_leave_the_project_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(dir.path().join("secret.md"), "x").unwrap();
+        for path in ["../secret.md", "/etc/passwd", "a/../../secret.md", ""] {
+            assert!(read_project_file(&root, path).is_err(), "{}", path);
+            assert!(write_project_file(&root, path, "x").is_err(), "{}", path);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_links_cannot_reach_outside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(dir.path().join("outside")).unwrap();
+        fs::write(dir.path().join("outside/secret.md"), "x").unwrap();
+        std::os::unix::fs::symlink(dir.path().join("outside"), root.join("link")).unwrap();
+        assert!(read_project_file(&root, "link/secret.md").is_err());
+        assert!(write_project_file(&root, "link/new.md", "x").is_err());
+        assert!(!dir.path().join("outside/new.md").exists());
+    }
+
+    #[test]
+    fn saving_creates_folders_and_ends_with_a_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_file(dir.path(), ".taskproxy/pages/new.md", "# New").unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".taskproxy/pages/new.md")).unwrap(),
+            "# New\n"
+        );
+        write_project_file(dir.path(), "kept.md", "line\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("kept.md")).unwrap(),
+            "line\n"
+        );
+    }
+
+    #[test]
+    fn saving_replaces_the_whole_file_and_leaves_no_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.md"), "a much longer original file\n").unwrap();
+        write_project_file(dir.path(), "a.md", "short").unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.md")).unwrap(),
+            "short\n"
+        );
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(names, ["a.md"]);
+    }
+
+    #[test]
+    fn saving_inside_git_or_without_an_extension_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        for path in [
+            ".git/hooks/pre-commit.sh",
+            "sub/.GIT/config.txt",
+            "no_extension",
+        ] {
+            assert!(
+                write_project_file(dir.path(), path, "x").is_err(),
+                "{}",
+                path
+            );
+        }
+        assert!(!dir.path().join(".git").exists());
+    }
+
+    #[test]
+    fn docs_are_found_sorted_and_with_forward_slashes() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("docs/deep")).unwrap();
+        fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.path().join(".taskproxy/pages")).unwrap();
+        for file in [
+            "README.md",
+            "docs/deep/b.MD",
+            "docs/a.md",
+            "notes.txt",
+            "node_modules/pkg/x.md",
+            ".taskproxy/pages/p.md",
+        ] {
+            fs::write(dir.path().join(file), "x").unwrap();
+        }
+        assert_eq!(
+            get_project_docs(dir.path().to_str().unwrap()),
+            ["README.md", "docs/a.md", "docs/deep/b.MD"]
+        );
+    }
+
+    #[test]
+    fn wildcards_match_names() {
+        for (pattern, text, expected) in [
+            ("*", "anything", true),
+            ("*.ps1", "build.ps1", true),
+            ("*.ps1", "build.ps1.bak", false),
+            ("build*", "build.ps1", true),
+            ("b*d*.ps1", "build.ps1", true),
+            ("b*x*", "build", false),
+            ("exact.txt", "exact.txt", true),
+            ("exact.txt", "other.txt", false),
+            ("a*a", "a", false),
+            ("*é*", "café.txt", true),
+        ] {
+            assert_eq!(
+                wildcard_match(pattern, text),
+                expected,
+                "{} {}",
+                pattern,
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn searches_match_file_names_or_paths_and_skip_build_output() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("scripts")).unwrap();
+        fs::create_dir_all(dir.path().join("bin")).unwrap();
+        for file in ["scripts/a.ps1", "b.ps1", "bin/c.ps1", "d.txt"] {
+            fs::write(dir.path().join(file), "x").unwrap();
+        }
+        let search = |patterns: &[&str]| {
+            let patterns: Vec<String> = patterns.iter().map(|p| p.to_string()).collect();
+            let mut results = Vec::new();
+            collect_filtered_files(dir.path(), &patterns, "", &mut results);
+            let mut values: Vec<String> = results.into_iter().map(|r| r.value).collect();
+            values.sort();
+            values
+        };
+        assert_eq!(search(&["*.ps1"]), ["b.ps1", "scripts/a.ps1"]);
+        assert_eq!(search(&["scripts/*"]), ["scripts/a.ps1"]);
+        assert_eq!(search(&["*.txt", "b.*"]), ["b.ps1", "d.txt"]);
+    }
+
+    #[test]
+    fn display_formats_fill_in_parts_of_the_path() {
+        let path = Path::new("scripts/deploy.ps1");
+        assert_eq!(
+            format_option_display(path, "scripts/deploy.ps1", ""),
+            "scripts/deploy.ps1"
+        );
+        assert_eq!(
+            format_option_display(
+                path,
+                "scripts/deploy.ps1",
+                "[file] ([ext]) in [parent] = [path]"
+            ),
+            "deploy (ps1) in scripts = scripts/deploy"
+        );
+        assert_eq!(
+            format_option_display(Path::new("top.ps1"), "top.ps1", "[path]"),
+            "top"
+        );
+    }
+
+    #[test]
+    fn projects_sort_by_name_ignoring_case() {
+        let mut projects = vec![
+            Project::new("beta", "/b"),
+            Project::new("Alpha", "/a"),
+            Project::new("gamma", "/g"),
+        ];
+        sort_projects(&mut projects);
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Alpha", "beta", "gamma"]);
     }
 }

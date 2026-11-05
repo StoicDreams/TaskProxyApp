@@ -2,7 +2,7 @@
 {
     webui.define("app-script-manager", {
         linkCss: true,
-        preload: 'app:script-runner',
+        preload: 'app:script-runner dropdown',
         constructor() {
             const t = this;
             t._fileSelector = t.template.querySelector('webui-dropdown[label="Script"]');

@@ -351,8 +351,10 @@ pub(crate) async fn start_script(
         && candidate_path.is_file()
         && ensure_inside_root(&working_dir, &candidate_path).is_ok();
 
-    let (script_path, is_temp_file) = if is_existing_file {
-        (candidate_path, false)
+    // Temp scripts can hold secrets, so every way out of here must remove them.
+    let mut temp_cleanup = None;
+    let script_path = if is_existing_file {
+        candidate_path
     } else {
         let temp_dir = temp_script_dir(&app_handle)?;
         let temp_path = if terminal_id == "live" {
@@ -381,7 +383,8 @@ pub(crate) async fn start_script(
         };
         write_private_file(&temp_path, &script_content)
             .map_err(|e| format!("Failed to write temp script: {}", e))?;
-        (temp_path, true)
+        temp_cleanup = Some(TempFileCleanup(temp_path.clone()));
+        temp_path
     };
     if in_separate_window {
         let mut child_opt = None;
@@ -480,12 +483,11 @@ pub(crate) async fn start_script(
             );
         }
         if let Some(mut child) = child_opt {
-            if is_temp_file {
-                let cleanup_path = script_path.clone();
+            if let Some(cleanup) = temp_cleanup.take() {
                 tokio::spawn(async move {
                     let _ = child.wait().await;
                     sleep(SEPARATE_WINDOW_CLEANUP_DELAY).await;
-                    let _ = fs::remove_file(&cleanup_path);
+                    drop(cleanup);
                 });
             }
         }
@@ -505,9 +507,12 @@ pub(crate) async fn start_script(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
+    #[cfg(unix)]
+    cmd.process_group(0);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn script: {}", e))?;
+    let child_id = child.id();
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
     let (line_tx, line_rx) = mpsc::unbounded_channel();
@@ -521,14 +526,14 @@ pub(crate) async fn start_script(
     ));
     let app_wait = app_handle.clone();
     let state_arc = state.processes.clone();
-    let path_to_remove = is_temp_file.then(|| script_path.clone());
     let key_wait = key.clone();
     let (kill_tx, kill_rx) = oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
-        let _cleanup = path_to_remove.map(TempFileCleanup);
+        let _cleanup = temp_cleanup;
         let status = tokio::select! {
             status = child.wait() => status.ok(),
             _ = kill_rx => {
+                kill_process_tree(child_id);
                 let _ = child.kill().await;
                 child.wait().await.ok()
             }
@@ -560,6 +565,27 @@ pub(crate) async fn start_script(
         },
     );
     Ok("Script started".into())
+}
+
+/// A script's own children, such as a dev server, would otherwise keep running after it stops.
+fn kill_process_tree(process_id: Option<u32>) {
+    let Some(process_id) = process_id else {
+        return;
+    };
+    #[cfg(unix)]
+    // Scripts start as the leader of their own process group, so this cannot reach anything else.
+    unsafe {
+        libc::kill(-(process_id as i32), libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        let _ = create_command("taskkill")
+            .args(["/PID", &process_id.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }
 
 fn request_kill(script: &mut RunningScript) {
@@ -637,6 +663,78 @@ mod tests {
     fn script_keys_are_separate_per_project() {
         assert_ne!(script_key("a", "build.ps1"), script_key("b", "build.ps1"));
         assert!(script_key("a", "build.ps1").starts_with(&script_key("a", "")));
+    }
+
+    #[test]
+    fn line_endings_are_removed() {
+        assert_eq!(decode_line(b"a\r\n"), "a");
+        assert_eq!(decode_line(b"a\n"), "a");
+        assert_eq!(decode_line(b"a"), "a");
+        assert_eq!(decode_line(b"\n"), "");
+    }
+
+    #[test]
+    fn a_temp_script_is_removed_when_its_guard_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.ps1");
+        write_private_file(&path, "secret").unwrap();
+        drop(TempFileCleanup(path.clone()));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn an_existing_temp_script_is_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.ps1");
+        write_private_file(&path, "first").unwrap();
+        assert!(write_private_file(&path, "second").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn killing_a_script_also_stops_its_children() {
+        let is_alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 };
+        let mut cmd = AsyncCommand::new("sh");
+        cmd.args(["-c", "sleep 60 & echo $!; wait"])
+            .stdout(Stdio::piped())
+            .process_group(0);
+        let mut child = cmd.spawn().unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let grandchild: i32 = line.trim().parse().unwrap();
+        assert!(is_alive(grandchild));
+        kill_process_tree(child.id());
+        child.wait().await.unwrap();
+        for _ in 0..100 {
+            if !is_alive(grandchild) {
+                return;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        panic!("The script's child process is still running");
+    }
+
+    #[tokio::test]
+    async fn shutting_down_stops_scripts_and_empties_the_list() {
+        let processes: ProcessMap = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let (kill_tx, kill_rx) = oneshot::channel::<()>();
+        let (done_tx, done_rx) = oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            let _ = kill_rx.await;
+            let _ = done_tx.send(());
+        });
+        processes.lock().await.insert(
+            script_key("a", "b"),
+            RunningScript {
+                kill: Some(kill_tx),
+                handle,
+            },
+        );
+        shutdown(processes.clone()).await;
+        assert!(done_rx.await.is_ok());
+        assert!(processes.lock().await.is_empty());
     }
 
     #[cfg(unix)]

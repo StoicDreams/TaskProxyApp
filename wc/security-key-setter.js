@@ -41,10 +41,15 @@
                 t._del.classList.add('hidden');
             }
             t._del.addEventListener('click', webui.eventSoloProcess(async _ => {
-                let result = await webui.proxy.deleteSecurityKey(handleError);
-                if (!result) return;
-                t._alert.setValue({ text: result, theme: 'success' });
-                webui.setData('app-home-state', 'sec-key-deleted');
+                // Saved data cannot be read without this key, so make sure this was intended.
+                webui.dialog.confirm('Delete your security key? Your saved projects and variables cannot be read again unless you re-enter this exact key.', async () => {
+                    let result = await webui.proxy.deleteSecurityKey(handleError);
+                    if (!result) return true;
+                    t._alert.setValue({ text: result, theme: 'success' });
+                    t._del.classList.add('hidden');
+                    webui.setData('app-home-state', 'sec-key-deleted');
+                    return true;
+                });
             }, handleError));
             t._sav.addEventListener('click', webui.eventSoloProcess(async _ => {
                 let secKey = `${t._input.value}`.trim();

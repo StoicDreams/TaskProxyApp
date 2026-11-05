@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.82
+  VERSION: 0.1.83
 
 jobs:
   test:
@@ -39,6 +39,18 @@ jobs:
         run: trunk build
       - name: run tests
         run: cargo test -p taskproxy
+      - name: install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: install UI test tools
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      # The minified files are what the app loads, so test those.
+      - name: run UI tests
+        run: npm run test:min
   build-tauri-windows:
     needs: test
     permissions:
