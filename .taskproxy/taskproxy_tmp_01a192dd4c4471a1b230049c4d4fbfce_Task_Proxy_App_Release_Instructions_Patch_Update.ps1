@@ -1,1 +1,0 @@
-./PowerShell/IncrementVersion.ps1

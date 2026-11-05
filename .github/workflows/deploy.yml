@@ -6,11 +6,37 @@ on:
       - main
 
 env:
-  VERSION: 0.1.80
-  ACTIONS_ALLOW_UNSECURE_COMMANDS: true
+  VERSION: 0.1.81
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Install Tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+      - name: install dependencies
+        run: |
+          sudo apt update
+          sudo apt install libwebkit2gtk-4.1-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+          rustup target add wasm32-unknown-unknown
+      - name: build frontend
+        run: trunk build
+      - name: run tests
+        run: cargo test -p taskproxy
   build-tauri-windows:
+    needs: test
     permissions:
       contents: write
     strategy:
@@ -66,8 +92,9 @@ jobs:
         with:
           name: taskproxyartifactswindows
           path: |
-            target\release\
+            target\release\bundle\
   build-tauri-mac:
+    needs: test
     if: true
     permissions:
       contents: write
@@ -115,8 +142,9 @@ jobs:
         with:
           name: taskproxyartifactsmac
           path: |
-            target/aarch64-apple-darwin/release/
+            target/aarch64-apple-darwin/release/bundle/
   build-tauri-ubuntu:
+    needs: test
     if: true
     permissions:
       contents: write
@@ -165,7 +193,7 @@ jobs:
         with:
           name: taskproxyartifactsubuntu
           path: |
-            target/release/
+            target/release/bundle/
   publish-tauri-windows:
     needs: build-tauri-windows
     if: true
@@ -174,6 +202,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifactswindows
+          path: bundle
       - name: SFTP upload
         uses: garygrossgarten/github-action-scp@release
         with:
@@ -191,6 +220,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifactsmac
+          path: bundle
       - name: SFTP upload
         uses: garygrossgarten/github-action-scp@release
         with:
@@ -208,6 +238,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: taskproxyartifactsubuntu
+          path: bundle
       - name: SFTP upload
         uses: garygrossgarten/github-action-scp@release
         with:

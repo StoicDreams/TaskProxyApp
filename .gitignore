@@ -9,3 +9,10 @@ dist/
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+# Task Proxy temporary script files
+taskproxy_tmp_*
+taskproxy_live_*
+
+# Downloaded embedding models
+.fastembed_cache/
