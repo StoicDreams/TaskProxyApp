@@ -17,6 +17,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          # ort-sys links from its download folder, so that folder must be cached along with target/.
+          prefix-key: v1-rust
+          cache-directories: ~/.cache/ort.pyke.io
       - name: Install Tools
         uses: taiki-e/install-action@v2
         with:
@@ -48,6 +52,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
+          cache-directories: ~/AppData/Local/ort.pyke.io
       - name: Install Tools
         uses: taiki-e/install-action@v2
         with:
@@ -107,6 +114,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
+          cache-directories: ~/Library/Caches/ort.pyke.io
       - name: Install Tools
         uses: taiki-e/install-action@v2
         with:
@@ -157,6 +167,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
+          cache-directories: ~/.cache/ort.pyke.io
       - name: Install Tools
         uses: taiki-e/install-action@v2
         with:
