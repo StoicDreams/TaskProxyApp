@@ -1,14 +1,23 @@
 use crate::prelude::*;
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use std::io::{Read, Write};
 use std::process::Stdio;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command as AsyncCommand;
 use tokio::sync::{mpsc, oneshot};
 
-/// Output lines are sent to the UI in batches, so chatty scripts do not flood it with events.
+/// Output is sent to the UI in batches, so chatty scripts do not flood it with events.
 const OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(33);
-const OUTPUT_BATCH_LIMIT: usize = 1000;
+const OUTPUT_BATCH_LIMIT: usize = 256;
+const OUTPUT_READ_SIZE: usize = 16 * 1024;
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// Used until the Terminal Manager reports the size of its view.
+const DEFAULT_COLUMNS: u16 = 120;
+const DEFAULT_ROWS: u16 = 30;
+/// Piped output has no colors of its own, so error lines are colored the way a terminal shows them.
+const PIPED_ERROR_START: &str = "\x1b[31m";
+const PIPED_ERROR_END: &str = "\x1b[0m";
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const SEPARATE_WINDOW_CLEANUP_DELAY: Duration = Duration::from_secs(30);
 const TEMP_SCRIPT_DIR: &str = "script-tmp";
@@ -18,6 +27,26 @@ static PWSH_EXECUTABLE: Mutex<Option<String>> = Mutex::new(None);
 pub(crate) struct RunningScript {
     kill: Option<oneshot::Sender<()>>,
     handle: tokio::task::JoinHandle<()>,
+    /// Only scripts running in a pseudo-terminal take input and resize.
+    pty: Option<Arc<PtyControl>>,
+}
+
+/// The pseudo-terminal's side of a running script. Both are dropped when the script ends, which on
+/// Windows is what lets the last of its output be read.
+struct PtyControl {
+    master: std::sync::Mutex<Option<Box<dyn MasterPty + Send>>>,
+    writer: std::sync::Mutex<Option<Box<dyn Write + Send>>>,
+}
+
+impl PtyControl {
+    fn close(&self) {
+        if let Ok(mut writer) = self.writer.lock() {
+            writer.take();
+        }
+        if let Ok(mut master) = self.master.lock() {
+            master.take();
+        }
+    }
 }
 
 pub(crate) type ProcessMap = Arc<tokio::sync::Mutex<HashMap<String, RunningScript>>>;
@@ -43,17 +72,18 @@ impl Drop for TempFileCleanup {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TerminalLine {
-    content: String,
-    is_error: bool,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TerminalOutput {
+struct TerminalData {
     project_id: String,
     terminal_id: String,
-    lines: Vec<TerminalLine>,
+    data: String,
+}
+
+#[derive(Clone, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScriptStarted {
+    message: String,
+    /// Whether the script runs in a pseudo-terminal, so it can take input and redraw its output.
+    interactive: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -230,11 +260,21 @@ fn decode_line(bytes: &[u8]) -> String {
     String::from_utf8_lossy(line).into_owned()
 }
 
-/// Read output by raw bytes, because native tools do not always write valid UTF-8.
-async fn pump_lines<R: AsyncRead + Unpin>(
+/// Turns one piped output line into terminal text, coloring error lines red.
+fn piped_line_text(bytes: &[u8], is_error: bool) -> String {
+    let line = decode_line(bytes);
+    if is_error {
+        format!("{}{}{}\r\n", PIPED_ERROR_START, line, PIPED_ERROR_END)
+    } else {
+        format!("{}\r\n", line)
+    }
+}
+
+/// Read piped output by raw bytes, because native tools do not always write valid UTF-8.
+async fn pump_piped<R: AsyncRead + Unpin>(
     stream: R,
     is_error: bool,
-    lines: mpsc::UnboundedSender<TerminalLine>,
+    output: mpsc::UnboundedSender<Vec<u8>>,
 ) {
     let mut reader = BufReader::new(stream);
     let mut buffer = Vec::new();
@@ -243,11 +283,10 @@ async fn pump_lines<R: AsyncRead + Unpin>(
         match reader.read_until(b'\n', &mut buffer).await {
             Ok(0) | Err(_) => break,
             Ok(_) => {
-                let line = TerminalLine {
-                    content: decode_line(&buffer),
-                    is_error,
-                };
-                if lines.send(line).is_err() {
+                if output
+                    .send(piped_line_text(&buffer, is_error).into_bytes())
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -255,24 +294,147 @@ async fn pump_lines<R: AsyncRead + Unpin>(
     }
 }
 
-async fn emit_lines(
+/// Reads a pseudo-terminal on its own thread, since its reader blocks.
+fn pump_pty(mut reader: Box<dyn Read + Send>, output: mpsc::UnboundedSender<Vec<u8>>) {
+    std::thread::spawn(move || {
+        let mut buffer = vec![0u8; OUTPUT_READ_SIZE];
+        loop {
+            match reader.read(&mut buffer) {
+                // Linux reports an error rather than end of file once the script and its children exit.
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    if output.send(buffer[..count].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Decodes output that can stop partway through a character. The unfinished end is kept for the next
+/// chunk, and bytes that are not UTF-8 become replacement characters.
+fn decode_chunk(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
+    carry.extend_from_slice(bytes);
+    let mut text = String::new();
+    loop {
+        match std::str::from_utf8(carry) {
+            Ok(valid) => {
+                text.push_str(valid);
+                carry.clear();
+                return text;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                text.push_str(std::str::from_utf8(&carry[..valid]).unwrap_or_default());
+                match error.error_len() {
+                    Some(length) => {
+                        text.push('\u{FFFD}');
+                        carry.drain(..valid + length);
+                    }
+                    None => {
+                        carry.drain(..valid);
+                        return text;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Collects output into batches of text, calling `emit` for each.
+async fn batch_output<F: Fn(String)>(mut chunks: mpsc::UnboundedReceiver<Vec<u8>>, emit: F) {
+    let mut carry = Vec::new();
+    let mut batch = Vec::new();
+    while chunks.recv_many(&mut batch, OUTPUT_BATCH_LIMIT).await > 0 {
+        let mut text = String::new();
+        for chunk in batch.drain(..) {
+            text.push_str(&decode_chunk(&mut carry, &chunk));
+        }
+        if !text.is_empty() {
+            emit(text);
+        }
+        sleep(OUTPUT_FLUSH_INTERVAL).await;
+    }
+    if !carry.is_empty() {
+        emit(String::from_utf8_lossy(&carry).into_owned());
+    }
+}
+
+async fn emit_output(
     app: AppHandle,
     project_id: String,
     terminal_id: String,
-    mut lines: mpsc::UnboundedReceiver<TerminalLine>,
+    chunks: mpsc::UnboundedReceiver<Vec<u8>>,
 ) {
-    let mut batch = Vec::new();
-    while lines.recv_many(&mut batch, OUTPUT_BATCH_LIMIT).await > 0 {
+    batch_output(chunks, |data| {
         let _ = app.emit(
-            "terminal-output",
-            TerminalOutput {
+            "terminal-data",
+            TerminalData {
                 project_id: project_id.clone(),
                 terminal_id: terminal_id.clone(),
-                lines: std::mem::take(&mut batch),
+                data,
             },
         );
-        sleep(OUTPUT_FLUSH_INTERVAL).await;
+    })
+    .await;
+}
+
+fn pty_size(cols: Option<u16>, rows: Option<u16>) -> PtySize {
+    PtySize {
+        cols: cols.filter(|c| *c > 0).unwrap_or(DEFAULT_COLUMNS),
+        rows: rows.filter(|r| *r > 0).unwrap_or(DEFAULT_ROWS),
+        pixel_width: 0,
+        pixel_height: 0,
     }
+}
+
+/// The pseudo-terminal pieces of a newly started script.
+struct PtyProcess {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    reader: Box<dyn Read + Send>,
+    control: Arc<PtyControl>,
+}
+
+/// Starts a program in a pseudo-terminal, so it behaves as it would in a terminal window.
+fn spawn_in_pty(
+    program: &str,
+    args: &[String],
+    working_dir: &Path,
+    size: PtySize,
+) -> Result<PtyProcess, String> {
+    let pair = native_pty_system()
+        .openpty(size)
+        .map_err(|e| format!("Failed to open a terminal: {}", e))?;
+    let mut cmd = CommandBuilder::new(program);
+    cmd.args(args);
+    cmd.cwd(working_dir);
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    #[cfg(target_os = "linux")]
+    cmd.env_remove("LD_LIBRARY_PATH");
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("Failed to start in a terminal: {}", e))?;
+    // The script holds its own end now. Keeping this one would stop the output from ever ending.
+    drop(pair.slave);
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("Failed to read the terminal: {}", e))?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("Failed to write to the terminal: {}", e))?;
+    Ok(PtyProcess {
+        child,
+        reader,
+        control: Arc::new(PtyControl {
+            master: std::sync::Mutex::new(Some(pair.master)),
+            writer: std::sync::Mutex::new(Some(writer)),
+        }),
+    })
 }
 
 fn temp_script_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
@@ -313,6 +475,8 @@ pub(crate) fn remove_stale_temp_scripts(app_handle: &AppHandle) {
     }
 }
 
+// Tauri fills these in from the frontend and from app state, so they cannot be grouped.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn start_script(
     app_handle: AppHandle,
@@ -322,7 +486,9 @@ pub(crate) async fn start_script(
     script_content: String,
     args: Vec<String>,
     in_separate_window: bool,
-) -> Result<String, String> {
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<ScriptStarted, String> {
     // Dynamic PowerShell Resolution
     let (installed, executable) = task::spawn_blocking(resolve_pwsh)
         .await
@@ -491,80 +657,204 @@ pub(crate) async fn start_script(
                 });
             }
         }
-        return Ok("Script launched in separate OS window.".into());
+        return Ok(ScriptStarted {
+            message: "Script launched in separate OS window.".into(),
+            interactive: false,
+        });
     }
-    let std_cmd = create_command(&executable);
-    let mut cmd = AsyncCommand::from(std_cmd);
-    cmd.arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-File")
-        .arg(&script_path)
-        .args(&args)
-        .current_dir(&working_dir)
-        .kill_on_drop(true)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
-    #[cfg(unix)]
-    cmd.process_group(0);
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn script: {}", e))?;
-    let child_id = child.id();
-    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-    let (line_tx, line_rx) = mpsc::unbounded_channel();
-    let stdout_reader = tokio::spawn(pump_lines(stdout, false, line_tx.clone()));
-    let stderr_reader = tokio::spawn(pump_lines(stderr, true, line_tx));
-    let mut flusher = tokio::spawn(emit_lines(
-        app_handle.clone(),
-        project_id.clone(),
-        terminal_id.clone(),
-        line_rx,
-    ));
+    let (chunk_tx, chunk_rx) = mpsc::unbounded_channel();
+    let mut pwsh_args: Vec<String> = vec![
+        "-ExecutionPolicy".into(),
+        "Bypass".into(),
+        "-NoProfile".into(),
+        "-File".into(),
+        script_path.to_string_lossy().into_owned(),
+    ];
+    pwsh_args.extend(args.iter().cloned());
+    // A pseudo-terminal lets scripts redraw progress, show colors, and take input. Scripts still run
+    // with piped output if one cannot be opened.
+    let pty = match spawn_in_pty(&executable, &pwsh_args, &working_dir, pty_size(cols, rows)) {
+        Ok(process) => Some(process),
+        Err(err) => {
+            eprintln!("Running {} without a terminal: {}", terminal_id, err);
+            None
+        }
+    };
+    let interactive = pty.is_some();
     let app_wait = app_handle.clone();
     let state_arc = state.processes.clone();
     let key_wait = key.clone();
     let (kill_tx, kill_rx) = oneshot::channel::<()>();
-    let handle = tokio::spawn(async move {
-        let _cleanup = temp_cleanup;
-        let status = tokio::select! {
-            status = child.wait() => status.ok(),
-            _ = kill_rx => {
-                kill_process_tree(child_id);
-                let _ = child.kill().await;
-                child.wait().await.ok()
+    let mut flusher = tokio::spawn(emit_output(
+        app_handle.clone(),
+        project_id.clone(),
+        terminal_id.clone(),
+        chunk_rx,
+    ));
+    let (handle, control) = if let Some(PtyProcess {
+        mut child,
+        reader,
+        control,
+    }) = pty
+    {
+        pump_pty(reader, chunk_tx);
+        let child_id = child.process_id();
+        let mut killer = child.clone_killer();
+        let control_wait = control.clone();
+        let handle = tokio::spawn(async move {
+            let _cleanup = temp_cleanup;
+            let mut wait = task::spawn_blocking(move || child.wait().ok());
+            let status = tokio::select! {
+                status = &mut wait => status.ok().flatten(),
+                _ = kill_rx => {
+                    kill_process_tree(child_id);
+                    let _ = killer.kill();
+                    wait.await.ok().flatten()
+                }
+            };
+            // Closing the terminal lets the last output be read, and ends it if children still hold it.
+            control_wait.close();
+            if tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, &mut flusher)
+                .await
+                .is_err()
+            {
+                flusher.abort();
             }
-        };
-        // Let remaining output arrive first. A leftover child process can hold the pipes open.
-        if tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, &mut flusher)
-            .await
-            .is_err()
-        {
-            stdout_reader.abort();
-            stderr_reader.abort();
-            flusher.abort();
-        }
-        state_arc.lock().await.remove(&key_wait);
-        let _ = app_wait.emit(
-            "terminal-finished",
-            TerminalFinished {
-                project_id,
-                terminal_id,
-                code: status.and_then(|s| s.code()),
-            },
-        );
-    });
+            state_arc.lock().await.remove(&key_wait);
+            let code = status.and_then(|s| s.signal().is_none().then(|| s.exit_code() as i32));
+            let _ = app_wait.emit(
+                "terminal-finished",
+                TerminalFinished {
+                    project_id,
+                    terminal_id,
+                    code,
+                },
+            );
+        });
+        (handle, Some(control))
+    } else {
+        let std_cmd = create_command(&executable);
+        let mut cmd = AsyncCommand::from(std_cmd);
+        cmd.args(&pwsh_args)
+            // Nothing can answer a prompt without a terminal, so fail instead of waiting forever.
+            .arg("-NonInteractive")
+            .current_dir(&working_dir)
+            .kill_on_drop(true)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn script: {}", e))?;
+        let child_id = child.id();
+        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+        let stdout_reader = tokio::spawn(pump_piped(stdout, false, chunk_tx.clone()));
+        let stderr_reader = tokio::spawn(pump_piped(stderr, true, chunk_tx));
+        let handle = tokio::spawn(async move {
+            let _cleanup = temp_cleanup;
+            let status = tokio::select! {
+                status = child.wait() => status.ok(),
+                _ = kill_rx => {
+                    kill_process_tree(child_id);
+                    let _ = child.kill().await;
+                    child.wait().await.ok()
+                }
+            };
+            // Let remaining output arrive first. A leftover child process can hold the pipes open.
+            if tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, &mut flusher)
+                .await
+                .is_err()
+            {
+                stdout_reader.abort();
+                stderr_reader.abort();
+                flusher.abort();
+            }
+            state_arc.lock().await.remove(&key_wait);
+            let _ = app_wait.emit(
+                "terminal-finished",
+                TerminalFinished {
+                    project_id,
+                    terminal_id,
+                    code: status.and_then(|s| s.code()),
+                },
+            );
+        });
+        (handle, None)
+    };
     processes.insert(
         key,
         RunningScript {
             kill: Some(kill_tx),
             handle,
+            pty: control,
         },
     );
-    Ok("Script started".into())
+    Ok(ScriptStarted {
+        message: "Script started".into(),
+        interactive,
+    })
+}
+
+async fn running_pty(
+    state: &State<'_, TerminalManager>,
+    project_state: &State<'_, CurrentProject>,
+    terminal_id: &str,
+) -> Result<Arc<PtyControl>, String> {
+    let key = script_key(&current_project_id(project_state)?, terminal_id);
+    let processes = state.processes.lock().await;
+    let script = processes
+        .get(&key)
+        .ok_or("No running process found for this terminal")?;
+    script
+        .pty
+        .clone()
+        .ok_or_else(|| "This script is not running in a terminal, so it cannot take input.".into())
+}
+
+/// Sends typed input, including control keys such as Ctrl+C, to a running script.
+#[tauri::command]
+pub(crate) async fn write_terminal_input(
+    terminal_id: String,
+    data: String,
+    state: State<'_, TerminalManager>,
+    project_state: State<'_, CurrentProject>,
+) -> Result<(), String> {
+    let control = running_pty(&state, &project_state, &terminal_id).await?;
+    task::spawn_blocking(move || {
+        let mut writer = control.writer.lock().map_err(|e| e.to_string())?;
+        let writer = writer.as_mut().ok_or("The script has finished.")?;
+        writer
+            .write_all(data.as_bytes())
+            .and_then(|_| writer.flush())
+            .map_err(|e| format!("Failed to send input: {}", e))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Tells a running script the terminal's new size, so its output wraps and redraws to fit.
+#[tauri::command]
+pub(crate) async fn resize_terminal(
+    terminal_id: String,
+    cols: u16,
+    rows: u16,
+    state: State<'_, TerminalManager>,
+    project_state: State<'_, CurrentProject>,
+) -> Result<(), String> {
+    if cols == 0 || rows == 0 {
+        return Ok(());
+    }
+    let control = running_pty(&state, &project_state, &terminal_id).await?;
+    let master = control.master.lock().map_err(|e| e.to_string())?;
+    if let Some(master) = master.as_ref() {
+        master
+            .resize(pty_size(Some(cols), Some(rows)))
+            .map_err(|e| format!("Failed to resize the terminal: {}", e))?;
+    }
+    Ok(())
 }
 
 /// A script's own children, such as a dev server, would otherwise keep running after it stops.
@@ -647,16 +937,235 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn output_keeps_flowing_after_invalid_utf8() {
+    async fn piped_output_keeps_flowing_after_invalid_utf8() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let input: &[u8] = b"first\r\nbad \xFF byte\nlast";
-        pump_lines(input, true, tx).await;
-        let mut lines = Vec::new();
-        while let Some(line) = rx.recv().await {
-            assert!(line.is_error);
-            lines.push(line.content);
+        pump_piped(input, false, tx).await;
+        let mut text = String::new();
+        while let Some(chunk) = rx.recv().await {
+            text.push_str(&String::from_utf8(chunk).unwrap());
         }
-        assert_eq!(lines, ["first", "bad \u{FFFD} byte", "last"]);
+        assert_eq!(text, "first\r\nbad \u{FFFD} byte\r\nlast\r\n");
+    }
+
+    #[tokio::test]
+    async fn piped_error_lines_are_colored_red() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        pump_piped(&b"oops\n"[..], true, tx).await;
+        let chunk = String::from_utf8(rx.recv().await.unwrap()).unwrap();
+        assert_eq!(chunk, "\x1b[31moops\x1b[0m\r\n");
+    }
+
+    #[test]
+    fn a_character_split_between_chunks_is_kept_whole() {
+        let mut carry = Vec::new();
+        let bytes = "a✓b".as_bytes();
+        // ✓ is three bytes, split after its first.
+        assert_eq!(decode_chunk(&mut carry, &bytes[..2]), "a");
+        assert_eq!(decode_chunk(&mut carry, &bytes[2..]), "✓b");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn invalid_bytes_become_replacement_characters_without_stopping_output() {
+        let mut carry = Vec::new();
+        assert_eq!(
+            decode_chunk(&mut carry, b"x\xFFy\xFE"),
+            "x\u{FFFD}y\u{FFFD}"
+        );
+        assert!(carry.is_empty());
+    }
+
+    #[tokio::test]
+    async fn output_is_batched_and_an_unfinished_character_is_flushed_at_the_end() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(b"one ".to_vec()).unwrap();
+        tx.send(b"two".to_vec()).unwrap();
+        tx.send(vec![0xE2, 0x9C]).unwrap();
+        drop(tx);
+        let emitted = std::sync::Mutex::new(Vec::new());
+        batch_output(rx, |text| emitted.lock().unwrap().push(text)).await;
+        assert_eq!(emitted.into_inner().unwrap(), ["one two", "\u{FFFD}"]);
+    }
+
+    #[test]
+    fn terminal_size_falls_back_to_a_default() {
+        let size = pty_size(None, Some(0));
+        assert_eq!((size.cols, size.rows), (DEFAULT_COLUMNS, DEFAULT_ROWS));
+        let size = pty_size(Some(200), Some(50));
+        assert_eq!((size.cols, size.rows), (200, 50));
+    }
+
+    /// Runs a shell command in a pseudo-terminal and collects everything it writes.
+    #[cfg(unix)]
+    async fn run_in_pty(command: &str, input: Option<&str>) -> (String, Option<u32>) {
+        let dir = tempfile::tempdir().unwrap();
+        let process = spawn_in_pty(
+            "sh",
+            &["-c".to_string(), command.to_string()],
+            dir.path(),
+            pty_size(Some(100), Some(20)),
+        )
+        .unwrap();
+        let PtyProcess {
+            mut child,
+            reader,
+            control,
+        } = process;
+        let (tx, rx) = mpsc::unbounded_channel();
+        pump_pty(reader, tx);
+        if let Some(input) = input {
+            let mut writer = control.writer.lock().unwrap();
+            writer
+                .as_mut()
+                .unwrap()
+                .write_all(input.as_bytes())
+                .unwrap();
+        }
+        let status = task::spawn_blocking(move || child.wait().ok())
+            .await
+            .unwrap();
+        control.close();
+        let collected = std::sync::Mutex::new(String::new());
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            batch_output(rx, |text| collected.lock().unwrap().push_str(&text)),
+        )
+        .await;
+        (
+            collected.into_inner().unwrap(),
+            status.map(|s| s.exit_code()),
+        )
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_pty_script_sees_a_terminal_and_its_colors_arrive_unchanged() {
+        let (output, code) = run_in_pty(
+            "if [ -t 1 ]; then echo tty; fi; echo \"$TERM\"; printf '\\033[32mgreen\\033[0m\\r\\033[1A'",
+            None,
+        )
+        .await;
+        assert!(output.contains("tty"), "{output:?}");
+        assert!(output.contains("xterm-256color"), "{output:?}");
+        assert!(
+            output.contains("\x1b[32mgreen\x1b[0m\r\x1b[1A"),
+            "{output:?}"
+        );
+        assert_eq!(code, Some(0));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_pty_script_reads_typed_input_and_reports_its_exit_code() {
+        let (output, code) =
+            run_in_pty("read answer; echo \"got $answer\"; exit 3", Some("yes\r")).await;
+        assert!(output.contains("got yes"), "{output:?}");
+        assert_eq!(code, Some(3));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_pty_script_is_told_its_size_and_when_it_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let process = spawn_in_pty(
+            "sh",
+            &["-c".to_string(), "stty size; read _; stty size".to_string()],
+            dir.path(),
+            pty_size(Some(90), Some(25)),
+        )
+        .unwrap();
+        let PtyProcess {
+            mut child,
+            reader,
+            control,
+        } = process;
+        let (tx, rx) = mpsc::unbounded_channel();
+        pump_pty(reader, tx);
+        sleep(Duration::from_millis(200)).await;
+        control
+            .master
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .resize(pty_size(Some(150), Some(40)))
+            .unwrap();
+        control
+            .writer
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .write_all(b"\r")
+            .unwrap();
+        task::spawn_blocking(move || child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        control.close();
+        let collected = std::sync::Mutex::new(String::new());
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            batch_output(rx, |text| collected.lock().unwrap().push_str(&text)),
+        )
+        .await;
+        let output = collected.into_inner().unwrap();
+        assert!(output.contains("25 90"), "{output:?}");
+        assert!(output.contains("40 150"), "{output:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stopping_a_pty_script_also_stops_its_children() {
+        let is_alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 };
+        let dir = tempfile::tempdir().unwrap();
+        let process = spawn_in_pty(
+            "sh",
+            &[
+                "-c".to_string(),
+                "sleep 60 & echo \"child=$!\"; wait".to_string(),
+            ],
+            dir.path(),
+            pty_size(None, None),
+        )
+        .unwrap();
+        let PtyProcess {
+            mut child,
+            reader,
+            control,
+        } = process;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        pump_pty(reader, tx);
+        let mut seen = String::new();
+        let grandchild: i32 = loop {
+            let chunk = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            seen.push_str(&String::from_utf8_lossy(&chunk));
+            if let Some(rest) = seen.split("child=").nth(1) {
+                if let Some(pid) = rest.split_whitespace().next() {
+                    if rest.contains('\n') {
+                        break pid.parse().unwrap();
+                    }
+                }
+            }
+        };
+        assert!(is_alive(grandchild));
+        kill_process_tree(child.process_id());
+        task::spawn_blocking(move || child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        control.close();
+        for _ in 0..100 {
+            if !is_alive(grandchild) {
+                return;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        panic!("The script's child process is still running");
     }
 
     #[test]
@@ -730,6 +1239,7 @@ mod tests {
             RunningScript {
                 kill: Some(kill_tx),
                 handle,
+                pty: None,
             },
         );
         shutdown(processes.clone()).await;

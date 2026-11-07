@@ -4,7 +4,7 @@
         linkCss: false,
         watchVisibility: false,
         isInput: false,
-        preload: 'app:script-runner app:console-powershell dropdown toggle-icon input-message dialogs',
+        preload: 'app:script-runner app:terminal-view dropdown toggle-icon input-message dialogs',
         constructor() {
             const t = this;
             t.icon = t.template.querySelector('webui-icon');
@@ -69,8 +69,8 @@
         <webui-toggle-icon id="term-filter-toggle" data-bind="app-terminals-all-scripts" label="All" title="Show All Scripts" theme-on="primary"></webui-toggle-icon>
     </webui-grid>
     <webui-flex gap="0.5rem" align="center" wrap="wrap">
-        <webui-button id="btn-kill" theme="warning" label="Kill"></webui-button>
-        <webui-button id="btn-kill-all" theme="danger" label="Kill All"></webui-button>
+        <webui-button id="btn-kill" theme="warning" label="Stop" title="Stop the script the way Ctrl+C does, and force it to end if it is still running after a few seconds"></webui-button>
+        <webui-button id="btn-kill-all" theme="danger" label="Kill All" title="End every running script now"></webui-button>
         <webui-button id="btn-remove-script" theme="secondary" label="Remove" title="Remove this finished page script from the list"></webui-button>
         <webui-button id="btn-remove-finished" theme="secondary" label="Remove Finished Page Scripts"></webui-button>
         <webui-button id="btn-clear" theme="secondary" label="Clear Output" style="margin-left: auto;"></webui-button>
@@ -79,9 +79,9 @@
         <label style="font-weight: bold; margin-bottom: 0.25rem;">Script Content:</label>
         <app-script-runner id="term-runner" style="height: 100%; min-height: 120px;"></app-script-runner>
     </webui-flex>
-    <webui-flex column style="min-height: 40vh;">
-        <label style="font-weight: bold; margin-bottom: 0.25rem;">Console Output:</label>
-        <app-console-powershell id="term-console"></app-console-powershell>
+    <webui-flex column style="min-height: 40vh; flex-grow: 1;">
+        <label style="font-weight: bold; margin-bottom: 0.25rem;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal:</label>
+        <app-terminal-view id="term-console" style="flex-grow: 1;"></app-terminal-view>
     </webui-flex>
 </div>
 <div id="term-install-wrapper" style="display:none; flex-direction:column; gap:var(--padding); align-items:center; text-align:center; padding: 2rem;">
@@ -160,12 +160,7 @@
                 });
                 t._btnKill.addEventListener('click', async () => {
                     let state = webui.proxy.terminalHelpers.getState();
-                    const current = state.terminals[state.activeId];
-                    if (!current || current.status !== 'Running') return;
-                    // The finished event updates the status and starts the next queued script.
-                    await webui.proxy.terminal.kill(current.id).catch(() => {
-                        webui.proxy.terminalHelpers._scriptFinished(current.id);
-                    });
+                    await webui.proxy.terminalHelpers.stopScript(state.activeId);
                 });
                 btnKillAll.addEventListener('click', async () => {
                     // Clear the queue first, so finishing scripts do not start the next one.
@@ -178,22 +173,12 @@
                     webui.setData('app-terminal-refresh', Date.now());
                 });
                 t.switchTerminal(initState.activeId);
-                if (!t._streamAttached) {
-                    t._streamAttached = true;
-                    document.addEventListener('term-lines-out', (ev) => {
-                        const data = ev.detail;
-                        let state = webui.proxy.terminalHelpers.getState();
-                        if (data.projectId === webui.projectData?.id && state.activeId === data.terminalId && t._activeConsole.isConnected && t._activeConsole.appendLines) {
-                            t._activeConsole.appendLines(data.lines);
-                        }
-                    });
-                }
             }, 0);
             return container;
         },
         async switchTerminal(id) {
             const t = this;
-            await webui.wait(() => t._runner && typeof t._runner.setScript === 'function' && typeof t._activeConsole?.appendLines === 'function');
+            await webui.wait(() => t._runner && typeof t._runner.setScript === 'function' && typeof t._activeConsole?.attach === 'function');
             let state = webui.proxy.terminalHelpers.getState();
             state.activeId = id;
             if (!state.terminals[id]) {
@@ -201,7 +186,7 @@
                 if (id !== 'live') {
                     scriptContent = await webui.proxy.getProjectFile(id).catch(() => '') || '';
                 }
-                state.terminals[id] = { id: id, name: id, status: 'Ready', script: scriptContent, output: [], isLive: id === 'live' };
+                state.terminals[id] = webui.proxy.terminalHelpers.newTerminal(id, { script: scriptContent });
             }
             const current = state.terminals[id];
             t.renderConsole();
@@ -248,16 +233,11 @@
                 this._btnRemoveFinished.style.display = hasFinished ? '' : 'none';
             }
         },
-        renderConsole() {
-            if (typeof this._activeConsole?.clear !== 'function') return;
-            this._activeConsole.clear();
+        /** Shows the active terminal. Its output is only replayed when it changes, or when `force` is set. */
+        renderConsole(force) {
+            if (typeof this._activeConsole?.attach !== 'function') return;
             const state = webui.proxy.terminalHelpers.getState();
-            const current = state.terminals[state.activeId];
-            if (!current || !current.output.length) {
-                this._activeConsole.showPlaceholder();
-                return;
-            }
-            this._activeConsole.appendLines(current.output.map(entry => ({ content: entry.text, isError: entry.isError })));
+            this._activeConsole.attach(state.activeId, !!force);
         },
         onTerminalRefresh() {
             this.refreshDropdown();
@@ -268,7 +248,7 @@
             if (!data) return;
             const state = webui.proxy.terminalHelpers.getState();
             if (state.activeId === data.terminalId) {
-                this.renderConsole();
+                this.renderConsole(true);
             }
         },
         shadowTemplate: `

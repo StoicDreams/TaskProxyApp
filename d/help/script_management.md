@@ -14,7 +14,9 @@
     <webui-content slot="content" nodetach>
         <webui-page-segment>
         - **Accessing Terminals**: Click the pager icon (Terminal Manager) in the top-right header to view live and historical terminal outputs.
-        - **Process Control**: Select a running script from the dropdown to view its live output. You can stop a runaway script by clicking **Kill**, or stop all running scripts simultaneously with **Kill All**.
+        - **Process Control**: Select a running script from the dropdown to view its live output. Click **Stop** to stop it the way Ctrl+C does in a terminal. If it is still running a few seconds later, it is forced to end. **Kill All** ends every running script straight away.
+        - **A Real Terminal**: Scripts run in a terminal, so colors, progress bars, and redrawn output look the way they do in your own terminal.
+        - **Answering Prompts**: When a script asks a question, such as `Read-Host` or a "Continue? [Y/N]" prompt, click the terminal and type your answer. Ctrl+C copies selected text, and otherwise stops the script.
         - **Queue Management**: Scripts that are executed while another terminal is already running will be automatically queued and executed sequentially.
         - **Filtering**: Use the **Page** and **All** toggles to filter the terminal dropdown list between scripts triggered from the current page vs. all historical scripts.
         - **PowerShell Requirement**: Task Proxy requires PowerShell to execute scripts. If PowerShell is not detected, the Terminal Manager will prompt you with automatic or manual installation instructions.

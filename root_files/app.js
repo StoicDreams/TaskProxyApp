@@ -7,7 +7,10 @@
     const projectRootSetVars = []
     const AsyncFunction = (async () => { }).constructor;
     const patKeys = ['git_pat', 'github_pat'];
-    const maxTerminalLines = 5000;
+    // Output kept per terminal, by characters, so switching terminals can replay it.
+    const maxTerminalOutput = 2 * 1024 * 1024;
+    // How long Stop waits after sending Ctrl+C before it forces the script to end.
+    const stopGraceMs = 3000;
     const terminalStates = new Map();
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
@@ -197,10 +200,13 @@
             }
         }
         terminal = {
-            start: (id, scriptContent, args, inSeparateWindow) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow }),
+            start: (id, scriptContent, args, inSeparateWindow, size) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow, cols: size?.cols ?? null, rows: size?.rows ?? null }),
             kill: (id) => tauri.core.invoke('kill_script', { terminalId: id }),
             killAll: () => tauri.core.invoke('kill_all_scripts', {}),
-            onOutput: (callback) => tauri.event.listen('terminal-output', callback),
+            /** Typed input, including control keys such as Ctrl+C, for a script running in a terminal. */
+            write: (id, data) => tauri.core.invoke('write_terminal_input', { terminalId: id, data }),
+            resize: (id, cols, rows) => tauri.core.invoke('resize_terminal', { terminalId: id, cols, rows }),
+            onData: (callback) => tauri.event.listen('terminal-data', callback),
             onFinished: (callback) => tauri.event.listen('terminal-finished', callback),
             getPowerShellStatus: (errHandler) => tauri.core.invoke('get_powershell_status', {}).catch(errHandler ?? defaultErrHandler),
             autoInstallPowerShell: (errHandler) => tauri.core.invoke('auto_install_powershell', {}).catch(errHandler ?? defaultErrHandler)
@@ -392,11 +398,55 @@
                         allScripts: [],
                         queue: [],
                         terminals: {
-                            'live': { id: 'live', name: 'Live Command', status: 'Ready', script: '', output: [], isLive: true }
+                            'live': this.newTerminal('live', { name: 'Live Command' })
                         }
                     });
                 }
                 return terminalStates.get(id);
+            },
+            /** Output is kept as the text the script wrote, colors and cursor movement included. */
+            newTerminal(id, fields) {
+                return { id: id, name: id, status: 'Ready', script: '', output: [], outputSize: 0, interactive: false, isLive: id === 'live', ...fields };
+            },
+            /** The size of the terminal view, so scripts start at the width they will be shown at. */
+            viewSize: null,
+            setViewSize(size) {
+                if (size && size.cols > 0 && size.rows > 0) this.viewSize = { cols: size.cols, rows: size.rows };
+            },
+            appendOutput(term, data) {
+                term.output.push(data);
+                term.outputSize += data.length;
+                if (term.outputSize <= maxTerminalOutput) return;
+                while (term.output.length > 1 && term.outputSize - term.output[0].length > maxTerminalOutput) {
+                    term.outputSize -= term.output.shift().length;
+                }
+                // Start the kept output on a new line, so a replay never begins inside a color code.
+                const first = term.output[0];
+                const cut = Math.max(0, first.length - (maxTerminalOutput - (term.outputSize - first.length)));
+                const lineStart = first.indexOf('\n', cut);
+                const trimmed = lineStart === -1 ? '' : first.substring(lineStart + 1);
+                term.outputSize -= first.length - trimmed.length;
+                term.output[0] = trimmed;
+            },
+            /**
+             * Asks a running script to stop the way Ctrl+C does in a terminal, and forces it to end if it is
+             * still running after a few seconds. Scripts without a terminal are ended straight away.
+             */
+            async stopScript(id) {
+                const state = this.getState();
+                const term = state.terminals[id];
+                if (!term || term.status !== 'Running') return;
+                const forceStop = () => webui.proxy.terminal.kill(id).catch(() => {
+                    // The finished event updates the status and starts the next queued script.
+                    this._scriptFinished(id);
+                });
+                if (!term.interactive) return forceStop();
+                const sent = await webui.proxy.terminal.write(id, '\x03').then(() => true, () => false);
+                if (!sent) return forceStop();
+                for (let waited = 0; waited < stopGraceMs && term.status === 'Running'; waited += 100) {
+                    await webui.wait(100);
+                }
+                if (term.status === 'Running') return forceStop();
             },
             /**
              * `displayScript` is what the Terminal Manager shows. Page scripts pass a copy with
@@ -419,10 +469,11 @@
             async _executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript) {
                 let state = this.getState();
                 if (!state.terminals[id]) {
-                    state.terminals[id] = { id: id, name: id, status: 'Ready', script: '', args: args, output: [], isLive: id === 'live', isPageScript: !!isPageScript };
+                    state.terminals[id] = this.newTerminal(id, { args: args, isPageScript: !!isPageScript });
                 } else {
                     state.terminals[id].isPageScript = !!isPageScript;
                 }
+                state.terminals[id].interactive = false;
                 state.terminals[id].status = 'Running';
                 state.terminals[id].script = displayScript ?? scriptContent;
                 if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
@@ -431,7 +482,9 @@
                 this.clearOutput(id);
                 webui.setData('app-terminal-refresh', Date.now());
                 try {
-                    await webui.proxy.terminal.start(id, scriptContent, args, inSeparateWindow);
+                    const started = await webui.proxy.terminal.start(id, scriptContent, args, inSeparateWindow, this.viewSize);
+                    state.terminals[id].interactive = !!started?.interactive;
+                    webui.setData('app-terminal-refresh', Date.now());
                     if (inSeparateWindow) {
                         this._scriptFinished(id);
                     }
@@ -478,15 +531,12 @@
             ensureListeners() {
                 if (this._listenersAttached || !webui.proxy?.terminal) return;
                 this._listenersAttached = true;
-                webui.proxy.terminal.onOutput((event) => {
+                webui.proxy.terminal.onData((event) => {
                     const data = event.payload;
                     const term = this.getState(data.projectId).terminals[data.terminalId];
-                    if (!term) return;
-                    data.lines.forEach(line => term.output.push({ text: line.content, isError: line.isError }));
-                    if (term.output.length > maxTerminalLines) {
-                        term.output.splice(0, term.output.length - maxTerminalLines);
-                    }
-                    document.dispatchEvent(new CustomEvent('term-lines-out', { detail: data }));
+                    if (!term || typeof data.data !== 'string') return;
+                    this.appendOutput(term, data.data);
+                    document.dispatchEvent(new CustomEvent('term-data', { detail: data }));
                 });
                 webui.proxy.terminal.onFinished((event) => {
                     const data = event.payload;
@@ -520,6 +570,7 @@
                 let state = this.getState();
                 if (state.terminals[id]) {
                     state.terminals[id].output = [];
+                    state.terminals[id].outputSize = 0;
                     webui.setData('app-terminal-cleared', { terminalId: id, tick: Date.now() });
                 }
             }

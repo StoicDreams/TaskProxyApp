@@ -11,6 +11,7 @@
  * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
  * - newInstall: leave out the saved settings an existing install has.
+ * - interactive: whether scripts start in a terminal that takes input. Defaults to true.
  *
  * Other projects in `projects` start with empty data. Saved and synced project data is kept by path,
  * as the backend does, so switching projects and back returns what was saved.
@@ -88,7 +89,9 @@ function setup(state) {
             },
             search_project_files: () => [],
             get_scripts: () => state.scripts || [],
-            start_script: () => 'Script started',
+            start_script: () => ({ message: 'Script started', interactive: state.interactive !== false }),
+            write_terminal_input: () => null,
+            resize_terminal: () => null,
             kill_script: () => 'Process killed',
             kill_all_scripts: () => 'All processes killed',
             get_powershell_status: () => state.powershell || { installed: true, executable: 'pwsh', canAutoInstall: false, installCommand: '', instructions: '' },

@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, emit } from '../support/app.mjs';
+import { test, expect, openApp, calls, emit, onCommand } from '../support/app.mjs';
 
 const open = async (page, state = {}) => {
     await openApp(page, state);
@@ -7,9 +7,13 @@ const open = async (page, state = {}) => {
 const ready = async page => {
     await page.locator('#term-content-wrapper').waitFor();
     await page.locator('#term-console').waitFor();
-    await page.waitForFunction(() => document.querySelector('#term-runner')?.setScript && document.querySelector('#term-console')?.appendLines);
+    await page.waitForFunction(() => document.querySelector('#term-runner')?.setScript && document.querySelector('#term-console')?._term);
     await page.waitForTimeout(100);
 };
+// What the terminal shows, read from its buffer rather than the screen, so it includes scrolled out lines.
+const screen = page => page.evaluate(() => document.querySelector('#term-console').getScreenText());
+const output = (page, terminalId, data) => emit(page, 'terminal-data', { projectId: 'project-id', terminalId, data });
+const placeholder = page => page.locator('#term-console .placeholder');
 const start = async (page, id) => {
     await page.evaluate(id => webui.proxy.terminalHelpers.runScript(id, 'body', [], false, false), id);
     await page.evaluate(id => document.querySelector('app-terminals').switchTerminal(id), id);
@@ -28,26 +32,53 @@ test('output for the shown terminal appears live', async ({ page }) => {
     await open(page);
     await ready(page);
     await start(page, 'a.ps1');
-    await emit(page, 'terminal-output', { projectId: 'project-id', terminalId: 'a.ps1', lines: [{ content: 'LIVE OUTPUT', isError: false }] });
-    await expect(page.locator('#term-console .console-container')).toContainText('LIVE OUTPUT');
+    await expect(placeholder(page)).toBeVisible();
+    await output(page, 'a.ps1', 'LIVE OUTPUT\r\n');
+    await expect.poll(() => screen(page)).toContain('LIVE OUTPUT');
+    await expect(placeholder(page)).toBeHidden();
 });
 test('output for another terminal is kept for later', async ({ page }) => {
     await open(page);
     await ready(page);
     await start(page, 'a.ps1');
     await page.evaluate(() => webui.proxy.terminalHelpers.runScript('b.ps1', 'body', [], false, false));
-    await emit(page, 'terminal-output', { projectId: 'project-id', terminalId: 'b.ps1', lines: [{ content: 'FOR B', isError: false }] });
-    await expect(page.locator('#term-console .console-container')).not.toContainText('FOR B');
+    await output(page, 'b.ps1', 'FOR B\r\n');
+    await page.waitForTimeout(100);
+    expect(await screen(page)).not.toContain('FOR B');
     await page.evaluate(() => document.querySelector('app-terminals').switchTerminal('b.ps1'));
-    await expect(page.locator('#term-console .console-container')).toContainText('FOR B');
+    await expect.poll(() => screen(page)).toContain('FOR B');
 });
-test('kill stops the running script', async ({ page }) => {
+test('stop sends Ctrl+C, and a script that ends from it is not forced', async ({ page }) => {
+    await open(page);
+    await ready(page);
+    await onCommand(page, 'write_terminal_input', args => {
+        if (args.data === '\x03') setTimeout(() => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: args.terminalId, code: 1 }), 50);
+        return null;
+    });
+    await start(page, 'a.ps1');
+    await page.locator('#btn-kill').click();
+    await expect.poll(async () => (await calls(page, 'write_terminal_input')).map(call => call.data)).toEqual(['\x03']);
+    await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].status)).toBe('Finished');
+    await page.waitForTimeout(3200);
+    expect(await calls(page, 'kill_script')).toEqual([]);
+});
+test('stop forces a script that ignores Ctrl+C to end after a few seconds', async ({ page }) => {
     await open(page);
     await ready(page);
     await start(page, 'a.ps1');
     await page.locator('#btn-kill').click();
-    await expect.poll(async () => (await calls(page, 'kill_script')).length).toBe(1);
+    await expect.poll(async () => (await calls(page, 'write_terminal_input')).length).toBe(1);
+    expect(await calls(page, 'kill_script')).toEqual([]);
+    await expect.poll(async () => (await calls(page, 'kill_script')).length, { timeout: 6000 }).toBe(1);
     expect((await calls(page, 'kill_script'))[0]).toEqual({ terminalId: 'a.ps1' });
+});
+test('stop ends a script without a terminal straight away', async ({ page }) => {
+    await open(page, { interactive: false });
+    await ready(page);
+    await start(page, 'a.ps1');
+    await page.locator('#btn-kill').click();
+    await expect.poll(async () => (await calls(page, 'kill_script')).length).toBe(1);
+    expect(await calls(page, 'write_terminal_input')).toEqual([]);
 });
 test('kill all also clears the queue', async ({ page }) => {
     await open(page);
@@ -62,9 +93,11 @@ test('clear empties the console', async ({ page }) => {
     await open(page);
     await ready(page);
     await start(page, 'a.ps1');
-    await emit(page, 'terminal-output', { projectId: 'project-id', terminalId: 'a.ps1', lines: [{ content: 'GONE', isError: false }] });
+    await output(page, 'a.ps1', 'GONE\r\n');
+    await expect.poll(() => screen(page)).toContain('GONE');
     await page.locator('#btn-clear').click();
-    await expect(page.locator('#term-console .console-container')).toHaveText('No terminal output.');
+    await expect.poll(() => screen(page)).toBe('');
+    await expect(placeholder(page)).toBeVisible();
 });
 test('a status change during a dropdown refresh is not lost', async ({ page }) => {
     await open(page);

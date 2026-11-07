@@ -180,6 +180,8 @@ pub fn run() {
             services::script_controller::get_scripts,
             services::terminal_controller::start_script,
             services::terminal_controller::kill_script,
+            services::terminal_controller::write_terminal_input,
+            services::terminal_controller::resize_terminal,
             services::terminal_controller::kill_all_scripts,
             services::terminal_controller::get_powershell_status,
             services::terminal_controller::auto_install_powershell,
