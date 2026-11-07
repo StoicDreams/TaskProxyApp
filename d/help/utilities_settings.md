@@ -1,5 +1,3 @@
-##### Utilities & Settings Help
-
 <webui-tabs theme="info" transition-timing="200">
     <webui-button slot="tabs">App Updates</webui-button>
     <webui-content slot="content" nodetach>

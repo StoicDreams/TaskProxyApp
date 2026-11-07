@@ -2,4 +2,6 @@
 
 <app-git-manager></app-git-manager>
 
+<webui-page-help heading="Git Controller Help">
 <webui-content src="d/help/git_controller.md"></webui-content>
+</webui-page-help>

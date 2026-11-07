@@ -46,7 +46,7 @@ test('markup in a project name does not run', async ({ page }) => {
     const name = '"><img src=q onerror="window.__xss=1">';
     const el = await manager(page, { name, path: '/repo' });
     await el.locator('#btn-remove').click();
-    await page.locator('dialog').last().waitFor();
+    await page.locator('dialog[open]').last().waitFor();
     await page.waitForTimeout(200);
     expect(await page.evaluate(() => window.__xss)).toBeUndefined();
     await expect(page.locator('dialog img')).toHaveCount(0);

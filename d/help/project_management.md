@@ -1,5 +1,3 @@
-#### Project Management Help
-
 <webui-tabs theme="info" transition-timing="200">
     <webui-button slot="tabs">Adding Projects</webui-button>
     <webui-content slot="content" nodetach>

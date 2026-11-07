@@ -1,5 +1,3 @@
-## Script & Terminal Management Help
-
 <webui-tabs theme="info" transition-timing="200">
     <webui-button slot="tabs">Script Manager</webui-button>
     <webui-content slot="content" nodetach>

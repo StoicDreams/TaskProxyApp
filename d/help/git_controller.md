@@ -1,5 +1,3 @@
-## Git Controller Help
-
 <webui-tabs theme="info" transition-timing="200">
     <webui-button slot="tabs">Committing & Syncing</webui-button>
     <webui-content slot="content" nodetach>

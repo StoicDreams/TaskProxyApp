@@ -138,7 +138,8 @@ export async function mount(page, html) {
 
 /** A button in the open dialog. */
 export function dialogButton(page, text) {
-    return page.locator('dialog').last().getByText(text, { exact: true }).last();
+    // Only open dialogs, since a page's help bubble keeps its own closed dialog on the page.
+    return page.locator('dialog[open]').last().getByText(text, { exact: true }).last();
 }
 
 /** Every call the app made to a backend command, oldest first. Each is that call's arguments. */
