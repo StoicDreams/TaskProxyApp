@@ -67,7 +67,7 @@ To add a backend command:
 3. Add a wrapper on the `Tauri` class in `app.js`. Tauri maps camelCase JS args to snake_case Rust params.
 4. Regenerate `app.min.js`.
 
-Wrappers usually take an optional `errHandler` (default: `webui.alert`) and resolve to `undefined` on failure, so callers test the result rather than using `try/catch`. Git commands go through `invokeGit`, which matches the error text `Credentials Missing/Invalid` to prompt for a PAT and retry. Terminal output arrives through the `terminal-output` and `terminal-finished` events.
+Wrappers usually take an optional `errHandler` (default: `webui.alert`) and resolve to `undefined` on failure, so callers test the result rather than using `try/catch`. Git commands go through `invokeGit`, which matches the error text `Credentials Missing/Invalid` to prompt for a PAT and retry. Terminal output arrives through the `terminal-data` and `terminal-finished` events.
 
 ### Frontend: lazy-loaded components
 
@@ -100,7 +100,11 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 
 ### Scripts
 
-`terminal_controller.rs` runs PowerShell in a project's root and tracks tasks by terminal id. If the id is a relative path to an existing file, that file runs. Otherwise the content goes to a private temp file under `script-tmp/` in the app-local data dir, because page scripts can contain injected secrets. Queueing, status, and capped output are tracked per project in JS (`terminalHelpers` in `app.js`), deliberately outside `webui` data because `setData` clones and compares its whole value. Rust sends output in batches.
+`terminal_controller.rs` runs PowerShell in a project's root and tracks tasks by terminal id. If the id is a relative path to an existing file, that file runs. Otherwise the content goes to a private temp file under `script-tmp/` in the app-local data dir, because page scripts can contain injected secrets. Queueing, status, and capped output are tracked per project in JS (`terminalHelpers` in `app.js`), deliberately outside `webui` data because `setData` clones and compares its whole value.
+
+- **Scripts run in a pseudo-terminal** (`portable-pty`), so tools see a real terminal and use colors, progress redraws, and prompts. Rust sends the raw output as text in batches (`terminal-data`), carrying a character split between reads over to the next batch. `write_terminal_input` and `resize_terminal` only work for these scripts.
+- **If a pseudo-terminal cannot be opened, the script runs with piped output instead,** with `-NonInteractive` since nothing can answer a prompt, and error lines colored red. `start_script` returns `interactive: false` for these, and the UI stops them without sending Ctrl+C first.
+- **`wc/terminal-view.js` draws output with xterm.js,** bundled in `root_files/vendor/xterm/` so a CDN deploy cannot break it. Those files are published builds copied unchanged, so don't edit or re-minify them. Each terminal keeps its raw output (about 2 MB) in `terminalHelpers`, and the view replays it when switching terminals. The view ignores its own replies while replaying, since replayed output can ask the terminal questions, such as where the cursor is, whose answers would otherwise be typed into the running script.
 
 ### Git
 

@@ -1,12 +1,12 @@
 [
   {
     "name": "Folder",
-    "icon": "emoji-file_folder|shape:badge|backing|inverted|theme:success|bordered",
+    "icon": "badge_emoji-file_folder|backing|inverted|theme:success|bordered",
     "url": null,
     "children": [
       {
         "name": "Page",
-        "icon": "emoji-page_facing_up|theme:warning|backing|inverted|shape:badge|shade:duo",
+        "icon": "badge_emoji-page_facing_up|theme:warning|backing|inverted|shade:duo",
         "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
         "children": null
       }

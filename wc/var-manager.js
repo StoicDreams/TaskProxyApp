@@ -120,7 +120,7 @@
             const actionsFlex = webui.create('webui-flex', { gap: '0.5rem', align: 'center' });
             const createIconBtn = (iconName, title, theme, onClick) => {
                 let iconEl = webui.create('webui-icon', {
-                    icon: `${iconName}|backing|shape:circle|theme:${theme}`,
+                    icon: `circle_${iconName}|backing|theme:${theme}`,
                     title: title
                 });
                 iconEl.addEventListener('click', onClick);

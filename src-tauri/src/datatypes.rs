@@ -94,7 +94,7 @@ impl ProjectData {
 //         let url = format!("/{}", newid());
 //         ProjectNavItem {
 //             name: String::new(),
-//             icon: String::from("star|backing|theme:primary|shape:circle"),
+//             icon: String::from("circle_star|backing|theme:primary"),
 //             url: Some(url),
 //             children: None,
 //         }
@@ -102,7 +102,7 @@ impl ProjectData {
 //     pub fn group() -> Self {
 //         ProjectNavItem {
 //             name: String::new(),
-//             icon: String::from("star|backing|theme:primary|shape:circle"),
+//             icon: String::from("circle_star|backing|theme:primary"),
 //             url: None,
 //             children: Some(Vec::new()),
 //         }

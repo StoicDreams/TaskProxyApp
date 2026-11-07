@@ -1,7 +1,7 @@
 [
     {
         "name": "Home",
-        "icon": "home|theme:primary|shape:circle|backing",
+        "icon": "circle_home|theme:primary|backing",
         "url": "/"
     },
     {
@@ -10,7 +10,7 @@
         "children": [
             {
                 "name": "404 Not Found",
-                "icon": "compass|fill|bordered|backing|shape:circle",
+                "icon": "circle_compass|fill|bordered|backing",
                 "url": "/test"
             },
             {
