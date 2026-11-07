@@ -1005,8 +1005,8 @@ const webui = (() => {
          * @param {number} count - The total length of the output string.
          * @returns {string}
          */
-        displayLeadingZero(number, count = 1) {
-            let pad = 1 + count - `${number}`.length;
+        displayLeadingZero(number, count = 2) {
+            let pad = count - `${number}`.length;
             if (pad <= 0) return `${number}`;
             return `${"0".repeat(pad)}${number}`;
         }
@@ -2701,11 +2701,16 @@ const webui = (() => {
                     webui.setData(key, value);
                 }
             } else {
+                // A native button's value is empty unless set, which must not hide its data-value.
+                const elValue =
+                    el.localName === "button" && el.value === ""
+                        ? undefined
+                        : el.value;
                 let value = webui.getDefined(
                     typeof el.getValue === "function"
                         ? el.getValue()
                         : undefined,
-                    el.value,
+                    elValue,
                     el.dataset.value,
                 );
                 if (oldData !== value) {
@@ -3004,6 +3009,8 @@ const webui = (() => {
             return null;
         }
     }
+    // Elements whose data-trigger fires on click, with data-value, rather than holding a value.
+    const clickTriggers = new Set(["A", "BUTTON", "WEBUI-BUTTON"]);
     /** The first key in an element's data-bind or data-trigger. */
     function getBoundKey(node) {
         const bound = node.getAttribute("data-bind") || node.getAttribute("data-trigger") || "";
@@ -3033,6 +3040,11 @@ const webui = (() => {
                 setDataToEl(node, dataKey);
             });
         }
+        // An input that writes to data starts that data at its own value, so a filter such as a range's
+        // value="5" is in place before anything reads it, not only after the first change.
+        // A checkbox or radio has a value whether or not it is checked, so it is skipped.
+        const holdsValue = !def && !clickTriggers.has(node.nodeName) && !/^(checkbox|radio)$/i.test(node.getAttribute("type") || "");
+        const startValue = holdsValue ? node.getAttribute("value") : null;
         let trig = node.getAttribute("data-trigger");
         if (trig) {
             trig.split("|").forEach((tk) => {
@@ -3040,12 +3052,14 @@ const webui = (() => {
                 if (!map.triggers[triggerKey])
                     map.triggers[triggerKey] = new Set();
                 map.triggers[triggerKey].add(node);
+                if (startValue) webui.setDefault(triggerKey, startValue);
             });
         }
         let bind = node.getAttribute("data-bind");
         if (bind) {
             bind.split("|").forEach((bk) => {
                 let bindKey = bk.split(":")[0].trim();
+                if (startValue) webui.setDefault(bindKey, startValue);
                 addSubscriber(bindKey, node);
                 setDataToEl(node, bindKey);
                 if (!map.triggers[bindKey]) map.triggers[bindKey] = new Set();
@@ -3209,6 +3223,8 @@ const webui = (() => {
     }
     let loadPageWaits = 0;
     let loadPageWaiting = false;
+    // The first page has no earlier page to fade out, so it shows as soon as it is ready.
+    let isFirstPageLoad = true;
     let loadPageToken = 0;
     let loadPageAbort = null;
     async function loadPage() {
@@ -3267,7 +3283,13 @@ const webui = (() => {
         let fetchData = fetchRemoteData(contentPage, signal);
         // A superseded load returns before awaiting this, so its rejection would otherwise go unhandled.
         fetchData.catch(() => {});
-        appSettings.app.main.classList.add("transition");
+        const firstLoad = isFirstPageLoad;
+        isFirstPageLoad = false;
+        // Prerendered pages already show their text, so the first load swaps it in place rather than fading it out.
+        const hasPrerendered = firstLoad && !!appSettings.app.querySelector("[data-prerendered]");
+        if (!hasPrerendered) {
+            appSettings.app.main.classList.add("transition");
+        }
         webui.setData("page-path", page);
         let timerStart = Date.now();
         let title = location.pathname;
@@ -3284,7 +3306,8 @@ const webui = (() => {
             }
             let body = await contentResult.text();
             let elapsed = Date.now() - timerStart;
-            if (elapsed < 300) {
+            // Give the old page time to fade out.
+            if (!firstLoad && elapsed < 300) {
                 await transitionDelay(300 - elapsed);
             }
             if (isStale()) return;
@@ -3315,7 +3338,7 @@ const webui = (() => {
         } catch (ex) {
             if (isStale()) return;
             let elapsed = Date.now() - timerStart;
-            if (elapsed < 300) {
+            if (!firstLoad && elapsed < 300) {
                 await transitionDelay(300 - elapsed);
             }
             if (isStale()) return;
@@ -3345,7 +3368,18 @@ const webui = (() => {
             console.error("Failed loading page data", ex);
         }
         let elapsed = Date.now() - timerStart;
-        if (elapsed < 300) {
+        if (firstLoad) {
+            // Show the page once its components are ready, so they do not pop in one at a time, but never wait
+            // longer than the fade would have.
+            // Only the page content counts: the header, drawers, and footer load on their own.
+            const content = [...appSettings.app.children].filter((el) => !el.slot);
+            const waiting = content.flatMap((el) => [el, ...el.querySelectorAll(":not(:defined)")]).filter((el) => el.matches(":not(:defined)"));
+            const pending = [...new Set(waiting.map((el) => el.localName))]
+                .filter((name) => name.includes("-"))
+                .map((name) => customElements.whenDefined(name));
+            await Promise.race([Promise.all(pending), transitionDelay(300)]);
+            await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        } else if (elapsed < 300) {
             await transitionDelay(300 - elapsed);
         } else {
             await transitionDelay(100);
