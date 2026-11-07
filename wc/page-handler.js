@@ -363,7 +363,9 @@
         segments.forEach(seg => {
             webui.querySelectorAll('webui-code', seg).forEach(el => {
                 // Scripts are only collected from PowerShell blocks, so only those line up with them.
-                if (scriptLanguages.includes((el.getAttribute('lang') || '').toLowerCase())) {
+                // The markdown parser writes language, and wrote lang before Web UI changed it.
+                const language = el.getAttribute('language') || el.getAttribute('lang') || '';
+                if (scriptLanguages.includes(language.toLowerCase())) {
                     codes.push(el);
                 }
             });
