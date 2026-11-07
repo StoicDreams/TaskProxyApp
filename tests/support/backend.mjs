@@ -8,7 +8,7 @@
  * - data, variables, navigation, docs, currentPage: fields of the open project.
  * - appData, appVariables: saved global values and their definitions.
  * - scripts: what get_scripts returns.
- * - git: { repos, changes, branches, currentBranch, status, diffs }.
+ * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
  * - newInstall: leave out the saved settings an existing install has.
  *
@@ -24,7 +24,7 @@ function setup(state) {
     const project = state.project === null ? null : (state.project || { name: 'Repo', path: '/repo' });
     const files = { ...(state.files || {}) };
     const git = {
-        repos: [''], changes: [], branches: [{ name: 'main', isCurrent: true, updatedDate: '2026-01-01' }], currentBranch: 'main',
+        repos: [''], changes: [], lineStats: [], branches: [{ name: 'main', isCurrent: true, updatedDate: '2026-01-01' }], currentBranch: 'main',
         status: { hasUpstream: true, upstreamName: 'origin/main', ahead: 0, behind: 0, remoteUrl: 'https://example.com/repo.git' },
         diffs: {}, ...(state.git || {}),
     };
@@ -99,6 +99,7 @@ function setup(state) {
             install_update: () => 'App is up to date.',
             get_git_repos: () => git.repos,
             get_git_changes: () => git.changes,
+            get_git_change_stats: () => git.lineStats,
             get_git_file_diff: ({ file }) => git.diffs[file] || '',
             get_git_branches: () => ({ branches: git.branches, currentBranch: git.currentBranch }),
             get_git_remote_status: () => git.status,

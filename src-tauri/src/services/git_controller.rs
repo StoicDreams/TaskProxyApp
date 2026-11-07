@@ -417,6 +417,16 @@ pub(crate) struct GitRemoteStatus {
     pub remote_url: String,
 }
 
+/// Lines added and removed in one changed file, compared with the last commit.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitFileLineStats {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub binary: bool,
+}
+
 #[tauri::command]
 pub(crate) async fn git_push(
     repo: String,
@@ -773,6 +783,72 @@ fn collect_changes(repository: &Repository) -> Result<Vec<String>, String> {
         files.push(format!("{} {}", status_str, path_val));
     }
     Ok(files)
+}
+
+#[tauri::command]
+pub(crate) async fn get_git_change_stats(
+    repo: String,
+    state: State<'_, CurrentProject>,
+) -> Result<Vec<GitFileLineStats>, String> {
+    let git_path = get_repo_path(&state, &repo)?;
+    task::spawn_blocking(move || {
+        let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
+        change_line_stats(&repository)
+    })
+    .await
+    .map_err(|err| format!("{}", err))?
+}
+
+/// Line counts for every change a commit would take: staged, unstaged and untracked, compared with HEAD.
+/// Counts are per file, so the UI can total only the files it will commit.
+fn change_line_stats(repository: &Repository) -> Result<Vec<GitFileLineStats>, String> {
+    let head_tree = match repository.head() {
+        Ok(head) => Some(head.peel_to_tree().map_err(|e| e.to_string())?),
+        // A repository with no commits yet compares with nothing, so every file is added.
+        Err(_) => None,
+    };
+    let mut options = git2::DiffOptions::new();
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true);
+    let mut diff = repository
+        .diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut options))
+        .map_err(|e| e.to_string())?;
+    // Staged renames are listed under the new name, so count them as one change rather than a delete and an add.
+    let mut find = git2::DiffFindOptions::new();
+    find.renames(true);
+    diff.find_similar(Some(&mut find))
+        .map_err(|e| e.to_string())?;
+    let mut stats = Vec::new();
+    for index in 0..diff.deltas().len() {
+        let Some(delta) = diff.get_delta(index) else {
+            continue;
+        };
+        let path = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        // Binary is only known once the patch has read the contents.
+        let patch = git2::Patch::from_diff(&diff, index).map_err(|e| e.to_string())?;
+        let (additions, deletions, binary) = match patch {
+            Some(patch) if !patch.delta().flags().is_binary() => {
+                let (_context, additions, deletions) =
+                    patch.line_stats().map_err(|e| e.to_string())?;
+                (additions, deletions, false)
+            }
+            _ => (0, 0, true),
+        };
+        stats.push(GitFileLineStats {
+            path,
+            additions,
+            deletions,
+            binary,
+        });
+    }
+    Ok(stats)
 }
 
 #[tauri::command]
@@ -1902,5 +1978,106 @@ mod tests {
         let mut repos = find_git_repos(&root);
         repos.sort();
         assert_eq!(repos, ["app", "sub"]);
+    }
+
+    fn line_stats(repo: &Repository) -> Vec<(String, usize, usize, bool)> {
+        let mut stats: Vec<_> = change_line_stats(repo)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.path, s.additions, s.deletions, s.binary))
+            .collect();
+        stats.sort();
+        stats
+    }
+
+    #[test]
+    fn line_stats_count_modified_new_and_deleted_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "gone.txt", "x\ny\nz\n");
+        commit_all(&repo, "second");
+        write(&repo, "a.txt", "one changed\ntwo\n");
+        write(&repo, "new.txt", "1\n2\n3\n");
+        fs::remove_file(root_of(&repo).join("gone.txt")).unwrap();
+        assert_eq!(
+            line_stats(&repo),
+            [
+                ("a.txt".to_string(), 2, 1, false),
+                ("gone.txt".to_string(), 0, 3, false),
+                ("new.txt".to_string(), 3, 0, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn line_stats_combine_staged_and_unstaged_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "a.txt", "one\ntwo\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("a.txt")).unwrap();
+        index.write().unwrap();
+        write(&repo, "a.txt", "one\ntwo\nthree\n");
+        assert_eq!(line_stats(&repo), [("a.txt".to_string(), 2, 0, false)]);
+    }
+
+    #[test]
+    fn line_stats_include_files_in_new_folders_and_skip_ignored_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, ".gitignore", "skip.txt\n");
+        commit_all(&repo, "ignore");
+        fs::create_dir(root_of(&repo).join("folder")).unwrap();
+        write(&repo, "folder/inner.txt", "a\nb\n");
+        write(&repo, "skip.txt", "ignored\n");
+        assert_eq!(
+            line_stats(&repo),
+            [("folder/inner.txt".to_string(), 2, 0, false)]
+        );
+    }
+
+    #[test]
+    fn line_stats_mark_binary_files_without_counting_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        fs::write(
+            root_of(&repo).join("image.bin"),
+            [0u8, 159, 146, 150, 0, 1, 2],
+        )
+        .unwrap();
+        assert_eq!(line_stats(&repo), [("image.bin".to_string(), 0, 0, true)]);
+    }
+
+    #[test]
+    fn line_stats_work_before_the_first_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path().join("empty")).unwrap();
+        write(&repo, "first.txt", "a\nb\n");
+        assert_eq!(line_stats(&repo), [("first.txt".to_string(), 2, 0, false)]);
+    }
+
+    #[test]
+    fn line_stats_count_a_staged_rename_under_its_new_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "old.txt", "1\n2\n3\n4\n5\n");
+        commit_all(&repo, "second");
+        fs::rename(
+            root_of(&repo).join("old.txt"),
+            root_of(&repo).join("new.txt"),
+        )
+        .unwrap();
+        let mut index = repo.index().unwrap();
+        index.remove_path(Path::new("old.txt")).unwrap();
+        index.add_path(Path::new("new.txt")).unwrap();
+        index.write().unwrap();
+        assert_eq!(line_stats(&repo), [("new.txt".to_string(), 0, 0, false)]);
+    }
+
+    #[test]
+    fn no_changes_means_no_line_stats() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        assert!(line_stats(&repo).is_empty());
     }
 }

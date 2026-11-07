@@ -2,7 +2,7 @@ import { test, expect, openApp, calls, onCommand, dialogButton } from '../suppor
 
 const open = async (page, git = {}, state = {}) => {
     await openApp(page, { currentPage: '/git-controller', git: { changes: ['M  a.txt', '?? b.txt', ' D c.txt'], ...git }, ...state, files: { 'a.txt': 'one', 'b.txt': 'two', ...(state.files || {}) } }, '/git-controller');
-    await page.locator('app-git-manager .files webui-button').first().waitFor();
+    await page.locator('app-git-manager .files button.file').first().waitFor();
 };
 const manager = page => page.locator('app-git-manager');
 const commit = async (page, message = 'msg') => {
@@ -18,13 +18,14 @@ const openBranches = page => expect(async () => {
     await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Branches' }).click();
     await expect(manager(page).locator('webui-button.btn-switch').first()).toBeVisible({ timeout: 1000 });
 }).toPass({ timeout: 10000 });
-const include = (page, file) => manager(page).locator(`.files webui-button[title="${file}"]`).evaluateHandle(button => button.previousElementSibling);
+// Rows are found by data-path, because Web UI moves title into aria-label once the mouse is over it.
+const include = (page, file) => manager(page).locator(`.files .file-row[data-path="${file}"] select.include`);
 
 test('changes are listed with their type', async ({ page }) => {
     await open(page);
-    await expect(manager(page).locator('.files webui-button[title="a.txt"]')).toContainText('Modify');
-    await expect(manager(page).locator('.files webui-button[title="b.txt"]')).toContainText('Add');
-    await expect(manager(page).locator('.files webui-button[title="c.txt"]')).toContainText('Delete');
+    await expect(manager(page).locator('.files button.file[title="a.txt"]')).toContainText('Modify');
+    await expect(manager(page).locator('.files button.file[title="b.txt"]')).toContainText('Add');
+    await expect(manager(page).locator('.files button.file[title="c.txt"]')).toContainText('Delete');
 });
 test('commit sends the included files, and does not push unless asked', async ({ page }) => {
     await open(page);
@@ -55,7 +56,7 @@ test('a commit with nothing selected is refused', async ({ page }) => {
 });
 test('excluded files are left out of the commit', async ({ page }) => {
     await open(page);
-    await (await include(page, 'b.txt')).evaluate(dropdown => { dropdown.value = '0'; dropdown.dispatchEvent(new Event('change')); });
+    await include(page, 'b.txt').selectOption('0');
     await commit(page);
     await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
     expect((await calls(page, 'git_commit'))[0].files).toEqual(['a.txt', 'c.txt']);
@@ -68,7 +69,7 @@ test('files marked ignore stay out of later commits', async ({ page }) => {
 });
 test('marking a file ignored is stored with the project', async ({ page }) => {
     await open(page);
-    await (await include(page, 'a.txt')).evaluate(dropdown => { dropdown.value = '2'; dropdown.dispatchEvent(new Event('change')); });
+    await include(page, 'a.txt').selectOption('2');
     expect(await page.evaluate(() => webui.projectData.data._gitIgnoreFiles)).toEqual(['/a.txt']);
     await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data.data._gitIgnoreFiles).toEqual(['/a.txt']);
 });
@@ -95,11 +96,11 @@ test('markup in the remote url is shown as text, and a token in it is hidden', a
 });
 test('a file name containing an arrow is not treated as a rename', async ({ page }) => {
     await open(page, { changes: ['M  a -> b.txt'] }, { files: { 'a -> b.txt': 'x' } });
-    await expect(manager(page).locator('.files webui-button[title="a -> b.txt"]')).toHaveCount(1);
+    await expect(manager(page).locator('.files button.file[title="a -> b.txt"]')).toHaveCount(1);
 });
 test('a renamed file uses its new name', async ({ page }) => {
     await open(page, { changes: ['R  old.txt -> new.txt'] }, { files: { 'new.txt': 'x' } });
-    await expect(manager(page).locator('.files webui-button[title="new.txt"]')).toHaveCount(1);
+    await expect(manager(page).locator('.files button.file[title="new.txt"]')).toHaveCount(1);
 });
 test('a binary file does not interrupt with a popup', async ({ page }) => {
     await openApp(page, { project: { name: 'Repo', path: '/repo' } });
@@ -111,7 +112,7 @@ test('a binary file does not interrupt with a popup', async ({ page }) => {
         window.__backend.git.changes = ['M  logo.png'];
         webui.navigateTo('/git-controller');
     });
-    await page.locator('app-git-manager .files webui-button').first().waitFor();
+    await page.locator('app-git-manager .files button.file').first().waitFor();
     await expect(manager(page).locator('webui-alert').first()).toContainText('valid UTF-8');
     expect(await page.evaluate(() => window.__alerts)).toEqual([]);
 });
@@ -124,18 +125,18 @@ test('a slow diff cannot replace the file selected after it', async ({ page }) =
             return original(args);
         };
     });
-    await manager(page).locator('.files webui-button[title="a.txt"]').click();
-    await manager(page).locator('.files webui-button[title="b.txt"]').click();
+    await manager(page).locator('.files button.file[title="a.txt"]').click();
+    await manager(page).locator('.files button.file[title="b.txt"]').click();
     await page.waitForTimeout(700);
     await expect.poll(() => manager(page).evaluate(el => el._fileName.textContent)).toContain('b.txt');
 });
 test('reverting a modified file restores it, and removing a new file deletes it', async ({ page }) => {
     await open(page);
-    await manager(page).locator('.files webui-button[title="Revert changes to this file"]').first().click();
+    await manager(page).locator('.files button.revert[title="Revert changes to this file"]').first().click();
     await dialogButton(page, 'Revert').click();
     await expect.poll(async () => (await calls(page, 'git_restore_file')).length).toBe(1);
     expect((await calls(page, 'git_restore_file'))[0]).toEqual({ repo: '', file: 'a.txt' });
-    await manager(page).locator('.files webui-button[title="Delete new file"]').first().click();
+    await manager(page).locator('.files button.revert[title="Delete new file"]').first().click();
     await dialogButton(page, 'Delete').click();
     await expect.poll(async () => (await calls(page, 'git_delete_file')).length).toBe(1);
 });
@@ -190,7 +191,7 @@ test.describe('commit message memory', () => {
         await textarea(page).fill(message);
         expect(await manager(page).evaluate(el => el._message.value)).toBe(message);
     }).toPass({ timeout: 5000 });
-    const waitForFiles = page => manager(page).locator('.files webui-button').first().waitFor();
+    const waitForFiles = page => manager(page).locator('.files button.file').first().waitFor();
     const goTo = async (page, path) => {
         await page.evaluate(path => webui.navigateTo(path), path);
         await page.waitForURL(`**${path}`);
@@ -268,5 +269,174 @@ test.describe('commit message memory', () => {
         await switchProject(page, '/other', 'Other', '/git-controller');
         await waitForFiles(page);
         await expect(textarea(page)).toHaveValue('other message');
+    });
+});
+
+test.describe('pending commit stats', () => {
+    const lineStats = [
+        { path: 'a.txt', additions: 10, deletions: 2, binary: false },
+        { path: 'b.txt', additions: 5, deletions: 0, binary: false },
+        { path: 'c.txt', additions: 0, deletions: 7, binary: false },
+    ];
+    const filesStat = page => manager(page).locator('#val-commit-files');
+    const linesStat = page => manager(page).locator('#val-commit-lines');
+    const setInclude = (page, file, value) => include(page, file).selectOption(value);
+
+    test('files and lines for every included change are totalled', async ({ page }) => {
+        await open(page, { lineStats });
+        await expect(filesStat(page)).toHaveText('3 of 3');
+        await expect(linesStat(page)).toHaveText('+15 -9');
+    });
+    test('excluded and ignored files are left out of the totals', async ({ page }) => {
+        await open(page, { lineStats });
+        await setInclude(page, 'a.txt', '0');
+        await expect(filesStat(page)).toHaveText('2 of 3');
+        await expect(linesStat(page)).toHaveText('+5 -7');
+        await setInclude(page, 'c.txt', '2');
+        await expect(filesStat(page)).toHaveText('1 of 3');
+        await expect(linesStat(page)).toHaveText('+5 -0');
+        await setInclude(page, 'a.txt', '1');
+        await expect(linesStat(page)).toHaveText('+15 -2');
+    });
+    test('binary files are counted as files but not lines', async ({ page }) => {
+        await open(page, { changes: ['M  a.txt', '?? image.png'], lineStats: [lineStats[0], { path: 'image.png', additions: 0, deletions: 0, binary: true }] });
+        await expect(filesStat(page)).toHaveText('2 of 2');
+        await expect(linesStat(page)).toHaveText('+10 -2 (1 binary file not counted)');
+    });
+    test('the totals use the new name of a renamed file', async ({ page }) => {
+        await open(page, { changes: ['R  old.txt -> new.txt'], lineStats: [{ path: 'new.txt', additions: 1, deletions: 1, binary: false }] });
+        await expect(linesStat(page)).toHaveText('+1 -1');
+    });
+    test('with nothing to commit, it says so', async ({ page }) => {
+        await openApp(page, { currentPage: '/git-controller', git: { changes: [] } }, '/git-controller');
+        await expect(filesStat(page)).toHaveText('No changes');
+        await expect(linesStat(page)).toHaveText('');
+    });
+    test('if line counts fail, the file count still shows and there is no popup', async ({ page }) => {
+        await openApp(page, { currentPage: '/git-controller', git: { changes: ['M  a.txt'] } }, '/git-controller');
+        await onCommand(page, 'get_git_change_stats', () => { throw 'diff failed'; });
+        await page.evaluate(() => {
+            window.__alerts = [];
+            const original = webui.alert;
+            webui.alert = function (...args) { window.__alerts.push(args); return original.apply(this, args); };
+        });
+        await manager(page).locator('webui-button[label="Refresh"]').click();
+        await expect(linesStat(page)).toHaveText('Unavailable');
+        await expect(filesStat(page)).toHaveText('1 of 1');
+        expect(await page.evaluate(() => window.__alerts)).toEqual([]);
+    });
+    test('counts are refreshed with the file list', async ({ page }) => {
+        await open(page, { lineStats });
+        await expect(linesStat(page)).toHaveText('+15 -9');
+        await page.evaluate(() => {
+            window.__backend.git.changes = ['M  a.txt'];
+            window.__backend.git.lineStats = [{ path: 'a.txt', additions: 1, deletions: 0, binary: false }];
+        });
+        await manager(page).locator('webui-button[label="Refresh"]').click();
+        await expect(filesStat(page)).toHaveText('1 of 1');
+        await expect(linesStat(page)).toHaveText('+1 -0');
+    });
+});
+
+test.describe('file list', () => {
+    const changes = ['M  src/app/main.cs', 'M  docs/main.cs', '?? src/app/new.cs', ' D old.txt'];
+    const files = { 'src/app/main.cs': 'a', 'docs/main.cs': 'b', 'src/app/new.cs': 'c' };
+    // Loading the project reopens its start page shortly after startup, which replaces the component,
+    // so wait for one that stays before interacting with it.
+    const openList = async (page, git = {}) => {
+        await open(page, { changes, ...git }, { files });
+        await expect(async () => {
+            await manager(page).evaluate(el => { el.__marker ??= Math.random(); window.__marker = el.__marker; });
+            await page.waitForTimeout(400);
+            expect(await manager(page).evaluate(el => el.__marker === window.__marker)).toBe(true);
+        }).toPass({ timeout: 10000 });
+        await manager(page).locator('.files button.file').first().waitFor();
+    };
+    const row = (page, path) => manager(page).locator(`.files .file-row[data-path="${path}"]`);
+    const selected = page => manager(page).evaluate(el => el.shadowRoot.querySelector('.file-row.selected')?.dataset.path);
+
+    test('files with the same name are told apart by their folder', async ({ page }) => {
+        await openList(page);
+        await expect(row(page, 'src/app/main.cs').locator('.folder')).toHaveText('src/app');
+        await expect(row(page, 'docs/main.cs').locator('.folder')).toHaveText('docs');
+        await expect(row(page, 'old.txt').locator('.folder')).toHaveCount(0);
+    });
+    test('the filter narrows the list, and Toggle All only changes the files shown', async ({ page }) => {
+        await openList(page);
+        await manager(page).locator('.file-filter').fill('src/');
+        await expect(manager(page).locator('.files .file-row:not([hidden])')).toHaveCount(2);
+        await manager(page).locator('webui-button[label="Toggle All"]').click();
+        await expect(manager(page).locator('#val-commit-files')).toHaveText('2 of 4');
+        await expect(row(page, 'src/app/main.cs').locator('select')).toHaveValue('0');
+        await expect(row(page, 'docs/main.cs').locator('select')).toHaveValue('1');
+        await manager(page).locator('.file-filter').fill('');
+        await expect(manager(page).locator('.files .file-row:not([hidden])')).toHaveCount(4);
+    });
+    test('the first file opens, and the arrow keys move through the files shown', async ({ page }) => {
+        await openList(page);
+        await expect.poll(() => selected(page)).toBe('src/app/main.cs');
+        await row(page, 'src/app/main.cs').locator('button.file').focus();
+        await page.keyboard.press('ArrowDown');
+        await expect.poll(() => selected(page)).toBe('docs/main.cs');
+        await expect.poll(() => manager(page).evaluate(el => el._fileName.textContent)).toContain('docs');
+        // With old.txt filtered out, new.cs is the last file shown, so Down stays put.
+        await manager(page).locator('.file-filter').fill('.cs');
+        await row(page, 'src/app/new.cs').locator('button.file').click();
+        await page.keyboard.press('ArrowDown');
+        await page.waitForTimeout(100);
+        expect(await selected(page)).toBe('src/app/new.cs');
+        await page.keyboard.press('ArrowUp');
+        await expect.poll(() => selected(page)).toBe('docs/main.cs');
+    });
+    test('the open file stays open after a refresh', async ({ page }) => {
+        await openList(page);
+        await row(page, 'src/app/new.cs').locator('button.file').click();
+        await expect.poll(() => selected(page)).toBe('src/app/new.cs');
+        await manager(page).locator('webui-button[label="Refresh"]').click();
+        await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(1);
+        await page.waitForTimeout(200);
+        expect(await selected(page)).toBe('src/app/new.cs');
+    });
+    test('a filter and include choices are applied to a refreshed list', async ({ page }) => {
+        await openList(page);
+        await manager(page).locator('.file-filter').fill('docs');
+        await manager(page).locator('webui-button[label="Refresh"]').click();
+        await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(1);
+        await page.waitForTimeout(200);
+        await expect(manager(page).locator('.files .file-row:not([hidden])')).toHaveCount(1);
+    });
+    test('the file list and preview fill the window and scroll on their own', async ({ page }) => {
+        await page.setViewportSize({ width: 1400, height: 800 });
+        const many = Array.from({ length: 150 }, (_, i) => `M  src/file${i}.cs`);
+        await openList(page, { changes: many });
+        const layout = () => manager(page).evaluate(el => {
+            const root = el.shadowRoot;
+            let scroller = el.assignedSlot || el.parentElement;
+            while (scroller && !['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY)) scroller = scroller.assignedSlot || scroller.parentElement || scroller.getRootNode().host;
+            const files = root.querySelector('.files');
+            const panes = root.querySelector('.commit-panes').getBoundingClientRect();
+            return {
+                listScrolls: files.scrollHeight > files.clientHeight,
+                panesBottom: Math.round(panes.bottom),
+                visibleBottom: Math.round(scroller.getBoundingClientRect().bottom),
+                pageScroll: scroller.scrollTop,
+            };
+        });
+        await expect.poll(async () => (await layout()).listScrolls).toBe(true);
+        const before = await layout();
+        // The panes stop at the bottom of the visible page, less its padding, give or take rounding.
+        expect(before.panesBottom).toBeLessThanOrEqual(before.visibleBottom + 1);
+        expect(before.panesBottom).toBeGreaterThan(before.visibleBottom - 10);
+        await manager(page).locator('.files').evaluate(files => { files.scrollTop = files.scrollHeight; });
+        await page.waitForTimeout(100);
+        expect((await layout()).pageScroll).toBe(0);
+        await expect(manager(page).locator('webui-button[label="Commit"]')).toBeInViewport();
+        await expect(manager(page).locator('webui-content-compare')).toBeInViewport();
+    });
+    test('hundreds of files are listed', async ({ page }) => {
+        const many = Array.from({ length: 600 }, (_, i) => `M  src/folder${i % 20}/file${i}.cs`);
+        await openList(page, { changes: many });
+        await expect(manager(page).locator('.files .file-row')).toHaveCount(600);
+        await expect(manager(page).locator('#val-commit-files')).toHaveText('600 of 600');
     });
 });

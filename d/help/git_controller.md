@@ -4,8 +4,10 @@
     <webui-button slot="tabs">Committing & Syncing</webui-button>
     <webui-content slot="content" nodetach>
         <webui-page-segment>
-            - **Viewing Changes**: Click on a file name in the pending changes list to load a side-by-side diff comparison of the modifications.
-            - **Committing**: Select files to include, exclude, or ignore using the dropdowns. Enter a commit message and click **Commit**.
+            - **Viewing Changes**: Click on a file name in the pending changes list to load a side-by-side diff comparison of the modifications. Use the up and down arrow keys to move through the files. The file list and the comparison scroll separately.
+            - **Choosing Files**: Each file starts as **Include**, so it goes into the next commit. Choose **Exclude** to leave it out of this commit, or **Ignore** to always leave it out until you include it again.
+            - **Finding Files**: Type in **Filter files** to show only files whose path contains that text. **Toggle All** includes or excludes every file shown, and leaves ignored files alone.
+            - **Committing**: Enter a commit message and click **Commit**. **Files to Commit** and **Lines Changed** show what the commit will contain.
             - **Syncing**: Click **Sync** to automatically pull remote changes and push your local commits. Enable the **Sync after commit** toggle to automate this immediately following a commit.
             - **Remote Operations**: Use **Fetch** to check for updates, **Pull** to safely merge remote changes, **Push** to send local commits, or **Force Pull** to overwrite all local changes with the remote branch.
         </webui-page-segment>

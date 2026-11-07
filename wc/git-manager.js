@@ -12,6 +12,73 @@
         return webui.projectData.data._gitCommitMessages;
     }
     const messageSyncDelay = 500;
+    const minPanesHeight = 360;
+    const includeStates = { include: '1', exclude: '0', ignore: '2' };
+    const includeTitle = 'Include: commit this file. Exclude: leave it out of this commit. Ignore: always leave it out.';
+    const changeClasses = { Modify: 'modify', Add: 'add', Delete: 'delete', Conflict: 'conflict' };
+    /**
+     * Waits for a Web UI element's definition. Elements in a template that has not joined the page yet
+     * do not upgrade when the definition arrives, so upgrade them directly.
+     */
+    async function whenReady(el) {
+        await customElements.whenDefined(el.localName);
+        if (!customElements.get(el.localName) || el instanceof customElements.get(el.localName)) return el;
+        customElements.upgrade(el);
+        return el;
+    }
+    /** The element that scrolls the page, which the commit panes are sized to fit. */
+    function findScroller(el) {
+        let node = el.assignedSlot || el.parentElement || el.getRootNode().host;
+        while (node && node !== document.documentElement) {
+            const overflow = getComputedStyle(node).overflowY;
+            if (overflow === 'auto' || overflow === 'scroll') return node;
+            node = node.assignedSlot || node.parentElement || node.getRootNode().host;
+        }
+        return null;
+    }
+    /** Parses one `git status` style line from the backend into what the file list shows. */
+    function parseChange(line, repo) {
+        let status = line.substring(0, 2);
+        let fileName = line.substring(3).trim();
+        if (status.includes('R') && fileName.includes(' -> ')) {
+            fileName = fileName.split(' -> ')[1];
+        }
+        let change = 'Modify';
+        if (status.includes('C')) {
+            change = 'Conflict';
+        } else if (status === '??' || status.includes('A')) {
+            change = 'Add';
+        } else if (status.includes('D')) {
+            change = 'Delete';
+        }
+        const trimmed = fileName.endsWith('/') ? fileName.slice(0, -1) : fileName;
+        const slash = trimmed.lastIndexOf('/');
+        const name = trimmed.substring(slash + 1) + (fileName.endsWith('/') ? '/' : '');
+        const folder = slash === -1 ? '' : trimmed.substring(0, slash);
+        return {
+            repo,
+            change,
+            fileName,
+            name,
+            folder,
+            display: `<span class="change-type">${change}</span> <strong>${webui.escapeForHTML(name)}</strong>${folder ? ` <span class="folder">${webui.escapeForHTML(folder)}</span>` : ''}`,
+            isIncluded: true,
+            state: includeStates.include,
+        };
+    }
+    function rowHtml(details, index) {
+        const isNew = details.change === 'Add';
+        const options = [[includeStates.include, 'Include'], [includeStates.exclude, 'Exclude'], [includeStates.ignore, 'Ignore']]
+            .map(([value, label]) => `<option value="${value}"${value === details.state ? ' selected' : ''}>${label}</option>`).join('');
+        const path = webui.escapeForHTML(details.fileName);
+        return `<div class="file-row ${changeClasses[details.change]}" data-index="${index}" data-path="${path}">`
+            + `<select class="include" data-state="${details.state}" title="${includeTitle}" aria-label="Include ${path}">${options}</select>`
+            + `<button type="button" class="file" title="${path}"><span class="change-type">${details.change}</span> <strong class="name">${webui.escapeForHTML(details.name)}</strong>`
+            + (details.folder ? ` <span class="folder">${webui.escapeForHTML(details.folder)}</span>` : '')
+            + `</button>`
+            + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}">🗑️</button>`
+            + `</div>`;
+    }
     webui.define("app-git-manager", {
         linkCss: true,
         watchVisibility: false,
@@ -37,11 +104,15 @@
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
             t._btnPullOverwrite = t.template.querySelector('#btn-pull-overwrite');
             t._btnFetch = t.template.querySelector('#btn-fetch');
-            t._instructions = t.template.querySelector('.instructions');
+            t._panes = t.template.querySelector('.commit-panes');
+            t._fileFilter = t.template.querySelector('.file-filter');
             t._remoteStatusContainer = t.template.querySelector('#remote-status-container');
             t._valRemoteUrl = t.template.querySelector('#val-remote-url');
             t._valTrackingBranch = t.template.querySelector('#val-tracking-branch');
             t._valSyncStatus = t.template.querySelector('#val-sync-status');
+            t._valCommitFiles = t.template.querySelector('#val-commit-files');
+            t._valCommitLines = t.template.querySelector('#val-commit-lines');
+            t._lineStats = new Map();
             t._branchTable = t.template.querySelector('#branch-table');
             t._inputPat = t.template.querySelector('#input-git-pat');
             t._dropdownPatScope = t.template.querySelector('#dropdown-pat-scope');
@@ -86,6 +157,8 @@
                 webui.setData('git-branches', []);
             } else {
                 let options = repos.map(item => { return { id: item, value: item, display: item === '' ? 'Root' : item } });
+                // On a slow load the dropdown definition can arrive after this component starts.
+                await whenReady(t._repos);
                 t._repos.setOptions(options);
                 t._repos.classList.remove('hidden');
                 let selectedGitRepo = webui.getProjectData('selectedGitRepo');
@@ -158,6 +231,35 @@
             if (result && t._repos.value === repo) {
                 t.loadRemoteStatus();
             }
+        },
+        /** Totals the files set to Include, so the counts match what Commit sends. */
+        updateCommitStats() {
+            const t = this;
+            const files = t._files || [];
+            if (files.length === 0) {
+                t._valCommitFiles.textContent = 'No changes';
+                t._valCommitLines.textContent = '';
+                return;
+            }
+            const included = files.filter(f => f.isIncluded);
+            t._valCommitFiles.textContent = `${included.length} of ${files.length}`;
+            if (!t._lineStats) {
+                t._valCommitLines.innerHTML = '<em>Unavailable</em>';
+                return;
+            }
+            let additions = 0, deletions = 0, binary = 0;
+            included.forEach(file => {
+                const stats = t._lineStats.get(file.fileName);
+                if (!stats) return;
+                if (stats.binary) {
+                    binary++;
+                    return;
+                }
+                additions += stats.additions;
+                deletions += stats.deletions;
+            });
+            const binaryNote = binary ? ` <span class="binary-note">(${binary} binary ${binary === 1 ? 'file' : 'files'} not counted)</span>` : '';
+            t._valCommitLines.innerHTML = `<span style="color: var(--color-success);">+${additions.toLocaleString()}</span> <span style="color: var(--color-danger);">-${deletions.toLocaleString()}</span>${binaryNote}`;
         },
         async loadRemoteStatus() {
             let t = this;
@@ -244,126 +346,129 @@
             let repo = t._repos.value;
             if (repo === undefined) return;
             await webui.wait(()=>!!webui.proxy);
-            let changes = await webui.proxy.git.getChanges(repo) || [];
-            await customElements.whenDefined('webui-content-compare');
-            t._filesContainer.innerHTML = '';
+            // Line counts are extra detail, so a failure shows as unavailable rather than an alert.
+            let [changes, lineStats] = await Promise.all([
+                webui.proxy.git.getChanges(repo),
+                webui.proxy.git.getChangeStats(repo, () => { }),
+            ]);
+            changes = changes || [];
+            t._lineStats = lineStats ? new Map(lineStats.map(stats => [stats.path, stats])) : null;
             t._hasPendingChanges = changes.length > 0;
-            t._fileName.innerHTML = '';
-            t._diffViewer.clear?.();
-            let first = null;
-            t._files = [];
-            changes.forEach(line => {
-                if (!line || line.length < 3) return;
-                let status = line.substring(0, 2);
-                let filePath = line.substring(3).trim();
-                if (status.includes('R') && filePath.includes(' -> ')) {
-                    filePath = filePath.split(' -> ')[1];
-                }
-                let changeType = 'Modify';
-                let theme = 'info';
-                if (status.includes('C')) {
-                    changeType = 'Conflict';
-                    theme = 'warning';
-                } else if (status === '??' || status.includes('A')) {
-                    changeType = 'Add';
-                    theme = 'success';
-                } else if (status.includes('D')) {
-                    changeType = 'Delete';
-                    theme = 'danger';
-                }
-                let displayParts = filePath.split('/');
-                let display = displayParts[displayParts.length - 1];
-                let details = {
-                    repo: repo,
-                    change: changeType,
-                    fileName: filePath,
-                    display: `<span class="change-type">${changeType}</span> <strong>${webui.escapeForHTML(display)}</strong>`,
-                    isIncluded: true,
-                };
-                t._files.push(details);
-                let btn = webui.create('webui-button', { label: details.display, title: details.fileName, align: 'left', theme: theme });
-                let options = [
-                    { value: '1', display: `Include` },
-                    { value: '0', display: `Exclude` },
-                    { value: '2', display: `Ignore` }
-                ];
-                let include = webui.create('webui-dropdown', {});
-                let isNew = changeType === 'Add';
-                let btnRevert = webui.create('webui-button', { theme: 'danger', title: isNew ? 'Delete new file' : 'Revert changes to this file' });
-                btnRevert.innerHTML = `<webui-icon icon="emoji-wastebasket"></webui-icon>`;
-                btnRevert.style.padding = "0 0.5rem";
-                t._filesContainer.appendChild(include);
-                t._filesContainer.appendChild(btn);
-                t._filesContainer.appendChild(btnRevert);
-                include.setOptions(options);
-                const fullPath = `${details.repo}/${details.fileName}`;
-                function setTheme() {
-                    switch (`${include.value}`) {
-                        case '0':
-                            include.setAttribute('theme', 'info');
-                            details.isIncluded = false;
-                            break;
-                        case '2':
-                            include.setAttribute('theme', 'warning');
-                            details.isIncluded = false;
-                            break;
-                        default:
-                            details.isIncluded = true;
-                            include.setAttribute('theme', 'success');
-                            break;
-                    }
-                }
-                include.addEventListener('change', _ => {
-                    let ignoredFiles = getIgnoredFiles();
-                    let ignoredIndex = ignoredFiles.indexOf(fullPath);
-                    if (include.value === '2') {
-                        if (ignoredIndex === -1) {
-                            ignoredFiles.push(fullPath);
-                        }
-                    } else if (ignoredIndex !== -1) {
-                        ignoredFiles.splice(ignoredIndex, 1);
-                    }
-                    webui.proxy.syncProjectData();
-                    setTheme();
-                });
-                btnRevert.addEventListener('click', async _ => {
-                    await webui.dialog({
-                        title: isNew ? 'Delete File' : 'Revert File',
-                        content: isNew
-                            ? `<p>Are you sure you want to permanently delete <strong>${webui.escapeForHTML(display)}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`
-                            : `<p>Are you sure you want to discard all uncommitted changes in <strong>${webui.escapeForHTML(display)}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
-                        confirm: isNew ? 'Delete' : 'Revert',
-                        cancel: 'Cancel',
-                        onconfirm: async (data, content) => {
-                            let result;
-                            if (isNew) {
-                                result = await webui.proxy.git.deleteFile(repo, details.fileName, msg => content.alert(msg));
-                            } else {
-                                result = await webui.proxy.git.restoreFile(repo, details.fileName, msg => content.alert(msg));
-                            }
-                            if (result) {
-                                t.setAlert(result, 'success');
-                                t.loadRepoChanges();
-                                return true;
-                            }
-                        }
-                    });
-                });
-                if (getIgnoredFiles().includes(fullPath)) {
-                    include.value = '2';
-                }
-                setTheme();
-                btn.addEventListener('click', _ => {
-                    t.loadFileDiff(details);
-                });
-                if (!first) {
-                    first = true;
-                    t.loadFileDiff(details);
+            const ignoredFiles = new Set(getIgnoredFiles());
+            t._files = changes
+                .filter(line => line && line.length >= 3)
+                .map(line => parseChange(line, repo));
+            t._files.forEach(details => {
+                if (ignoredFiles.has(`${details.repo}/${details.fileName}`)) {
+                    details.state = includeStates.ignore;
+                    details.isIncluded = false;
                 }
             });
+            // Plain elements built in one pass, since a component per row is slow with hundreds of files.
+            t._filesContainer.innerHTML = t._files.map(rowHtml).join('');
+            t.applyFileFilter();
+            t.updateCommitStats();
+            // Keep the file that was open, when it still has changes.
+            const keep = t._files.findIndex(f => f.fileName === t._selectedFile && f.repo === t._selectedRepo);
+            const index = keep !== -1 ? keep : (t._files.length ? 0 : -1);
+            if (index === -1) {
+                t._selectedFile = undefined;
+                t._fileName.innerHTML = '';
+                t._diffViewer.clear?.();
+            } else {
+                t.selectFile(index);
+            }
             t.loadRemoteStatus();
             t.autoFetch(repo);
             webui.proxy.reloadProjectFiles();
+        },
+        getRow(index) {
+            return this._filesContainer.querySelector(`.file-row[data-index="${index}"]`);
+        },
+        selectFile(index) {
+            const t = this;
+            const details = t._files[index];
+            if (!details) return;
+            t._filesContainer.querySelector('.file-row.selected')?.classList.remove('selected');
+            const row = t.getRow(index);
+            row?.classList.add('selected');
+            t._selectedFile = details.fileName;
+            t._selectedRepo = details.repo;
+            t.loadFileDiff(details);
+        },
+        setIncludeState(index, state) {
+            const t = this;
+            const details = t._files[index];
+            if (!details) return;
+            details.state = state;
+            details.isIncluded = state === includeStates.include;
+            const select = t.getRow(index)?.querySelector('select.include');
+            if (select) {
+                select.value = state;
+                select.dataset.state = state;
+            }
+        },
+        applyFileFilter() {
+            const t = this;
+            const filter = (t._fileFilter.value || '').trim().toLowerCase();
+            t._filesContainer.querySelectorAll('.file-row').forEach(row => {
+                const details = t._files[row.dataset.index];
+                row.hidden = !!filter && !details.fileName.toLowerCase().includes(filter);
+            });
+        },
+        visibleIndexes() {
+            return Array.from(this._filesContainer.querySelectorAll('.file-row:not([hidden])')).map(row => Number(row.dataset.index));
+        },
+        confirmRevert(index) {
+            const t = this;
+            const details = t._files[index];
+            if (!details) return;
+            const isNew = details.change === 'Add';
+            const name = webui.escapeForHTML(details.name);
+            const repo = details.repo;
+            webui.dialog({
+                title: isNew ? 'Delete File' : 'Revert File',
+                content: isNew
+                    ? `<p>Are you sure you want to permanently delete <strong>${name}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`
+                    : `<p>Are you sure you want to discard all uncommitted changes in <strong>${name}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                confirm: isNew ? 'Delete' : 'Revert',
+                cancel: 'Cancel',
+                onconfirm: async (data, content) => {
+                    let result;
+                    if (isNew) {
+                        result = await webui.proxy.git.deleteFile(repo, details.fileName, msg => content.alert(msg));
+                    } else {
+                        result = await webui.proxy.git.restoreFile(repo, details.fileName, msg => content.alert(msg));
+                    }
+                    if (result) {
+                        t.setAlert(result, 'success');
+                        t.loadRepoChanges();
+                        return true;
+                    }
+                }
+            }).catch(() => { });
+        },
+        /** Sizes the commit panes to the visible page, so the file list and preview each scroll on their own. */
+        fitPanes() {
+            const t = this;
+            const panes = t._panes;
+            if (!panes || !panes.isConnected) return;
+            t._scroller ??= findScroller(t);
+            const scroller = t._scroller;
+            if (!scroller) return;
+            const panesRect = panes.getBoundingClientRect();
+            // A hidden tab has no size, so leave it until it shows.
+            if (panesRect.width === 0) return;
+            const scrollerRect = scroller.getBoundingClientRect();
+            const style = getComputedStyle(scroller);
+            const bottom = scrollerRect.bottom - (parseFloat(style.borderBottomWidth) || 0) - (parseFloat(style.paddingBottom) || 0);
+            // Measured as if the page were scrolled to the top, so scrolling does not change the size.
+            const top = panesRect.top + scroller.scrollTop;
+            const height = Math.max(minPanesHeight, Math.floor(bottom - top));
+            if (Math.abs(height - (t._panesHeight || 0)) > 1) {
+                t._panesHeight = height;
+                panes.style.setProperty('--panes-height', `${height}px`);
+            }
         },
         setAlert(msg, severity) {
             let t = this;
@@ -508,18 +613,74 @@
                     await t.loadRepoChanges();
                 }
             });
+            // Applies to the files shown by the filter, and leaves ignored files alone.
             t._btnToggleAll.addEventListener('click', _ => {
-                let dropdowns = Array.from(t._filesContainer.querySelectorAll('webui-dropdown'));
-                if (dropdowns.length === 0) return;
-                let includedCount = t._files.filter(f => f.isIncluded).length;
-                let targetValue = includedCount > Math.floor(t._files.length / 2) ? '0' : '1';
-                dropdowns.forEach(d => {
-                    if (d.value !== '2' && d.value !== 2) {
-                        d.value = targetValue;
-                        d.triggerChange();
-                    }
-                });
+                const indexes = t.visibleIndexes().filter(index => t._files[index].state !== includeStates.ignore);
+                if (indexes.length === 0) return;
+                const includedCount = indexes.filter(index => t._files[index].isIncluded).length;
+                const target = includedCount > Math.floor(indexes.length / 2) ? includeStates.exclude : includeStates.include;
+                indexes.forEach(index => t.setIncludeState(index, target));
+                t.updateCommitStats();
             });
+            t._filesContainer.addEventListener('change', ev => {
+                const select = ev.target.closest('select.include');
+                if (!select) return;
+                const index = Number(select.closest('.file-row').dataset.index);
+                const details = t._files[index];
+                const ignoredFiles = getIgnoredFiles();
+                const fullPath = `${details.repo}/${details.fileName}`;
+                const ignoredIndex = ignoredFiles.indexOf(fullPath);
+                if (select.value === includeStates.ignore) {
+                    if (ignoredIndex === -1) ignoredFiles.push(fullPath);
+                } else if (ignoredIndex !== -1) {
+                    ignoredFiles.splice(ignoredIndex, 1);
+                }
+                webui.proxy.syncProjectData();
+                t.setIncludeState(index, select.value);
+                t.updateCommitStats();
+            });
+            t._filesContainer.addEventListener('click', ev => {
+                const button = ev.target.closest('button');
+                if (!button) return;
+                const index = Number(button.closest('.file-row').dataset.index);
+                if (button.classList.contains('revert')) {
+                    t.confirmRevert(index);
+                } else if (button.classList.contains('file')) {
+                    t.selectFile(index);
+                }
+            });
+            // Up and down move through the files shown.
+            t._filesContainer.addEventListener('keydown', ev => {
+                if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+                const button = ev.target.closest('button.file');
+                if (!button) return;
+                const visible = t.visibleIndexes();
+                const position = visible.indexOf(Number(button.closest('.file-row').dataset.index));
+                const next = visible[position + (ev.key === 'ArrowDown' ? 1 : -1)];
+                if (next === undefined) return;
+                ev.preventDefault();
+                t.getRow(next).querySelector('button.file').focus();
+                t.selectFile(next);
+            });
+            t._fileFilter.addEventListener('input', () => t.applyFileFilter());
+            // Anything above the panes that grows or shrinks moves them, such as the alert or the status lines.
+            t._resizeObserver = new ResizeObserver(() => t.fitPanes());
+            t._resizeObserver.observe(t);
+            t._resizeObserver.observe(t._panes);
+            [t._alert, t._remoteStatusContainer, t._repos.parentElement, t.template.querySelector('webui-tabs')].forEach(el => {
+                if (el) t._resizeObserver.observe(el);
+            });
+            webui.wait(() => !!findScroller(t)).then(() => {
+                t._scroller = findScroller(t);
+                if (t._scroller && t._resizeObserver) t._resizeObserver.observe(t._scroller);
+                t.fitPanes();
+            });
+            // The app's header, footer, and drawers can move the page without resizing anything observed
+            // here, so check again now and then. It only measures, and writes when the size changes.
+            clearInterval(t._fitTimer);
+            t._fitTimer = setInterval(() => {
+                if (!document.hidden) t.fitPanes();
+            }, 500);
             t._btnFetch.addEventListener('click', async _ => {
                 let repo = t._repos.value;
                 if (repo === undefined) return t.setAlert('No repo is set!');
@@ -530,11 +691,13 @@
                     await t.loadRemoteStatus();
                 }
             });
-            t._dropdownPatScope.setOptions([
-                { value: 'Project', display: 'Project Level' },
-                { value: 'Global', display: 'Global Level' }
-            ]);
-            t._dropdownPatScope.value = 'Project';
+            whenReady(t._dropdownPatScope).then(() => {
+                t._dropdownPatScope.setOptions([
+                    { value: 'Project', display: 'Project Level' },
+                    { value: 'Global', display: 'Global Level' }
+                ]);
+                t._dropdownPatScope.value = 'Project';
+            });
             t._btnSavePat.addEventListener('click', async () => {
                 let token = t._inputPat.value.trim();
                 let scope = t._dropdownPatScope.value;
@@ -673,17 +836,14 @@
                 }
                 t.loadRepoChanges();
             });
-            t._instructions.innerHTML = webui.parseMarkdown(`
-Select which files you want to commit, create your commit message, and press Commit to save your current changes.
-
-### File Options
-
-- <webui-button theme="success">Include</webui-button> *Default* Include file with commit.
-- <webui-button theme="info">Exclude</webui-button> Exclude file from current commit.
-- <webui-button theme="warning">Ignore</webui-button> Always exclude file from commits.
-`)
         },
-        disconnected() { },
+        disconnected() {
+            const t = this;
+            t._resizeObserver?.disconnect();
+            t._resizeObserver = null;
+            clearInterval(t._fitTimer);
+            t._scroller = null;
+        },
         shadowTemplate: `
 <style type="text/css">
 :host {
@@ -695,6 +855,170 @@ pre {
     margin:0;
     padding:0;
 }
+.status {
+    padding: var(--padding);
+    background: var(--site-background-color);
+    color: var(--site-background-offset);
+    border: 1px solid var(--color-info);
+    border-radius: 4px;
+}
+.status-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+.status-line {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 1.5rem;
+    row-gap: 0.25rem;
+}
+#val-remote-url {
+    overflow-wrap: anywhere;
+}
+.binary-note {
+    opacity: 0.8;
+    font-size: 0.9em;
+}
+.commit-panes {
+    display: grid;
+    grid-template-columns: minmax(320px, 2fr) 3fr;
+    gap: var(--padding);
+    height: var(--panes-height, 70vh);
+    min-height: 360px;
+}
+.commit-side,
+.preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--padding);
+    min-height: 0;
+    min-width: 0;
+}
+.commit-actions,
+.list-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--padding);
+}
+.commit-actions {
+    justify-content: flex-end;
+}
+.file-filter {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-info);
+    border-radius: var(--corners);
+    background: var(--site-background-color);
+    color: var(--site-background-offset);
+}
+.files {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.file-row {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    gap: 2px;
+    --row-color: var(--color-info);
+    --row-color-offset: var(--color-info-offset);
+}
+.file-row[hidden] {
+    display: none;
+}
+.file-row.add {
+    --row-color: var(--color-success);
+    --row-color-offset: var(--color-success-offset);
+}
+.file-row.delete {
+    --row-color: var(--color-danger);
+    --row-color-offset: var(--color-danger-offset);
+}
+.file-row.conflict {
+    --row-color: var(--color-warning);
+    --row-color-offset: var(--color-warning-offset);
+}
+.file-row select,
+.file-row button {
+    font: inherit;
+    border: none;
+    border-radius: var(--corners);
+    cursor: pointer;
+}
+select.include {
+    font-size: 0.85em;
+    padding: 0 0.25rem;
+    background: var(--color-success);
+    color: var(--color-success-offset);
+}
+select.include[data-state="0"] {
+    background: var(--color-info);
+    color: var(--color-info-offset);
+}
+select.include[data-state="2"] {
+    background: var(--color-warning);
+    color: var(--color-warning-offset);
+}
+button.file {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.2rem 0.5rem;
+    text-align: left;
+    background: var(--row-color);
+    color: var(--row-color-offset);
+}
+.file-row.selected button.file {
+    box-shadow: inset 0 0 0 2px var(--row-color-offset);
+}
+button.file .name {
+    white-space: nowrap;
+}
+.folder {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85em;
+    font-weight: normal;
+    opacity: 0.8;
+}
+button.revert {
+    padding: 0 0.5rem;
+    background: var(--color-danger);
+    color: var(--color-danger-offset);
+}
+.preview h3 {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.preview webui-content-compare {
+    flex: 1;
+    min-height: 0;
+}
+/* Side by side panes are too narrow on small windows, so stack them and let the page scroll. */
+@media (max-width: 900px) {
+    .commit-panes {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+    .files {
+        max-height: 50vh;
+    }
+    .preview webui-content-compare {
+        height: 60vh;
+    }
+}
 </style>
 <webui-flex align="center">
     <webui-button theme="info" label="Refresh"></webui-button>
@@ -705,12 +1029,18 @@ pre {
         <webui-button id="btn-stash-pop" theme="secondary" label="Pop Stash"></webui-button>
     </webui-flex>
 </webui-flex>
-<webui-flex id="remote-status-container" style="padding: var(--padding); background: var(--site-background-color); color: var(--site-background-offset); border: 1px solid var(--color-info); border-radius: 4px;" justify="space-between" align="start" wrap>
-    <webui-flex column gap="0.5rem">
-        <div><strong>Remote URL:</strong> <span id="val-remote-url"></span></div>
-        <div><strong>Tracking Branch:</strong> <span id="val-tracking-branch"></span></div>
-        <div><strong>Sync Status:</strong> <span id="val-sync-status"></span></div>
-    </webui-flex>
+<webui-flex id="remote-status-container" class="status" justify="space-between" align="center" gap="var(--padding)" wrap>
+    <div class="status-lines">
+        <div class="status-line">
+            <span><strong>Remote URL:</strong> <span id="val-remote-url"></span></span>
+            <span><strong>Tracking Branch:</strong> <span id="val-tracking-branch"></span></span>
+            <span><strong>Sync Status:</strong> <span id="val-sync-status"></span></span>
+        </div>
+        <div class="status-line">
+            <span><strong>Files to Commit:</strong> <span id="val-commit-files"></span></span>
+            <span><strong>Lines Changed:</strong> <span id="val-commit-lines"></span></span>
+        </div>
+    </div>
     <webui-flex gap="var(--padding)" grow>
         <webui-flex grow></webui-flex>
         <webui-button theme="info" label="Fetch" id="btn-fetch"></webui-button>
@@ -724,23 +1054,24 @@ pre {
 <webui-tabs theme="secondary" index="0" transition-timing="200">
     <webui-button slot="tabs">Commit</webui-button>
     <webui-content slot="content" nodetach>
-        <webui-flex justify="flex-end" align="center" gap="var(--padding)" style="margin-bottom: var(--padding);">
-            <webui-button theme="info" label="Toggle All"></webui-button>
-            <webui-flex grow></webui-flex>
-            <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" theme-on="primary"></webui-toggle-icon>
-            <webui-button theme="primary" label="Commit"></webui-button>
-        </webui-flex>
-        <webui-grid columns="2fr 3fr" gap="var(--padding)">
-            <webui-quote theme="title" class="instructions"></webui-quote>
-            <webui-input-message class="h-fill" theme="title" label="Commit Message"></webui-input-message>
-        </webui-grid>
-        <webui-grid columns="max-content 1fr" gap="var(--padding)" style="margin-top: var(--padding);">
-            <webui-grid columns="max-content 1fr max-content" style="--min:3ch;" class="files"></webui-grid>
-            <webui-flex column>
+        <div class="commit-panes">
+            <div class="commit-side">
+                <webui-input-message theme="title" label="Commit Message" max-height="12em"></webui-input-message>
+                <div class="commit-actions">
+                    <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" theme-on="primary"></webui-toggle-icon>
+                    <webui-button theme="primary" label="Commit"></webui-button>
+                </div>
+                <div class="list-tools">
+                    <webui-button theme="info" label="Toggle All" title="Include or exclude every file shown"></webui-button>
+                    <input type="search" class="file-filter" placeholder="Filter files" aria-label="Filter files" />
+                </div>
+                <div class="files"></div>
+            </div>
+            <div class="preview">
                 <h3></h3>
-                <webui-content-compare style="height: 60vh;"></webui-content-compare>
-            </webui-flex>
-        </webui-grid>
+                <webui-content-compare></webui-content-compare>
+            </div>
+        </div>
     </webui-content>
     <webui-button slot="tabs">Branches</webui-button>
     <webui-content slot="content" nodetach>
