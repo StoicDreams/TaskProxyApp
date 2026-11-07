@@ -6,6 +6,12 @@
         webui.projectData.data._gitIgnoreFiles ??= [];
         return webui.projectData.data._gitIgnoreFiles;
     }
+    /** Unsent commit messages by repo, kept with the project's local data so switching projects keeps each one. */
+    function getCommitMessages() {
+        webui.projectData.data._gitCommitMessages ??= {};
+        return webui.projectData.data._gitCommitMessages;
+    }
+    const messageSyncDelay = 500;
     webui.define("app-git-manager", {
         linkCss: true,
         watchVisibility: false,
@@ -44,6 +50,33 @@
             t._branchList = [];
             t._currentBranch = '';
         },
+        /** Shows the message saved for the selected repo, and makes it the one that edits are saved to. */
+        async restoreMessage() {
+            const t = this;
+            const repo = t._repos.value;
+            t._messageRepo = repo;
+            t._messagePath = webui.projectData.path;
+            await customElements.whenDefined('webui-input-message');
+            t._message.value = (repo !== undefined && getCommitMessages()[repo]) || '';
+        },
+        rememberMessage(value) {
+            const t = this;
+            // Only save into the project and repo the message was loaded for.
+            if (t._messageRepo === undefined || webui.projectData.path !== t._messagePath) return;
+            const messages = getCommitMessages();
+            if (value) {
+                messages[t._messageRepo] = value;
+            } else {
+                delete messages[t._messageRepo];
+            }
+            clearTimeout(t._messageSyncTimer);
+            t._messageSyncTimer = setTimeout(() => webui.proxy.syncProjectData(), messageSyncDelay);
+        },
+        clearMessage() {
+            const t = this;
+            t._message.value = '';
+            t.rememberMessage('');
+        },
         async loadRepos() {
             let t = this;
             await webui.wait(()=>!!webui.proxy);
@@ -59,6 +92,7 @@
                 if (selectedGitRepo) {
                     t._repos.value = selectedGitRepo;
                 }
+                await t.restoreMessage();
                 await t.loadBranches();
                 t.loadRepoChanges();
             }
@@ -343,8 +377,10 @@
                     t.loadRepos();
                 });
             }, 50);
+            t._message.addEventListener('input', _ => t.rememberMessage(t._message.value));
             t._repos.addEventListener('change', async _ => {
                 await webui.wait(20);
+                await t.restoreMessage();
                 await t.loadBranches();
                 t.loadRepoChanges();
             });
@@ -458,7 +494,7 @@
                 let result = await webui.proxy.git.stash(repo, message, msg => t.setAlert(msg));
                 if (result) {
                     t.setAlert(result, 'success');
-                    t._message.value = '';
+                    t.clearMessage();
                     await t.loadRepoChanges();
                 }
             });
@@ -562,7 +598,7 @@
                 let result = await webui.proxy.git.commit(repo, files, message, msg => t.setAlert(msg));
                 if (result) {
                     t.setAlert(result, 'success');
-                    t._message.value = '';
+                    t.clearMessage();
                     if (t._toggleSync.value === true || t._toggleSync.value === 'true') {
                         t.setAlert('Commit successful. Syncing with remote...', 'info');
                         let syncResult = await webui.proxy.git.sync(repo, msg => t.setAlert(msg));

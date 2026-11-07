@@ -183,3 +183,90 @@ test('ahead and behind counts are shown', async ({ page }) => {
     await expect(manager(page).locator('#val-sync-status')).toContainText('2 Commits Ahead');
     await expect(manager(page).locator('#val-sync-status')).toContainText('3 Commits Behind');
 });
+
+test.describe('commit message memory', () => {
+    const textarea = page => manager(page).locator('webui-input-message[label="Commit Message"] textarea');
+    const typeMessage = (page, message) => expect(async () => {
+        await textarea(page).fill(message);
+        expect(await manager(page).evaluate(el => el._message.value)).toBe(message);
+    }).toPass({ timeout: 5000 });
+    const waitForFiles = page => manager(page).locator('.files webui-button').first().waitFor();
+    const goTo = async (page, path) => {
+        await page.evaluate(path => webui.navigateTo(path), path);
+        await page.waitForURL(`**${path}`);
+    };
+    // Loading a project opens its last page shortly after, so wait for that page.
+    const switchProject = async (page, path, name, startPage) => {
+        await page.evaluate(([path, name]) => webui.setData('app-current-project', { value: path, display: name }), [path, name]);
+        await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe(path);
+        await expect.poll(() => page.evaluate(() => location.pathname)).toBe(startPage);
+        await page.waitForTimeout(100);
+    };
+    const projects = [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }];
+
+    test('a message is kept after leaving the page and coming back', async ({ page }) => {
+        await open(page);
+        await typeMessage(page, 'work in progress');
+        await goTo(page, '/');
+        await goTo(page, '/git-controller');
+        await waitForFiles(page);
+        await expect(textarea(page)).toHaveValue('work in progress');
+    });
+    test('the message is sent to the backend, so it survives a restart', async ({ page }) => {
+        await open(page);
+        await typeMessage(page, 'saved for later');
+        await expect.poll(async () => (await calls(page, 'sync_project_data')).some(call => call.data.data._gitCommitMessages?.[''] === 'saved for later')).toBe(true);
+    });
+    test('a message saved earlier is shown when the page opens', async ({ page }) => {
+        await open(page, {}, { data: { _gitCommitMessages: { '': 'from last time' } } });
+        await expect(textarea(page)).toHaveValue('from last time');
+    });
+    test('a successful commit clears the saved message', async ({ page }) => {
+        await open(page);
+        await typeMessage(page, 'msg');
+        await manager(page).locator('webui-button[label="Commit"]').click();
+        await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
+        await expect(textarea(page)).toHaveValue('');
+        expect(await page.evaluate(() => webui.projectData.data._gitCommitMessages[''])).toBeUndefined();
+    });
+    test('a failed commit keeps the message', async ({ page }) => {
+        await open(page);
+        await onCommand(page, 'git_commit', () => { throw 'Commit failed'; });
+        await typeMessage(page, 'try again');
+        await manager(page).locator('webui-button[label="Commit"]').click();
+        await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
+        await page.waitForTimeout(200);
+        await expect(textarea(page)).toHaveValue('try again');
+        expect(await page.evaluate(() => webui.projectData.data._gitCommitMessages[''])).toBe('try again');
+    });
+    test('each repo keeps its own message', async ({ page }) => {
+        await open(page, { repos: ['', 'sub'] });
+        await typeMessage(page, 'root message');
+        const selectRepo = repo => manager(page).locator('webui-dropdown[label="Repo"]').evaluate((el, repo) => {
+            el.value = repo;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }, repo);
+        await selectRepo('sub');
+        await expect(textarea(page)).toHaveValue('');
+        await typeMessage(page, 'sub message');
+        await selectRepo('');
+        await expect(textarea(page)).toHaveValue('root message');
+        await selectRepo('sub');
+        await expect(textarea(page)).toHaveValue('sub message');
+    });
+    test('switching projects keeps each project\'s message', async ({ page }) => {
+        await open(page, {}, { projects });
+        await typeMessage(page, 'repo message');
+        await switchProject(page, '/other', 'Other', '/');
+        await goTo(page, '/git-controller');
+        await waitForFiles(page);
+        await expect(textarea(page)).toHaveValue('');
+        await typeMessage(page, 'other message');
+        await switchProject(page, '/repo', 'Repo', '/git-controller');
+        await waitForFiles(page);
+        await expect(textarea(page)).toHaveValue('repo message');
+        await switchProject(page, '/other', 'Other', '/git-controller');
+        await waitForFiles(page);
+        await expect(textarea(page)).toHaveValue('other message');
+    });
+});

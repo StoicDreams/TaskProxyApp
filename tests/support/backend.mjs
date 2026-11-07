@@ -11,6 +11,9 @@
  * - git: { repos, changes, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
  * - newInstall: leave out the saved settings an existing install has.
+ *
+ * Other projects in `projects` start with empty data. Saved and synced project data is kept by path,
+ * as the backend does, so switching projects and back returns what was saved.
  */
 export function installBackend(page, state) {
     return page.addInitScript(setup, state);
@@ -29,12 +32,25 @@ function setup(state) {
         id: 'project-id', path: project.path, currentPage: state.currentPage || '/', docs: state.docs || [],
         navigation: state.navigation || [], variables: state.variables || [], data: state.data || {},
     };
+    // Copies, as the backend keeps its own copy of what the app sends.
+    const savedProjects = {};
+    if (projectData) savedProjects[projectData.path] = projectData;
+    const storeProject = data => {
+        if (data && data.path) savedProjects[data.path] = JSON.parse(JSON.stringify(data));
+    };
+    const loadProject = ({ project: wanted } = {}) => {
+        const path = wanted && wanted.path;
+        if (!path) return projectData;
+        savedProjects[path] ??= { id: `id-${path}`, path, currentPage: '/', docs: [], navigation: [], variables: [], data: {} };
+        return JSON.parse(JSON.stringify(savedProjects[path]));
+    };
     const listeners = {};
     const backend = {
         calls: [],
         files,
         git,
         projectData,
+        savedProjects,
         emit(name, payload) { (listeners[name] || []).forEach(listener => listener({ payload })); },
         handlers: {
             get_app_data: () => ({
@@ -53,9 +69,9 @@ function setup(state) {
             save_app_data: () => 'app data saved',
             load_projects: () => state.projects || (project ? [project] : []),
             get_projects: () => state.projects || (project ? [project] : []),
-            get_project_data: () => projectData,
-            sync_project_data: () => 'Project data synced',
-            save_project_data: () => 'Project data saved',
+            get_project_data: loadProject,
+            sync_project_data: ({ data } = {}) => { storeProject(data); return 'Project data synced'; },
+            save_project_data: ({ data } = {}) => { storeProject(data); return 'Project data saved'; },
             clear_current_project: () => 'Project closed',
             reload_project_files: () => projectData,
             rename_project: () => 'Project Successfully Renamed',
