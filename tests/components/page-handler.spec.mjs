@@ -15,11 +15,18 @@ async function runScript(page, index = 0) {
 const scriptPage = script => `# Title\n\nRun this\n\n\`\`\`powershell\n${script}\n\`\`\``;
 
 test.describe('saving', () => {
-    test('saving keeps all content', async ({ page }) => {
-        const markdown = '<webui-data data-page-title="T" data-page-subtitle=""></webui-data>\n\n# Heading\n\nUse List<string> here.\nSecond line.\n\n<webui-page-segment>\n\nInner\n\n</webui-page-segment>\n\n```bash\necho hi\n```';
+    test('saving keeps all content, with loose content wrapped in page segments', async ({ page }) => {
+        const data = '<webui-data data-page-title="T" data-page-subtitle=""></webui-data>';
+        const markdown = `${data}\n\n# Heading\n\nUse List<string> here.\nSecond line.\n\n<webui-page-segment>\n\nInner\n\n</webui-page-segment>\n\n\`\`\`bash\necho hi\n\`\`\``;
         await openPage(page, markdown);
         await save(page);
-        expect((await saved(page)).contents).toBe(markdown);
+        expect((await saved(page)).contents).toBe([
+            data,
+            '# Heading',
+            '<webui-page-segment>\n\nUse List<string> here.\nSecond line.\n\n</webui-page-segment>',
+            '<webui-page-segment>\n\nInner\n\n</webui-page-segment>',
+            '<webui-page-segment>\n\n```bash\necho hi\n```\n\n</webui-page-segment>',
+        ].join('\n\n'));
     });
     test('saves to the file for this page', async ({ page }) => {
         await openPage(page, '# Heading', { pageId: 'my-page' });
@@ -222,3 +229,46 @@ test.describe('page scripts', () => {
         expect(await runScript(page)).toContain("$target = 'prod'");
     });
 });
+
+test.describe('segment layout', () => {
+    /** The markdown of each segment, as the page splits it. */
+    const segmentsOf = page => page.locator('app-page-handler > app-markdown-segment').evaluateAll(list => list.map(el => el.getMarkdown()));
+    // Opening a project reloads its page once more, so wait for the segments to settle.
+    const layout = async page => {
+        await expect.poll(async () => (await segmentsOf(page)).length).toBeGreaterThan(0);
+        return segmentsOf(page);
+    };
+    const wrap = text => `<webui-page-segment>\n\n${text}\n\n</webui-page-segment>`;
+    test('content runs until the next heading, line break, page segment, or the end', async ({ page }) => {
+        await openPage(page, 'Intro\n\nMore intro\n## Next\nAfter heading\n<webui-line></webui-line>\nAfter line\n<webui-page-segment elevation="10">\n\nKept\n\n</webui-page-segment>\nLast');
+        expect(await layout(page)).toEqual([
+            wrap('Intro\n\nMore intro'),
+            '## Next',
+            wrap('After heading'),
+            '<webui-line></webui-line>',
+            wrap('After line'),
+            '<webui-page-segment elevation="10">\n\nKept\n\n</webui-page-segment>',
+            wrap('Last'),
+        ]);
+    });
+    test('headings and tags inside code blocks and components do not split them', async ({ page }) => {
+        const code = '```pwsh\n# A comment\n<webui-line></webui-line>\n```';
+        const tabs = '<webui-tabs>\n## Inside tabs\n</webui-tabs>';
+        await openPage(page, `${code}\n${tabs}`);
+        expect(await layout(page)).toEqual([wrap(`${code}\n${tabs}`)]);
+    });
+    test('#text with no space is content, not a heading', async ({ page }) => {
+        await openPage(page, '#hashtag\n# Real heading');
+        expect(await layout(page)).toEqual([wrap('#hashtag'), '# Real heading']);
+    });
+    test('deleting a segment leaves it out of the saved page', async ({ page }) => {
+        await openPage(page, '# Keep\n\n# Remove');
+        const doomed = page.locator('app-page-handler > app-markdown-segment').nth(1);
+        await doomed.locator('#btn-edit').click();
+        await doomed.locator('#btn-delete').click();
+        await expect(page.locator('app-page-handler > app-markdown-segment')).toHaveCount(1);
+        await save(page);
+        expect((await saved(page)).contents).toBe('<webui-data data-page-title="" data-page-subtitle=""></webui-data>\n\n# Keep');
+    });
+});
+

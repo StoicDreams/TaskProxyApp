@@ -163,10 +163,10 @@ test('build a team page', async ({ page }) => {
         await clickOn(page, add, { after: 900 });
         const segments = page.locator('app-page-handler > app-markdown-segment');
         await expect(segments).toHaveCount(1);
-        await editSegment(page, segments.nth(0), '### {}', 'Reset your local database');
+        await editSegment(page, segments.nth(0), 'h3', 'Reset your local database');
         await clickOn(page, add, { after: 900 });
         await caption(page, 'Write steps in markdown. A pwsh block becomes a script with a Run button');
-        await editSegment(page, segments.nth(1), '<webui-page-segment>\n\n{}\n\n</webui-page-segment>',
+        await editSegment(page, segments.nth(1), 'segment',
             'Drops and reseeds the local database. Your data is lost.\n\n```pwsh\n$databaseName = \'acme_dev\'\nnpm run db:reset -- --database $databaseName\n```');
         await caption(page, 'Save, and commit the page to share it with your team');
         await clickOn(page, page.locator('app-page-handler webui-button').filter({ hasText: 'Save' }).first(), { after: 2500 });
@@ -177,11 +177,7 @@ test('build a team page', async ({ page }) => {
 /** Opens a segment's editor, sets its type and text, and closes it again. */
 async function editSegment(page, segment, type, text) {
     await clickOn(page, segment.locator('aside webui-button').first(), { after: 700 });
-    // The segment types are the templates offered in its dropdown.
-    await segment.evaluate((el, value) => {
-        el._options.value = value;
-        el._options.dispatchEvent(new Event('change'));
-    }, type);
+    await clickOn(page, segment.locator('webui-switch [role="radio"]', { hasText: new RegExp(`^${type}$`) }), { after: 300 });
     await page.waitForTimeout(500);
     const input = segment.getByRole('textbox').first();
     await clickOn(page, input, { after: 200 });

@@ -479,66 +479,75 @@
         }
         return change;
     }
+    /** Reads a fenced code block or a multi-line component from `index`, returning the index of its last line. */
+    function findBlockEnd(lines, index) {
+        let line = lines[index];
+        let fence = line.match(/^\s*(```+|~~~+)/);
+        if (fence) {
+            let end = index + 1;
+            const close = new RegExp(`^\\s*${fence[1]}`);
+            while (end < lines.length && !close.test(lines[end])) ++end;
+            return Math.min(end, lines.length - 1);
+        }
+        let tag = getComponentTag(line);
+        if (!tag) return index;
+        let depth = getTagDepthChange(line, tag);
+        let end = index;
+        let inFence = false;
+        while (depth > 0 && end < lines.length - 1) {
+            ++end;
+            // Tags shown as code examples do not open or close anything.
+            if (/^\s*(```+|~~~+)/.test(lines[end])) {
+                inFence = !inFence;
+            } else if (!inFence) {
+                depth += getTagDepthChange(lines[end], tag);
+            }
+        }
+        // An unclosed plain tag is prose such as "<string> values", not a component.
+        if (depth > 0 && !tag.includes('-')) return index;
+        return end;
+    }
     /**
-     * Split a page into editable segments. Saving joins them with a blank line, so every
-     * line must end up in a segment, and only blank lines may separate them.
+     * Split a page into editable segments: headings, line breaks, and page segments. Content that is
+     * none of these is wrapped in a page segment, which ends where the next page segment, heading, or
+     * line break starts, or at the end of the page. Code blocks and components are never split.
      */
     function splitMarkdownSegments(markdown) {
         let results = [];
         let lines = markdown.replace(/\r\n/g, '\n').split('\n');
-        let text = [];
-        const flushText = () => {
-            if (text.length) results.push({ md: text.join('\n'), mdt: 'text' });
-            text = [];
+        let body = [];
+        const flushBody = () => {
+            while (body.length && body[0].trim() === '') body.shift();
+            while (body.length && body[body.length - 1].trim() === '') body.pop();
+            if (body.length) {
+                results.push({ md: `<webui-page-segment>\n\n${body.join('\n')}\n\n</webui-page-segment>`, mdt: 'segment' });
+            }
+            body = [];
         };
         for (let index = 0; index < lines.length; ++index) {
             let line = lines[index];
-            if (line.trim() === '') {
-                flushText();
+            let trimmed = line.trim();
+            if (/^#{1,6}[ \t]+\S/.test(line)) {
+                flushBody();
+                results.push({ md: line.trimEnd(), mdt: 'heading' });
                 continue;
             }
-            let fence = line.match(/^\s*(```+|~~~+)/);
-            if (fence) {
-                flushText();
-                let end = index + 1;
-                const close = new RegExp(`^\\s*${fence[1]}`);
-                while (end < lines.length && !close.test(lines[end])) ++end;
-                results.push({ md: lines.slice(index, end + 1).join('\n'), mdt: 'text' });
-                index = end;
+            if (/^<webui-line\s*>\s*<\/webui-line>$/i.test(trimmed)) {
+                flushBody();
+                results.push({ md: trimmed, mdt: 'line' });
                 continue;
             }
-            if (line.startsWith('#')) {
-                flushText();
-                results.push({ md: line, mdt: 'heading' });
-                continue;
+            let end = findBlockEnd(lines, index);
+            let block = lines.slice(index, end + 1);
+            if (getComponentTag(line) === 'webui-page-segment' && end > index || /^\s*<webui-page-segment\b.*<\/webui-page-segment>\s*$/i.test(line)) {
+                flushBody();
+                results.push({ md: block.join('\n').trim(), mdt: 'segment' });
+            } else {
+                body.push(...block);
             }
-            let tag = getComponentTag(line);
-            if (tag) {
-                flushText();
-                let depth = getTagDepthChange(line, tag);
-                let end = index;
-                let inFence = false;
-                while (depth > 0 && end < lines.length - 1) {
-                    ++end;
-                    // Tags shown as code examples do not open or close anything.
-                    if (/^\s*(```+|~~~+)/.test(lines[end])) {
-                        inFence = !inFence;
-                    } else if (!inFence) {
-                        depth += getTagDepthChange(lines[end], tag);
-                    }
-                }
-                // An unclosed plain tag is prose such as "<string> values", not a component.
-                if (depth > 0 && !tag.includes('-')) {
-                    text.push(line);
-                    continue;
-                }
-                results.push({ md: lines.slice(index, end + 1).join('\n'), mdt: end > index ? 'ml-comp' : 'sl-comp' });
-                index = end;
-                continue;
-            }
-            text.push(line);
+            index = end;
         }
-        flushText();
+        flushBody();
         return results;
     }
     function convertMarkdownToSegments(markdown) {
@@ -593,6 +602,11 @@
                 });
             });
             sharedDrawerObserver.observe(t._shared, { attributes: true });
+            t.addEventListener('segment-delete', ev => {
+                // The segment removes itself after this event, so leave it out of the page's list now.
+                segments = segments.filter(segment => segment !== ev.target);
+                setTimeout(() => refreshScripts(), 0);
+            });
             t.addEventListener('click', (ev) => {
                 let segment = ev.target.closest('app-markdown-segment');
                 if (segment) {

@@ -1,99 +1,81 @@
 "use strict"
 {
-    const inputTypes = {
-        SINGLE_LINE: 0,
-        MULTI_LINE: 1,
-        NO_INPUT: 2,
-        SPECIAL: 3,
-        DELETE: 4,
-    };
-    const segmentOptions = [
-        { value: '<webui-page-segment>\n\n{}\n\n</webui-page-segment>', display: 'segment', inputType: inputTypes.MULTI_LINE },
-        { value: '# {}', display: 'h1', inputType: inputTypes.SINGLE_LINE },
-        { value: '## {}', display: 'h2', inputType: inputTypes.SINGLE_LINE },
-        { value: '### {}', display: 'h3', inputType: inputTypes.SINGLE_LINE },
-        { value: '#### {}', display: 'h4', inputType: inputTypes.SINGLE_LINE },
-        { value: '##### {}', display: 'h5', inputType: inputTypes.SINGLE_LINE },
-        { value: '###### {}', display: 'h6', inputType: inputTypes.SINGLE_LINE },
-        { value: '<webui-line></webui-line>', display: 'Line Break', inputType: inputTypes.NO_INPUT },
-        { value: '***DELETING CONTENT***', display: 'Delete Segment', inputType: inputTypes.DELETE },
-        { value: '{}', display: 'Raw', inputType: inputTypes.MULTI_LINE },
-    ];
-    const segmentChecks = [
-        segmentOptions[0],
-        segmentOptions[6],
-        segmentOptions[5],
-        segmentOptions[4],
-        segmentOptions[3],
-        segmentOptions[2],
-        segmentOptions[1],
-        segmentOptions[7],
-        segmentOptions[8],
-        segmentOptions[9],
-    ];
-    function getOption(value) {
-        for (let option of segmentOptions) {
-            if (option.value === value) return option;
+    const SEGMENT = 'segment';
+    const LINE_BREAK = 'line break';
+    const HEADINGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+    const TYPES = [SEGMENT, ...HEADINGS, LINE_BREAK];
+    const SEGMENT_OPEN = '<webui-page-segment>';
+    const SEGMENT_CLOSE = '</webui-page-segment>';
+    const LINE_BREAK_MARKDOWN = '<webui-line></webui-line>';
+    /**
+     * Works out a segment's type and text from its markdown. `exact` is true when the markdown is
+     * already in that type's form, so it can be kept as written until the text or type changes.
+     */
+    function parseSegment(markdown) {
+        const trimmed = (markdown || '').trim();
+        if (/^<webui-line\s*>\s*<\/webui-line>$/i.test(trimmed)) {
+            return { type: LINE_BREAK, text: '', exact: true };
         }
-        return segmentOptions.at(-1);
+        // A heading is one line. Text such as #hashtag, with no space, is not a heading.
+        const heading = trimmed.match(/^(#{1,6})[ \t]+(.*)$/);
+        if (heading && !trimmed.includes('\n')) {
+            return { type: HEADINGS[heading[1].length - 1], text: heading[2].trim(), exact: true };
+        }
+        const segment = trimmed.match(/^(<webui-page-segment\b[^>]*>)([\s\S]*)<\/webui-page-segment>$/i);
+        if (segment && !/<\/?webui-page-segment\b/i.test(segment[2])) {
+            return { type: SEGMENT, open: segment[1], text: segment[2].trim(), exact: true };
+        }
+        // Anything else is content that belongs inside a page segment.
+        return { type: SEGMENT, text: trimmed, exact: false };
+    }
+    function isHeading(type) {
+        return HEADINGS.includes(type);
     }
     webui.define("app-markdown-segment", {
         linkCss: true,
-        preload: 'dropdown input-text input-message content',
+        preload: 'switch button flex input-text input-message content',
         constructor() {
             const t = this;
             t._content = t.template.querySelector('webui-content');
-            t._btnEdit = t.template.querySelector('aside webui-button');
+            t._btnEdit = t.template.querySelector('#btn-edit');
             t._btnUndo = t.template.querySelector('#btn-undo');
+            t._btnDelete = t.template.querySelector('#btn-delete');
             t._inputMessage = t.template.querySelector('webui-input-message');
             t._inputText = t.template.querySelector('webui-input-text');
-            t._options = t.template.querySelector('webui-dropdown');
+            t._type = t.template.querySelector('webui-switch');
             t._inputOptions = t.template.querySelector('.input-options');
             t._isEditing = false;
+            t._parsed = parseSegment('');
+            t._segmentType = SEGMENT;
             t._inputValue = '';
-            t._currentOption = segmentOptions.at(-1).value;
-            t._inputType = segmentOptions.at(-1).inputType;
         },
-        attr: [],
-        attrChanged(property, value) {
-            const t = this;
-            switch (property) {
-            }
-        },
+        /** The markdown for the type and text in the editor. */
         buildFinalMarkdown() {
-            let t = this;
-            switch (t._inputType) {
-                case inputTypes.MULTI_LINE:
-                    t._inputValue = t._inputMessage.value;
-                    break;
-                case inputTypes.SINGLE_LINE:
-                    t._inputValue = t._inputText.value;
-                    break;
-                default:
-                    return t._currentOption;
+            const t = this;
+            const type = t._segmentType;
+            if (type === LINE_BREAK) return LINE_BREAK_MARKDOWN;
+            const text = isHeading(type) ? t._inputText.value : t._inputMessage.value;
+            t._inputValue = text;
+            // Unchanged markdown keeps how it was written, such as its spacing and attributes.
+            if (t._parsed.exact && type === t._parsed.type && text === t._parsed.text) {
+                return t._markdown.trim();
             }
-            // A function, because a replacement string would treat $' and $& in the text as patterns.
-            return t._currentOption.replace('{}', () => t._inputValue);
+            if (isHeading(type)) {
+                return `${'#'.repeat(HEADINGS.indexOf(type) + 1)} ${text.replace(/\s*\n\s*/g, ' ').trim()}`;
+            }
+            const open = t._parsed.type === SEGMENT && t._parsed.open ? t._parsed.open : SEGMENT_OPEN;
+            return `${open}\n\n${text.trim()}\n\n${SEGMENT_CLOSE}`;
         },
         connected() {
             const t = this;
             if (t._skipReconnect) {
                 return;
             }
-            t._options.setOptions(segmentOptions);
-            let md = t.dataset.markdown;
-            t.setMarkdown(md || '');
+            t._type.setOptions(TYPES);
+            t.setMarkdown(t.dataset.markdown || '');
             const liveUpdate = () => {
                 if (!t._isEditing) return;
-                let markdown = t.buildFinalMarkdown();
-                switch (t._inputType) {
-                    case inputTypes.SPECIAL:
-                        t._content.setHtml('TODO: Implement Special Displays');
-                        break;
-                    default:
-                        t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(markdown)));
-                        break;
-                }
+                t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(t.buildFinalMarkdown())));
             };
             t._inputMessage.addEventListener('input', liveUpdate);
             t._inputText.addEventListener('input', liveUpdate);
@@ -104,8 +86,7 @@
                     t.classList.add('isEditing');
                 } else {
                     t.classList.remove('isEditing');
-                    let markdown = t.buildFinalMarkdown();
-                    t.setMarkdown(markdown);
+                    t.setMarkdown(t.buildFinalMarkdown());
                 }
             });
             t._btnUndo.addEventListener('click', _ => {
@@ -114,125 +95,63 @@
                 t.classList.remove('isEditing');
                 t.setMarkdown(t._originalMarkdown);
             });
-            t._options.addEventListener('change', ev => {
-                if (t._currentOption !== t._options.value) {
-                    t._currentOption = t._options.value;
-                    t.setInputType(getOption(t._currentOption).inputType);
-                    liveUpdate();
-                }
+            t._btnDelete.addEventListener('click', _ => {
+                // The page leaves this segment out from now on. Leaving the page without saving brings it back.
+                t.dispatchEvent(new CustomEvent('segment-delete', { bubbles: true }));
+                t.remove();
+            });
+            t._type.addEventListener('change', _ => {
+                const type = t._type.value;
+                if (type === t._segmentType) return;
+                // The text carries over, so changing the type never loses what was typed.
+                t._inputValue = isHeading(t._segmentType) ? t._inputText.value : (t._segmentType === LINE_BREAK ? t._inputValue : t._inputMessage.value);
+                t.setSegmentType(type);
+                liveUpdate();
             });
         },
         disconnected() {
             const t = this;
             t._skipReconnect = true;
         },
-        setInputType(inputType) {
-            let t = this;
-            t._inputType = inputType;
-            switch (inputType) {
-                case inputTypes.MULTI_LINE:
-                    if (t._inputMessage.value !== t._inputValue) {
-                        t._inputMessage.value = t._inputValue;
-                    }
-                    t._inputOptions.classList.remove('it-single');
-                    t._inputOptions.classList.add('it-multi');
-                    break;
-                case inputTypes.SINGLE_LINE:
-                    if (t._inputText.value !== t._inputValue) {
-                        t._inputText.value = t._inputValue;
-                    }
-                    t._inputOptions.classList.remove('it-multi');
-                    t._inputOptions.classList.add('it-single');
-                    break;
-                default:
-                    t._inputOptions.classList.remove('it-multi');
-                    t._inputOptions.classList.remove('it-single');
-                    break;
+        /** Shows the input for a type, filled with the current text. */
+        setSegmentType(type) {
+            const t = this;
+            t._segmentType = TYPES.includes(type) ? type : SEGMENT;
+            if (t._type.value !== t._segmentType) t._type.setValue(t._segmentType);
+            t._inputOptions.classList.remove('it-single', 'it-multi');
+            if (isHeading(t._segmentType)) {
+                const text = t._inputValue.replace(/\s*\n\s*/g, ' ').trim();
+                if (t._inputText.value !== text) t._inputText.value = text;
+                t._inputOptions.classList.add('it-single');
+            } else if (t._segmentType === SEGMENT) {
+                if (t._inputMessage.value !== t._inputValue) t._inputMessage.value = t._inputValue;
+                t._inputOptions.classList.add('it-multi');
             }
         },
         setMarkdown(markdown) {
             const t = this;
-            t._markdown = markdown;
-            let foundMatch = false;
-            let mdTrimmed = markdown.trim();
-            segmentChecks.forEach(option => {
-                if (foundMatch) return;
-                if (option.value.indexOf('{}') === -1) {
-                    if (mdTrimmed === option.value) {
-                        foundMatch = true;
-                        t.setInputType(option.inputType);
-                        t._currentOption = option.value;
-                        t.setOption();
-                    }
-                    return;
-                }
-                let [left, right] = option.value.split('{}');
-                // A single line input would drop line breaks, and rewrite #text as # text.
-                if (option.inputType === inputTypes.SINGLE_LINE && (mdTrimmed.includes('\n') || !mdTrimmed.startsWith(left))) {
-                    return;
-                }
-                let leftTrimmed = left.trim();
-                let rightTrimmed = right.trim();
-                if (mdTrimmed.startsWith(leftTrimmed) && mdTrimmed.endsWith(rightTrimmed)) {
-                    foundMatch = true;
-                    t.setInputType(option.inputType);
-                    t._currentOption = option.value;
-                    t._inputValue = mdTrimmed.substring(leftTrimmed.length, mdTrimmed.length - rightTrimmed.length).trim();
-                    t.setOption();
-                }
-            });
-            if (!foundMatch) {
-                t.setInputType(inputTypes.NO_INPUT);
-                webui.log.warn("markdown-segment did not find match", markdown);
-            }
-            switch (t._inputType) {
-                case inputTypes.MULTI_LINE:
-                    if (t._inputValue !== t._inputMessage.value) {
-                        t._inputMessage.value = t._inputValue;
-                    }
-                    break;
-                case inputTypes.SINGLE_LINE:
-                    if (t._inputValue !== t._inputText.value) {
-                        t._inputText.value = t._inputValue;
-                    }
-                    break;
-                default:
-                    break;
-            }
+            t._markdown = markdown || '';
+            t._parsed = parseSegment(t._markdown);
+            t._inputValue = t._parsed.text;
+            t.setSegmentType(t._parsed.type);
             t.render();
         },
-        setOption(attempt) {
-            const t = this;
-            attempt = (attempt || 0) + 1;
-            if (t._options.value !== t._currentOption) {
-                t._options.value = t._currentOption;
-            }
-            if (t._options.value !== t._currentOption) {
-                webui.log.warn('option failed to set %o - %o', t._currentOption, t._options.value);
-                if (attempt > 5) return;
-                setTimeout(() => { t.setOption(attempt); }, 100);
-            }
+        /** The type shown in the editor: segment, h1 to h6, or line break. */
+        getSegmentType() {
+            return this._segmentType;
         },
         getMarkdown() {
             const t = this;
-            if (t._inputType === inputTypes.DELETE) return null;
             if (t._isEditing) {
                 return t.buildFinalMarkdown();
             }
-            return t._markdown;
+            // Before it connects, which waits for its components to load, a segment still has the markdown it was made with.
+            return t._markdown ?? t.dataset.markdown ?? '';
         },
         async render() {
             const t = this;
             await customElements.whenDefined('webui-content');
-            t._content.setHtml('');
-            switch (t._inputType) {
-                case inputTypes.SPECIAL:
-                    t._content.setHtml('TODO: Implement Special Displays');
-                    break;
-                default:
-                    t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(t._markdown)));
-                    break;
-            }
+            t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(t._markdown)));
         },
         shadowTemplate: `
 <style type="text/css">
@@ -301,7 +220,11 @@ display: none;
 </aside>
 <div class="content">
 <div class="input">
-<webui-dropdown></webui-dropdown>
+<webui-flex align="center" gap="var(--padding)">
+<webui-switch label="Segment type"></webui-switch>
+<webui-flex grow></webui-flex>
+<webui-button id="btn-delete" theme="danger" start-icon="emoji-wastebasket" label="Delete" title="Delete this segment"></webui-button>
+</webui-flex>
 <div class="input-options">
 <webui-input-text></webui-input-text>
 <webui-input-message></webui-input-message>

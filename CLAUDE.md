@@ -21,6 +21,7 @@ cargo test -p taskproxy <name>   # Run one Rust test by name filter
 npm test                         # UI tests against the source files (npm install first)
 npm run test:min                 # UI tests against the .min.js files, as CI runs them
 npx playwright test -g "<name>"  # Run UI tests by name
+npm run capture                  # Regenerate the website's screenshots and videos (tools/capture/README.md)
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
 ```
 
@@ -29,7 +30,7 @@ Rust tests are `#[cfg(test)]` modules in `src-tauri/src`. They need `dist/` to e
 UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.mjs` serves the frontend straight from the repo with no build or server, and `tests/support/backend.mjs` stands in for every Tauri command through a mock `window.__TAURI__`. Each `wc/` component has a spec in `tests/components/`, and app-wide behavior is in `tests/app/`. `tests/coverage.spec.mjs` fails when a component has no spec, or when a command called from `app.js` is not registered in `lib.rs` or not mocked. Any uncaught error fails the test it happens in.
 
 - **UI tests load `webui-*` components from the live CDN,** so a CDN deploy that breaks the app fails them, and a slow CDN can make one retry. They need network access. Set `WEBUI_CDN_ROOT` to a MyFiCDN checkout's `cdn` folder to test against components that are not deployed yet. When an app change depends on a CDN change, deploy the CDN first, or CI fails.
-- **`npm test` runs the sources and CI runs the `.min.js` files,** so after re-minifying, run `npm run test:min` before pushing.
+- **`npm test` runs the sources and CI runs the minified files,** for both `.min.js` and `app.min.css`, so after re-minifying, run `npm run test:min` before pushing.
 
 ## Things that will catch you out
 

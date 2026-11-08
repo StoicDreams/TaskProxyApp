@@ -22,7 +22,9 @@
     <webui-content slot="content" nodetach>
         <webui-page-segment>
         - **Modular Segments**: Custom pages are built using segmented blocks (`<app-markdown-segment>`). Click **Add** to insert a new block.
-        - **Live Editing**: Click the pencil icon on a segment to enter edit mode. You can write standard markdown or use Web UI components directly in the block.
+        - **Live Editing**: Click the pencil icon on a segment to enter edit mode. Choose its type at the top: **segment** for text, a heading from **h1** to **h6**, or **line break**. A segment can hold standard markdown and Web UI components.
+        - **Deleting**: Click **Delete** while editing a segment to remove it. The page keeps it until you save, so leaving without saving brings it back.
+        - **Page Layout**: Content that is not a heading or line break is kept in a segment. When a page opens, any loose content is wrapped in a segment that runs until the next heading, line break, or segment.
         - **Data Binding**: Any variables defined in your Project or Global scopes (or explicitly listed via `data-bind`) are dynamically injected when the page renders.
         - **Reordering & Saving**: Drag segments by their handles to reorder content, and click **Save** in the top or bottom toolbar to commit the full page layout.
         </webui-page-segment>
