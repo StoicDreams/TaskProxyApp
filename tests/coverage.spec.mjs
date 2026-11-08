@@ -31,7 +31,9 @@ test('the mock backend answers every registered command', () => {
 test('app.min.css has every rule in app.css', () => {
     // The app loads app.min.css, so a rule missing from it never reaches the app, while npm test still passes on app.css.
     const selectors = css => [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
-        .map(match => match[1].replace(/::(before|after)/g, ':$1').replace(/\s*([>+~,])\s*/g, '$1').replace(/\s+/g, ' ').trim());
+        .map(match => match[1].replace(/::(before|after)/g, ':$1').replace(/\s*([>+~,])\s*/g, '$1').replace(/\s+/g, ' ').trim()
+            // Minifiers drop the quotes around attribute values that do not need them.
+            .replace(/\[([\w-]+)([~|^$*]?=)(["'])([\w-]+)\3\]/g, '[$1$2$4]'));
     const minified = selectors(read('../css/app.min.css'));
     expect(selectors(read('../css/app.css')).filter(selector => !minified.includes(selector)), 'Regenerate css/app.min.css from css/app.css').toEqual([]);
 });

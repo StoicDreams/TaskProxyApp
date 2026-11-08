@@ -228,6 +228,50 @@ test.describe('page scripts', () => {
         await openPage(page, '<webui-data data-page-title="T" data-page-subtitle="" data-target="prod"></webui-data>\n\n' + scriptPage("$target = 'dev'"));
         expect(await runScript(page)).toContain("$target = 'prod'");
     });
+    test('a value typed into a bound input replaces the default in the script', async ({ page }) => {
+        // The example in the page help.
+        await openPage(page, '<webui-input-text label="Version" data-bind="Version"></webui-input-text>\n\n' + scriptPage("$Version = '1.0.0'"));
+        await page.locator('app-page-handler webui-input-text[label="Version"] input').fill('2.1.0');
+        expect(await runScript(page)).toContain("$Version = '2.1.0'");
+    });
+});
+test.describe('help', () => {
+    const openHelp = async page => {
+        const help = page.locator('app-page-handler > webui-page-help');
+        await expect(help.locator('button.bubble')).toBeVisible();
+        await help.locator('button.bubble').click();
+        await expect(help.locator('.panel h2')).toHaveText('Page Help');
+        return help;
+    };
+    test('the page help guides writing pages, and is not saved with the page', async ({ page }) => {
+        await openPage(page, '# One');
+        const help = await openHelp(page);
+        const tabs = help.locator('webui-tabs').first().locator(':scope > webui-button');
+        await expect(tabs).toHaveText(['Editing Pages', 'Markdown', 'Scripts & Variables', 'HTML & Components']);
+        await tabs.nth(1).click();
+        await expect(help.getByText('Segments are written in markdown.')).toBeVisible();
+        // The guide's scripts are examples, so they get no run button.
+        await tabs.nth(2).click();
+        await expect(help.locator('webui-code[language="pwsh"]')).toBeVisible();
+        await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(0);
+        await save(page);
+        expect((await saved(page)).contents).toBe('<webui-data data-page-title="" data-page-subtitle=""></webui-data>\n\n# One');
+    });
+    test('the help lists the Web UI components a page can use, without changing the url', async ({ page }) => {
+        await openPage(page, '# One');
+        const help = await openHelp(page);
+        await help.locator('webui-tabs').first().locator(':scope > webui-button').nth(3).click();
+        const buttons = help.locator('webui-components webui-tabs > webui-button');
+        await expect(buttons.first()).toBeVisible();
+        const names = await buttons.evaluateAll(list => list.map(b => b.textContent.trim()));
+        expect(names).toContain('webui-alert');
+        expect(names).toContain('webui-input-text');
+        for (const name of ['webui-app', 'webui-page-help', 'webui-components', 'app-template']) expect(names).not.toContain(name);
+        const url = page.url();
+        await buttons.nth(names.indexOf('webui-alert')).click();
+        await expect(help.locator('webui-components webui-content[src$="/webui-alert.md"]')).toContainText('webui-alert');
+        expect(page.url()).toBe(url);
+    });
 });
 
 test.describe('segment layout', () => {

@@ -15,6 +15,17 @@
     let pageDataComponent = '';
     let lastScannedMarkdown = null;
     let currentLoad = 0;
+    let pageHelp = null;
+    /** Empties the page but keeps its help, which is not part of the page's markdown. */
+    function clearPage() {
+        if (!pageHelp) {
+            pageHelp = webui.create('webui-page-help', { heading: 'Page Help', html: '<webui-content src="d/help/page_guide.md"></webui-content>' });
+        }
+        Array.from(comp.childNodes).forEach(node => {
+            if (node !== pageHelp) node.remove();
+        });
+        if (pageHelp.parentNode !== comp) comp.prepend(pageHelp);
+    }
     const variableKeyNames = new Map();
     const variableRegexes = new Map();
     webui.currentPageVariables = [];
@@ -68,7 +79,7 @@
         if (error && !error.includes('File not found')) {
             // Saving now would replace the file with an empty page.
             myFile = '';
-            comp.innerHTML = '';
+            clearPage();
             comp.appendChild(webui.create('webui-alert', { show: true, variant: 'danger', html: webui.escapeForHTML(`This page could not be loaded. ${error}`) }));
             return;
         }
@@ -138,7 +149,7 @@
             webui.setData('page-subtitle', '');
             markdown = mdTrimmed;
         }
-        comp.innerHTML = '';
+        clearPage();
         lastScannedMarkdown = null;
         let hiddenDataNode = webui.create('div', { style: 'display:none;', html: sanitizeProjectHtml(pageDataComponent) });
         comp.appendChild(hiddenDataNode);
@@ -589,7 +600,7 @@
         }
     }
     webui.define("app-page-handler", {
-        preload: 'app:markdown-segment app:files dropdown input-text input-message code',
+        preload: 'app:markdown-segment app:files dropdown input-text input-message code page-help',
         constructor() {
             const t = this;
             comp = t;
@@ -667,6 +678,7 @@
             segments = [];
             lastScannedMarkdown = null;
             pageDataComponent = '';
+            pageHelp = null;
         }
     });
 }
