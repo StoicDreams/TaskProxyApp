@@ -6,7 +6,8 @@
     "test": "playwright test --project=source",
     "test:ui": "playwright test --project=source --ui",
     "test:min": "playwright test --project=min",
-    "test:report": "playwright show-report"
+    "test:report": "playwright show-report",
+    "capture": "playwright test -c tools/capture/playwright.config.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1"

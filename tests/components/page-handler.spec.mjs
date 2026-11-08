@@ -84,6 +84,15 @@ test.describe('saving', () => {
         expect(contents).toContain('data-page-title="New &quot;Title&quot;"');
         expect(contents).toContain('# Heading');
     });
+    test('a page with no title can be given one from the header', async ({ page }) => {
+        await openPage(page, '# Heading');
+        const title = page.locator('header h1');
+        await expect(title).toBeVisible();
+        await title.click();
+        await page.locator('webui-input-text[name="pageTitle"] input').fill('Named');
+        await dialogButton(page, 'Save').click();
+        await expect(title).toHaveText('Named');
+    });
     test('the title editor shows the current title as written', async ({ page }) => {
         await openPage(page, '<webui-data data-page-title="A &amp; B" data-page-subtitle="Sub"></webui-data>\n\n# Heading');
         await page.locator('header h1').click();

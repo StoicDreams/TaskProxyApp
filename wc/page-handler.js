@@ -609,6 +609,8 @@
                 t._headerTitle.addEventListener('click', onTitleClick);
                 t._headerTitle.style.cursor = 'pointer';
                 t._headerTitle.setAttribute('title', 'Edit Page Title');
+                // Shows a placeholder when the title is empty, which would otherwise leave nothing to click.
+                t._headerTitle.classList.add('editable-title');
             }
             if (t._headerSubtitle) {
                 t._headerSubtitle.addEventListener('click', onTitleClick);
@@ -633,6 +635,7 @@
                 t._headerTitle.removeEventListener('click', onTitleClick);
                 t._headerTitle.style.cursor = '';
                 t._headerTitle.removeAttribute('title');
+                t._headerTitle.classList.remove('editable-title');
             }
             if (t._headerSubtitle) {
                 t._headerSubtitle.removeEventListener('click', onTitleClick);

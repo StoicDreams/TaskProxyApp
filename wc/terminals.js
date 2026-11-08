@@ -75,11 +75,12 @@
         <webui-button id="btn-remove-finished" theme="secondary" label="Remove Finished Page Scripts"></webui-button>
         <webui-button id="btn-clear" theme="secondary" label="Clear Output" style="margin-left: auto;"></webui-button>
     </webui-flex>
-    <webui-flex column>
+    <!-- The script scrolls when it is long, so the terminal below always keeps its space. -->
+    <webui-flex column style="flex: 0 1 auto; min-height: 120px; overflow: auto;">
         <label style="font-weight: bold; margin-bottom: 0.25rem;">Script Content:</label>
-        <app-script-runner id="term-runner" style="height: 100%; min-height: 120px;"></app-script-runner>
+        <app-script-runner id="term-runner" style="min-height: 120px;"></app-script-runner>
     </webui-flex>
-    <webui-flex column style="min-height: 40vh; flex-grow: 1;">
+    <webui-flex column style="flex: 1 0 40vh; min-height: 40vh;">
         <label style="font-weight: bold; margin-bottom: 0.25rem;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal:</label>
         <app-terminal-view id="term-console" style="flex-grow: 1;"></app-terminal-view>
     </webui-flex>

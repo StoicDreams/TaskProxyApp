@@ -25,7 +25,7 @@ function resolveFile(pathname, useMinified) {
     for (const folder of ['root_files', '']) {
         const file = normalize(join(ROOT, folder, relative));
         if (!file.startsWith(ROOT.replace(/[\\/]+$/, '') + sep)) continue;
-        const candidates = !useMinified && file.endsWith('.min.js') ? [file.replace(/\.min\.js$/, '.js'), file] : [file];
+        const candidates = !useMinified && /\.min\.(js|css)$/.test(file) ? [file.replace(/\.min\.(js|css)$/, '.$1'), file] : [file];
         for (const candidate of candidates) {
             if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
         }

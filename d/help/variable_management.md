@@ -6,7 +6,7 @@
         <webui-page-segment>
         Variables in Task Proxy are prioritized by scope to allow local overrides of broader settings. When a variable is requested, Task Proxy checks in this order:
         1. **Page Scope**: Variables defined only for the currently active page. Highest priority.
-        2. **Project Scope**: Variables saved to the `.taskproxy` configuration. Useful for project-wide defaults.
+        2. **Project Scope**: Variables defined for this project. Their names and defaults are saved in `.taskproxy`, and the values you enter stay encrypted on your computer.
         3. **Global Scope**: Variables saved in the app's secure local storage, persisting across all projects. Useful for personal secrets (like API keys or PATs).
         </webui-page-segment>
     </webui-content>
@@ -16,7 +16,7 @@
         <webui-page-segment>
         - **Switching**: Use the Environment dropdown in the Project tab to swap between different variable sets (e.g., `dev`, `prod`).
         - **Managing**: Click **Manage** to rename existing environments, delete them, or create new ones.
-        - **Storage**: Environment profiles are saved to your project's `.taskproxy/Variables.json` and are synced when you commit project changes.
+        - **Storage**: Each environment's values are encrypted and kept on your computer, so they are not committed. Variable names, types, and default values are saved to `.taskproxy/Variables.json`, which is committed with your project.
         </webui-page-segment>
     </webui-content>
 

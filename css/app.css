@@ -30,7 +30,33 @@ body.dragging * {
     pointer-events: none;
 }
 
+.placeholder {
+    display: flex;
+    border: 5px dashed var(--color-info);
+    background-color: var(--theme-color, var(--color-warning));
+    height: 30px;
+    opacity: 0.5;
+    justify-content: center;
+    align-items: center;
+}
+
+.placeholder::before {
+    content: "Placeholder";
+}
+
 app-nav-preview {
     display: flex;
     flex-direction: column;
+}
+
+/* A user page with no title still needs something to click to give it one. */
+/* Web UI hides empty headings, so this one is shown again. */
+header h1.editable-title:empty {
+    display: block;
+}
+
+header h1.editable-title:empty::before {
+    content: 'Add a title';
+    font-style: italic;
+    opacity: 0.7;
 }

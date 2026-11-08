@@ -2,7 +2,7 @@
     <webui-button slot="tabs">Script Manager</webui-button>
     <webui-content slot="content" nodetach>
         <webui-page-segment>
-        - **Editing Scripts**: Use the script dropdown to load existing `.ps1` files from your project's `.taskproxy/scripts` folder, or click **New Script** to start from scratch.
+        - **Editing Scripts**: Use the script dropdown to load any `.ps1` file in your project, or click **New Script** to start from scratch.
         - **Automatic Parameters**: Task Proxy automatically detects `param()` blocks in your PowerShell scripts and generates input fields or toggle switches for them directly above the script preview.
         - **Live Preview**: The command preview automatically builds the exact execution string (including your parameter inputs) that will be sent to the terminal. Toggle **Full Path** to switch between relative and absolute execution paths.
         - **Execution**: Click **Run** to immediately execute the script in a background terminal.
