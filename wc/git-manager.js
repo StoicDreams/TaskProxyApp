@@ -22,6 +22,15 @@
         return settings;
     }
     const beforeCommitTerminal = 'Before Commit';
+    /** The open project, kept so work that outlasts a project switch can tell it is no longer open. */
+    function currentOrigin() {
+        const path = webui.projectData?.path;
+        const name = webui.getData('app-current-project')?.display || `${path ?? ''}`.split('/').filter(Boolean).pop() || 'Project';
+        return { path, name, data: webui.projectData };
+    }
+    function isElsewhere(origin) {
+        return webui.projectData?.path !== origin.path;
+    }
     /**
      * Splits PowerShell text into the parts outside strings and comments, so brackets and commas
      * inside them are not mistaken for code. Each part is [text, isCode].
@@ -472,8 +481,10 @@
         /**
          * Runs the repo's before commit script, with the Terminals panel open to show it, then refreshes the
          * changes it made. Resolves to whether the commit should go ahead.
+         * The user can switch projects while it runs, so from then on it reports through the app's alerts,
+         * and leaves the Git Controller showing the project that is open now.
          */
-        async runBeforeCommit(repo) {
+        async runBeforeCommit(repo, origin, excluded) {
             const t = this;
             const path = getBeforeCommit().scripts[repo];
             if (!path) return true;
@@ -495,7 +506,6 @@
             helpers.getState().activeId = beforeCommitTerminal;
             // Choices made in the Git Controller are not shown to other files, so the masked copy is the same.
             const wrapper = buildBeforeCommitScript(path, parameters, values);
-            const excluded = new Set(t._files.filter(file => file.state === includeStates.exclude).map(file => file.fileName));
             t.setAlert(`Running ${path} before committing...`, 'info');
             let finished;
             try {
@@ -505,18 +515,27 @@
                 document.querySelector('app-terminals')?.openDrawer();
                 finished = await finished;
             } catch (err) {
-                t.setAlert(`${path} could not run, so nothing was committed: ${err?.message ?? err}`, 'danger');
+                t.reportFor(origin, `${path} could not run, so nothing was committed: ${err?.message ?? err}`, 'danger');
                 return false;
             }
+            const moved = isElsewhere(origin);
             // The script can change files, such as minified copies and version numbers, so show what it changed.
-            await t.loadRepoChanges(excluded);
+            if (!moved) await t.loadRepoChanges(excluded);
             if (finished !== 0) {
                 const how = finished === null ? 'was stopped' : `failed with exit code ${finished}`;
-                t.setAlert(`${path} ${how}, so nothing was committed. Its output is in the Terminals panel.`, 'danger');
+                t.reportFor(origin, `${path} ${how}, so nothing was committed. Its output is in the Terminals panel.`, 'danger');
                 return false;
             }
-            document.querySelector('webui-drawer.shared')?.classList.remove('open');
+            if (!moved) document.querySelector('webui-drawer.shared')?.classList.remove('open');
             return true;
+        },
+        /** Shows a message here, or as an app alert naming the project when another project is open now. */
+        reportFor(origin, message, type) {
+            if (isElsewhere(origin)) {
+                webui.alert(`${origin.name}: ${message}`, type);
+            } else {
+                this.setAlert(message, type);
+            }
         },
         async commit() {
             const t = this;
@@ -536,7 +555,15 @@
                 t.setAlert('Select at least one file to commit.', 'warning');
                 return;
             }
-            if (!await t.runBeforeCommit(repo)) return;
+            // The before commit script can take a while, and the commit belongs to the project it started in.
+            const origin = currentOrigin();
+            const syncAfter = t._toggleSync.value === true || t._toggleSync.value === 'true';
+            const excluded = new Set(t._files.filter(file => file.state === includeStates.exclude).map(file => file.fileName));
+            if (!await t.runBeforeCommit(repo, origin, excluded)) return;
+            if (isElsewhere(origin)) {
+                await t.commitElsewhere(origin, repo, message, excluded, syncAfter);
+                return;
+            }
             // Taken after the script, which can add or change files.
             let files = includedFiles();
             if (files.length === 0) {
@@ -547,7 +574,7 @@
             if (result) {
                 t.setAlert(result, 'success');
                 t.clearMessage();
-                if (t._toggleSync.value === true || t._toggleSync.value === 'true') {
+                if (syncAfter) {
                     t.setAlert('Commit successful. Syncing with remote...', 'info');
                     let syncResult = await webui.proxy.git.sync(repo, msg => t.setAlert(msg));
                     if (syncResult) {
@@ -556,6 +583,35 @@
                 }
             }
             t.loadRepoChanges();
+        },
+        /**
+         * Commits in a project the user switched away from while its before commit script ran. The files are
+         * chosen the way the Git Controller would have shown them, from that project's changes and settings.
+         */
+        async commitElsewhere(origin, repo, message, excluded, syncAfter) {
+            const t = this;
+            const report = (text, type) => t.reportFor(origin, text, type);
+            const changes = await webui.proxy.git.getChanges(repo, msg => report(`${msg} Nothing was committed.`, 'danger'), origin.path);
+            if (!changes) return;
+            const ignored = new Set(origin.data.data?._gitIgnoreFiles || []);
+            const files = changes
+                .filter(line => line && line.length >= 3)
+                .map(line => parseChange(line, repo))
+                .filter(file => !ignored.has(`${file.repo}/${file.fileName}`) && !excluded.has(file.fileName))
+                .map(file => file.fileName);
+            if (files.length === 0) {
+                report('No files are left to commit.', 'warning');
+                return;
+            }
+            const result = await webui.proxy.git.commit(repo, files, message, msg => report(msg, 'danger'), origin.path);
+            if (!result) return;
+            const messages = origin.data.data?._gitCommitMessages;
+            if (messages && repo in messages) {
+                delete messages[repo];
+                webui.proxy.saveProjectData(undefined, origin.data);
+            }
+            // Syncing pulls into the open project and uses its token, so it waits until this project is open again.
+            report(syncAfter ? `${result} Sync it from the Git Controller once this project is open again.` : result, 'success');
         },
         async loadRepos() {
             let t = this;

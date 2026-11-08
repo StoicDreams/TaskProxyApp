@@ -731,6 +731,66 @@ Write-Host 'done'
         await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
         expect(await calls(page, 'git_commit')).toEqual([]);
     });
+    test.describe('switching projects while the script runs', () => {
+        const projects = [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }];
+        const openBoth = page => open(page, {}, {
+            projects,
+            scripts: [SCRIPT],
+            files: { [SCRIPT]: PUBLISH },
+            appData: { 'app-trusted-projects': ['/repo'] },
+            data: { ...saved, _gitIgnoreFiles: ['/c.txt'] },
+        });
+        const switchToOther = async page => {
+            await page.evaluate(() => {
+                window.__alerts = [];
+                const original = webui.alert;
+                webui.alert = function (...args) { window.__alerts.push(args); return original.apply(this, args); };
+                webui.setData('app-current-project', { value: '/other', display: 'Other' });
+            });
+            await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/other');
+            // The other project opens its last page, then the user goes to its Git Controller.
+            await expect.poll(() => page.evaluate(() => location.pathname)).toBe('/');
+            await page.waitForTimeout(100);
+            await page.evaluate(() => webui.navigateTo('/git-controller'));
+            await expect.poll(() => page.evaluate(() => location.pathname)).toBe('/git-controller');
+            await manager(page).locator('.files button.file').first().waitFor();
+        };
+        const alerts = page => page.evaluate(() => window.__alerts);
+
+        test('the commit goes to the project the script started in', async ({ page }) => {
+            await openBoth(page);
+            await expect(field(page, 'Version')).toHaveCount(1);
+            await include(page, 'b.txt').selectOption('0');
+            await manager(page).evaluate(el => { el._toggleSync.value = true; });
+            await commit(page);
+            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await switchToOther(page);
+            await page.evaluate(() => window.__backend.git.changes.push(' M a.min.txt'));
+            await finish(page, 0);
+            await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
+            // The file left out and the ignored file stay out, and the script's change goes in.
+            expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt', 'a.min.txt'], message: 'msg', project: '/repo' });
+            expect((await calls(page, 'get_git_changes')).at(-1)).toEqual({ path: '', project: '/repo' });
+            await expect.poll(() => alerts(page)).toEqual([['Repo: Commit successful. Sync it from the Git Controller once this project is open again.', 'success']]);
+            // Syncing would pull into the open project, so it waits.
+            expect(await calls(page, 'git_sync')).toEqual([]);
+            // The sent message is cleared from the project it was written in.
+            await expect.poll(async () => (await calls(page, 'save_project_data')).filter(call => call.data.path === '/repo').at(-1)?.data.data._gitCommitMessages).toEqual({});
+            expect(page.url()).toContain('/git-controller');
+            expect(await page.evaluate(() => webui.projectData.path)).toBe('/other');
+        });
+        test('a script that fails after switching says which project it was for, and commits nothing', async ({ page }) => {
+            await openBoth(page);
+            await expect(field(page, 'Version')).toHaveCount(1);
+            await commit(page);
+            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await switchToOther(page);
+            await finish(page, 1);
+            await expect.poll(() => alerts(page)).toEqual([[`Repo: ${SCRIPT} failed with exit code 1, so nothing was committed. Its output is in the Terminals panel.`, 'danger']]);
+            await page.waitForTimeout(200);
+            expect(await calls(page, 'git_commit')).toEqual([]);
+        });
+    });
     test('a required parameter must be filled in before the script runs', async ({ page }) => {
         await openWith(page, { _gitBeforeCommit: { scripts: { '': SCRIPT }, values: { [SCRIPT]: { ...VALUES, Note: ' ' } } } });
         await expect(field(page, 'Version')).toHaveCount(1);

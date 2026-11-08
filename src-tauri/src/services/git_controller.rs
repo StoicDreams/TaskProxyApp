@@ -19,6 +19,54 @@ fn get_repo_path(state: &State<'_, CurrentProject>, repo: &str) -> Result<PathBu
     Ok(path)
 }
 
+/// The root of the project a command is for: the open project, or another saved project the UI names,
+/// such as one a commit started in before the user switched away.
+fn project_root(current: &str, known: &[Project], wanted: Option<&str>) -> Result<PathBuf, String> {
+    let normalize = |path: &str| path.replace('\\', "/");
+    let Some(wanted) = wanted.map(normalize) else {
+        if current.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
+        return Ok(PathBuf::from(current));
+    };
+    if wanted.is_empty() {
+        return Err(String::from("Project not loaded."));
+    }
+    if normalize(current) == wanted
+        || known
+            .iter()
+            .any(|project| normalize(&project.path) == wanted)
+    {
+        return Ok(PathBuf::from(wanted));
+    }
+    Err(format!("{} is not one of your projects.", wanted))
+}
+
+fn get_project_repo_path(
+    state: &State<'_, CurrentProject>,
+    projects: &State<'_, SharedProjects>,
+    project: Option<&str>,
+    repo: &str,
+) -> Result<PathBuf, String> {
+    if project.is_none() {
+        return get_repo_path(state, repo);
+    }
+    let current = state
+        .lock()
+        .map_err(|err| format!("State failure: {}", err))?
+        .path
+        .clone();
+    let known = projects
+        .lock()
+        .map_err(|err| format!("State failure: {}", err))?
+        .clone();
+    let mut path = project_root(&current, &known, project)?;
+    if !repo.is_empty() {
+        path.push(safe_relative_path(repo)?);
+    }
+    Ok(path)
+}
+
 fn get_git_credentials(app_handle: &AppHandle) -> Option<String> {
     let pat_keys = ["git_pat", "github_pat"];
     if let Ok(project_state) = crate::appdata::get_state_data::<ProjectData>(app_handle) {
@@ -566,9 +614,11 @@ pub(crate) async fn git_commit(
     repo: String,
     files: Vec<String>,
     message: String,
+    project: Option<String>,
     state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
 ) -> Result<String, String> {
-    let git_path = get_repo_path(&state, &repo)?;
+    let git_path = get_project_repo_path(&state, &projects, project.as_deref(), &repo)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
         commit_files(&repository, &git_path, &files, &message)
@@ -710,9 +760,11 @@ pub(crate) async fn get_git_repos(state: State<'_, CurrentProject>) -> Result<Ve
 #[tauri::command]
 pub(crate) async fn get_git_changes(
     path: String,
+    project: Option<String>,
     state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
 ) -> Result<Vec<String>, String> {
-    let git_path = get_repo_path(&state, &path)?;
+    let git_path = get_project_repo_path(&state, &projects, project.as_deref(), &path)?;
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
         collect_changes(&repository)
@@ -1316,6 +1368,44 @@ fn restore_all(repository: &Repository, git_path: &Path) -> Result<String, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn saved(path: &str) -> Project {
+        Project {
+            name: String::from("Saved"),
+            path: String::from(path),
+        }
+    }
+
+    #[test]
+    fn project_root_is_the_open_project_when_none_is_named() {
+        assert_eq!(project_root("/open", &[], None), Ok(PathBuf::from("/open")));
+        assert!(project_root("", &[], None).is_err());
+    }
+
+    #[test]
+    fn project_root_can_be_another_saved_project() {
+        let known = [saved("C:\\work\\first"), saved("/work/second")];
+        assert_eq!(
+            project_root("/open", &known, Some("/work/second")),
+            Ok(PathBuf::from("/work/second"))
+        );
+        // Windows paths match either way the slashes are written.
+        assert_eq!(
+            project_root("/open", &known, Some("C:/work/first")),
+            Ok(PathBuf::from("C:/work/first"))
+        );
+        assert_eq!(
+            project_root("/open", &[], Some("/open")),
+            Ok(PathBuf::from("/open"))
+        );
+    }
+
+    #[test]
+    fn project_root_refuses_a_folder_that_is_not_a_project() {
+        let known = [saved("/work/second")];
+        assert!(project_root("/open", &known, Some("/etc")).is_err());
+        assert!(project_root("/open", &known, Some("")).is_err());
+    }
 
     fn commit_all(repo: &Repository, message: &str) -> git2::Oid {
         let mut index = repo.index().unwrap();

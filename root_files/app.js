@@ -158,8 +158,9 @@
             }
         }
         git = {
-            commit: (repo, files, message, err) => invokeGit('git_commit', { repo, files, message }, err),
-            getChanges: (path, err) => invokeGit('get_git_changes', { path }, err),
+            // project is the path of the project to commit in, when it is not the open one.
+            commit: (repo, files, message, err, project) => invokeGit('git_commit', project ? { repo, files, message, project } : { repo, files, message }, err),
+            getChanges: (path, err, project) => invokeGit('get_git_changes', project ? { path, project } : { path }, err),
             getChangeStats: (repo, err) => invokeGit('get_git_change_stats', { repo }, err),
             getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),
             getRepos: (err) => invokeGit('get_git_repos', {}, err),
@@ -324,8 +325,13 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(errHandler);
         }
-        saveProjectData(errHandler) {
+        /** Saves the open project, or data, a project that is no longer open, without making it the open one. */
+        saveProjectData(errHandler, data) {
             errHandler ??= defaultErrHandler;
+            if (data && data !== webui.projectData) {
+                if (!data.id) return;
+                return tauri.core.invoke('save_project_data', { data }).catch(errHandler);
+            }
             if (!webui.projectData || !webui.projectData.id) {
                 return;
             }
