@@ -2,7 +2,7 @@
 
 <img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
-[Version: 0.1.94](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.95](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
@@ -22,7 +22,7 @@ Task Proxy is a lightweight, cross-platform developer tool designed to manage do
 ## Core Capabilities
 
 - **Project Management:** Create, add, and switch between multiple isolated workspaces instantly.
-- **Git Controller:** Authenticate via Personal Access Tokens (PAT) to commit, sync, fetch, push, pull, branch, and stash directly from the UI, featuring a built-in diff viewer.
+- **Git Controller:** Authenticate via Personal Access Tokens (PAT) to commit, sync, fetch, push, pull, branch, and stash directly from the UI, featuring a built-in diff viewer, and a script of your choice that runs before each commit.
 - **Terminal & Script Manager:** Write parameterized PowerShell (`.ps1`) scripts with auto-generated UI inputs, and execute them in live background terminals or separate OS windows.
 - **Docs & Nav Management:** Manage standard repository markdown files (e.g., `readme.md`) and create custom, modular Task Proxy pages using live data bindings and components.
 

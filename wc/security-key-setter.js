@@ -30,7 +30,6 @@
             t._gen = t.template.querySelector('webui-button[theme="secondary"]');
             t._input = t.template.querySelector('webui-input-message');
         },
-        linkCss: true,
         async connected() {
             const t = this;
             await whenProxyReady();

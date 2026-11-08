@@ -23,6 +23,8 @@ npm run test:min                 # UI tests against the .min.js files, as CI run
 npx playwright test -g "<name>"  # Run UI tests by name
 npm run capture                  # Regenerate the website's screenshots and videos (tools/capture/README.md)
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
+pwsh ./PowerShell/Minify.ps1                      # Regenerate every .min.js and .min.css with esbuild
+pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, then CI's tests (-SkipMinify, -SkipTests, -Version minor)
 ```
 
 Rust tests are `#[cfg(test)]` modules in `src-tauri/src`. They need `dist/` to exist, because `generate_context!` embeds it, so run `trunk build` first on a fresh checkout. Git logic is tested against real temporary repositories, so keep it in plain functions that take a `Repository`, with the `#[tauri::command]` as a thin wrapper.
@@ -31,11 +33,12 @@ UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.m
 
 - **UI tests load `webui-*` components from the live CDN,** so a CDN deploy that breaks the app fails them, and a slow CDN can make one retry. They need network access. Set `WEBUI_CDN_ROOT` to a MyFiCDN checkout's `cdn` folder to test against components that are not deployed yet. When an app change depends on a CDN change, deploy the CDN first, or CI fails.
 - **`npm test` runs the sources and CI runs the minified files,** for both `.min.js` and `app.min.css`, so after re-minifying, run `npm run test:min` before pushing.
+- **`tests/app/service-worker.spec.mjs` and `tests/app/scripts.spec.mjs` are shared** with every website and MyFiCDN, so change them in all of them at once. The script tests run the `PowerShell/` scripts in temporary folders and need `pwsh`.
 
 ## Things that will catch you out
 
 - **Pushing to `main` releases.** `.github/workflows/deploy.yml` runs on every push to `main`: after the backend tests pass, it builds, signs, and publishes to the CDN and the app catalog. There is no separate PR workflow.
-- **The app runs `.min.js` files, and they are committed.** `index.html`, the worker registration, and the component loader all reference minified files, so editing `wc/foo.js`, `root_files/app.js`, or `css/app.css` has no effect until the matching `.min` file is regenerated. The maintainer does this with a minifier bound to a keyboard shortcut in their IDE, so no minify step exists in the repo. Don't edit or generate `.min` files; after changing a source file, list the ones that need re-minifying. Both versions get committed.
+- **The app runs `.min.js` files, and they are committed.** `index.html`, the worker registration, and the component loader all reference minified files, so editing `wc/foo.js`, `root_files/app.js`, or `css/app.css` has no effect until the matching `.min` file is regenerated. The maintainer regenerates them with `PowerShell/Minify.ps1`, which downloads and runs the latest esbuild, or a minifier bound to a keyboard shortcut in their IDE. Don't edit or generate `.min` files unless asked; after changing a source file, list the ones that need re-minifying. Both versions get committed.
 - **Don't open devtools during startup.** On WebKitGTK, attaching the inspector in the setup hook hung the page right after first render on a profile with existing WebKit data, while a fresh profile looked fine. Set `TASKPROXY_DEVTOOLS=1` to opt in for a debug run, or use the page's context menu.
 - **Don't bump versions by hand.** The version lives in `Cargo.toml`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` (`version` and `userAgent`), `deploy.yml`, `Docs/README.md`, and `root_files/service-worker{,.min}.js`. `IncrementVersion.ps1` updates them all.
 - **`src/` is not the app.** The root `taskproxy-ui` crate is an empty WASM stub that Trunk builds. The backend is the `taskproxy` crate in `src-tauri/`, and the frontend is `wc/`, `root_files/`, `d/`, `css/`, and `index.html`.

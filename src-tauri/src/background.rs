@@ -2,6 +2,14 @@ use crate::prelude::*;
 
 const DEFAULT_SAVE_INTERVAL_MINUTES: u64 = 20;
 
+/// How long to wait between autosaves: the chosen number of minutes from 1 to 60, or the default otherwise.
+fn save_interval(chosen_minutes: Option<u64>) -> Duration {
+    let minutes = chosen_minutes
+        .filter(|minutes| (1..=60).contains(minutes))
+        .unwrap_or(DEFAULT_SAVE_INTERVAL_MINUTES);
+    Duration::from_secs(60 * minutes)
+}
+
 pub(crate) async fn background_tasks(app_handle: AppHandle) {
     println!("Background task started!");
 
@@ -10,13 +18,11 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
 
     loop {
         // --- Determine sleep duration ---
-        let mut interval_duration = Duration::from_secs(60 * DEFAULT_SAVE_INTERVAL_MINUTES);
-        if let Ok(app_data) = get_state_data::<TaskProxyData>(&app_handle) {
-            let current_interval_minutes = app_data.save_interval_minutes;
-            if current_interval_minutes > 0 && current_interval_minutes <= 60 {
-                interval_duration = Duration::from_secs(60 * current_interval_minutes);
-            }
-        }
+        let interval_duration = save_interval(
+            get_state_data::<TaskProxyData>(&app_handle)
+                .ok()
+                .map(|app_data| app_data.save_interval_minutes),
+        );
 
         // --- Wait for the interval ---
         sleep(interval_duration).await;
@@ -56,5 +62,24 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_chosen_save_interval_is_used_from_1_to_60_minutes() {
+        assert_eq!(save_interval(Some(1)), Duration::from_secs(60));
+        assert_eq!(save_interval(Some(60)), Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn a_missing_or_out_of_range_save_interval_uses_the_default() {
+        let default = Duration::from_secs(60 * DEFAULT_SAVE_INTERVAL_MINUTES);
+        assert_eq!(save_interval(None), default);
+        assert_eq!(save_interval(Some(0)), default);
+        assert_eq!(save_interval(Some(61)), default);
     }
 }

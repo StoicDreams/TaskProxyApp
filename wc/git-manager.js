@@ -11,6 +11,209 @@
         webui.projectData.data._gitCommitMessages ??= {};
         return webui.projectData.data._gitCommitMessages;
     }
+    /**
+     * The script each repo runs before a commit, and the values chosen for each script's parameters.
+     * Kept with the project's local data, so they last across pages, projects, and restarts.
+     */
+    function getBeforeCommit() {
+        const settings = webui.projectData.data._gitBeforeCommit ??= {};
+        settings.scripts ??= {};
+        settings.values ??= {};
+        return settings;
+    }
+    const beforeCommitTerminal = 'Before Commit';
+    /**
+     * Splits PowerShell text into the parts outside strings and comments, so brackets and commas
+     * inside them are not mistaken for code. Each part is [text, isCode].
+     */
+    function scanPowerShell(text) {
+        const parts = [];
+        let code = '';
+        let i = 0;
+        const flush = () => { if (code) parts.push([code, true]); code = ''; };
+        while (i < text.length) {
+            const c = text[i];
+            if (c === '<' && text[i + 1] === '#') {
+                const end = text.indexOf('#>', i + 2);
+                const stop = end === -1 ? text.length : end + 2;
+                flush(); parts.push([text.substring(i, stop), false]); i = stop;
+            } else if (c === '#') {
+                const end = text.indexOf('\n', i);
+                const stop = end === -1 ? text.length : end;
+                flush(); parts.push([text.substring(i, stop), false]); i = stop;
+            } else if (c === "'" || c === '"' || '‘’‚‛“”„'.includes(c)) {
+                const single = c === "'" || '‘’‚‛'.includes(c);
+                let j = i + 1;
+                while (j < text.length) {
+                    const d = text[j];
+                    if (!single && d === '`') { j += 2; continue; }
+                    if (single ? (d === "'" || '‘’‚‛'.includes(d)) : (d === '"' || '“”„'.includes(d))) {
+                        // A doubled quote is an escaped quote.
+                        if (text[j + 1] === d) { j += 2; continue; }
+                        break;
+                    }
+                    j++;
+                }
+                // Strings count as code, with their text kept, so defaults can be read.
+                code += text.substring(i, Math.min(j + 1, text.length));
+                i = j + 1;
+            } else {
+                code += c; i++;
+            }
+        }
+        flush();
+        return parts;
+    }
+    /** The text inside the script's own param( ... ), not one belonging to a function in the script. */
+    function findParamBlock(text) {
+        const code = scanPowerShell(text).map(([part, isCode]) => isCode ? part : ' '.repeat(part.length)).join('');
+        let depth = 0;
+        for (let i = 0; i < code.length; i++) {
+            const c = code[i];
+            if (c === '{') depth++;
+            else if (c === '}') depth--;
+            else if (depth === 0 && /[pP]/.test(c) && /^param\s*\(/i.test(code.substring(i, i + 40)) && !/[\w$-]/.test(code[i - 1] || ' ')) {
+                const open = code.indexOf('(', i);
+                let parens = 0;
+                for (let j = open; j < code.length; j++) {
+                    if (code[j] === '(') parens++;
+                    else if (code[j] === ')' && --parens === 0) return code.substring(open + 1, j);
+                }
+                return null;
+            }
+        }
+        return null;
+    }
+    /** Splits on commas that are not inside brackets. */
+    function splitTopLevel(text) {
+        const pieces = [];
+        let depth = 0, start = 0;
+        for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            if ('([{'.includes(c)) depth++;
+            else if (')]}'.includes(c)) depth--;
+            else if (c === ',' && depth === 0) { pieces.push(text.substring(start, i)); start = i + 1; }
+        }
+        pieces.push(text.substring(start));
+        return pieces.map(piece => piece.trim()).filter(Boolean);
+    }
+    /** Reads a literal default value, such as 'text', 5, or $true. Anything else is shown as written. */
+    function readDefault(text) {
+        if (text === undefined) return undefined;
+        const value = text.trim();
+        if (/^\$true$/i.test(value)) return true;
+        if (/^\$false$/i.test(value)) return false;
+        const single = value.match(/^['‘’‚‛]([\s\S]*)['‘’‚‛]$/);
+        if (single) return single[1].replace(/(['‘’‚‛])\1/g, '$1');
+        const double = value.match(/^["“”„]([\s\S]*)["“”„]$/);
+        if (double) return double[1];
+        return value;
+    }
+    /** Descriptions from the script's comment-based help, by lower case parameter name. */
+    function readParameterHelp(text) {
+        const help = {};
+        const pattern = /^\s*\.PARAMETER\s+(\w+)\s*\n([\s\S]*?)(?=^\s*\.[A-Z]+\b|#>|$(?![\s\S]))/gim;
+        let match;
+        while ((match = pattern.exec(text)) !== null) {
+            help[match[1].toLowerCase()] = match[2].replace(/\s+/g, ' ').trim();
+        }
+        return help;
+    }
+    /**
+     * The parameters a script takes, read from its param block: name, kind (switch, bool, choice, number,
+     * list, or text), choices, default, whether it is mandatory, and its help.
+     */
+    function readScriptParameters(text) {
+        const block = findParamBlock(text || '');
+        if (block === null) return [];
+        const help = readParameterHelp(text);
+        return splitTopLevel(block).map(piece => {
+            const nameMatch = piece.match(/\$([\w]+)/g);
+            if (!nameMatch) return null;
+            // The name is the variable that is not inside an attribute.
+            let rest = piece;
+            const attributes = [];
+            for (;;) {
+                const trimmed = rest.trimStart();
+                if (!trimmed.startsWith('[')) break;
+                let depth = 0, end = -1;
+                for (let i = 0; i < trimmed.length; i++) {
+                    if (trimmed[i] === '[' || trimmed[i] === '(') depth++;
+                    else if ((trimmed[i] === ']' || trimmed[i] === ')') && --depth === 0) { end = i; break; }
+                }
+                if (end === -1) break;
+                attributes.push(trimmed.substring(1, end).trim());
+                rest = trimmed.substring(end + 1);
+            }
+            const match = rest.match(/^\s*\$([\w]+)\s*(?:=\s*([\s\S]*))?$/);
+            if (!match) return null;
+            const name = match[1];
+            const typeName = (attributes.filter(attr => !attr.includes('(')).pop() || '').toLowerCase().replace(/^system\./, '');
+            const parameterAttr = attributes.find(attr => /^parameter\s*\(/i.test(attr)) || '';
+            const mandatory = /\bmandatory\b(?!\s*=\s*\$false)/i.test(parameterAttr);
+            const setAttr = attributes.find(attr => /^validateset\s*\(/i.test(attr));
+            const choices = setAttr
+                ? splitTopLevel(setAttr.substring(setAttr.indexOf('(') + 1, setAttr.lastIndexOf(')'))).map(readDefault).filter(choice => typeof choice === 'string')
+                : null;
+            let kind = 'text';
+            if (/^switch(parameter)?$|^management\.automation\.switchparameter$/.test(typeName)) kind = 'switch';
+            else if (/^bool(ean)?$/.test(typeName)) kind = 'bool';
+            else if (choices && choices.length) kind = 'choice';
+            else if (typeName.endsWith('[]')) kind = 'list';
+            else if (/^(u?int(16|32|64)?|long|byte|sbyte|short|double|single|float|decimal)$/.test(typeName)) kind = 'number';
+            return { name, kind, choices, defaultValue: readDefault(match[2]), mandatory, help: help[name.toLowerCase()] || '' };
+        }).filter(Boolean);
+    }
+    /** Text as a PowerShell string that nothing inside it can end early or expand. */
+    function quotePowerShell(value) {
+        return `'${String(value).replace(/(['‘’‚‛])/g, '$1$1')}'`;
+    }
+    /**
+     * PowerShell that runs the script with the chosen values, and turns any error it hits into a failing
+     * exit code: a thrown error, an error it writes, or a command that fails.
+     */
+    function buildBeforeCommitScript(scriptPath, parameters, values) {
+        const args = [];
+        parameters.forEach(param => {
+            const value = values[param.name];
+            switch (param.kind) {
+                case 'switch':
+                    if (value === true) args.push(`-${param.name}`);
+                    else if (param.defaultValue === true) args.push(`-${param.name}:$false`);
+                    break;
+                case 'bool':
+                    args.push(`-${param.name}:$${value === true ? 'true' : 'false'}`);
+                    break;
+                case 'list': {
+                    const items = String(value ?? '').split(',').map(item => item.trim()).filter(Boolean);
+                    if (items.length) args.push(`-${param.name} @(${items.map(quotePowerShell).join(', ')})`);
+                    break;
+                }
+                case 'number':
+                    if (`${value ?? ''}`.trim() === '') break;
+                    args.push(`-${param.name} ${/^-?\d+(\.\d+)?$/.test(`${value}`.trim()) ? `${value}`.trim() : quotePowerShell(value)}`);
+                    break;
+                default:
+                    if (`${value ?? ''}` === '') break;
+                    args.push(`-${param.name} ${quotePowerShell(value)}`);
+            }
+        });
+        return [
+            `$ErrorActionPreference = 'Stop'`,
+            `$PSNativeCommandUseErrorActionPreference = $true`,
+            `$global:LASTEXITCODE = 0`,
+            `& ${quotePowerShell(`./${scriptPath}`)}${args.length ? ' ' + args.join(' ') : ''}`,
+            `if ($LASTEXITCODE) { exit $LASTEXITCODE }`,
+            '',
+        ].join('\n');
+    }
+    /** The value a parameter starts with: what was chosen before, or else the script's default. */
+    function startingValue(param, saved) {
+        if (saved && Object.hasOwn(saved, param.name)) return saved[param.name];
+        if (param.kind === 'switch' || param.kind === 'bool') return param.defaultValue === true;
+        if (param.kind === 'choice') return param.choices.includes(param.defaultValue) ? param.defaultValue : param.choices[0];
+        return '';
+    }
     const messageSyncDelay = 500;
     const minPanesHeight = 360;
     const includeStates = { include: '1', exclude: '0', ignore: '2' };
@@ -107,6 +310,9 @@
             t._btnStash = t.template.querySelector('#btn-stash');
             t._btnStashPop = t.template.querySelector('#btn-stash-pop');
             t._btnCommit = t.template.querySelector('webui-button[label="Commit"]');
+            t._beforeScript = t.template.querySelector('#before-commit-script');
+            t._beforeParams = t.template.querySelector('.before-commit-params');
+            t._beforeParameters = [];
             t._btnToggleAll = t.template.querySelector('webui-button[label="Toggle All"]');
             t._toggleSync = t.template.querySelector('#toggle-sync');
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
@@ -158,6 +364,199 @@
             t._message.value = '';
             t.rememberMessage('');
         },
+        /** Lists the project's scripts, and shows the one the selected repo runs before a commit. */
+        async loadBeforeCommit() {
+            const t = this;
+            const repo = t._repos.value;
+            t._beforeRepo = repo;
+            t._beforePath = webui.projectData.path;
+            const selected = repo === undefined ? '' : (getBeforeCommit().scripts[repo] || '');
+            const scripts = (await webui.proxy.getScripts(() => []) || []).filter(path => !path.includes('taskproxy_tmp_')).sort();
+            // A script that was chosen stays listed if it has gone, so it is clear why commits fail.
+            if (selected && !scripts.includes(selected)) scripts.unshift(selected);
+            // The repo can change while scripts load.
+            if (t._repos.value !== repo) return;
+            await whenReady(t._beforeScript);
+            t._loadingBeforeCommit = true;
+            t._beforeScript.setOptions([{ id: '', value: '', display: 'Nothing' }, ...scripts.map(path => ({ id: path, value: path, display: path }))]);
+            t._beforeScript.value = selected;
+            t._loadingBeforeCommit = false;
+            await t.showBeforeCommitParameters(selected);
+        },
+        chooseBeforeCommit(path) {
+            const t = this;
+            if (t._loadingBeforeCommit || path === t._shownBeforeScript) return;
+            // Only save into the project and repo the choice was loaded for.
+            if (t._beforeRepo === undefined || webui.projectData.path !== t._beforePath) return;
+            const settings = getBeforeCommit();
+            if (path) {
+                settings.scripts[t._beforeRepo] = path;
+            } else {
+                delete settings.scripts[t._beforeRepo];
+            }
+            webui.proxy.syncProjectData();
+            t.showBeforeCommitParameters(path);
+        },
+        /** Shows a field for each of the script's parameters, filled with the values chosen last time. */
+        async showBeforeCommitParameters(path) {
+            const t = this;
+            t._shownBeforeScript = path;
+            t._beforeParameters = [];
+            t._beforeParams.innerHTML = '';
+            if (!path) return;
+            const text = await webui.proxy.getProjectFile(path, () => null);
+            if (t._shownBeforeScript !== path) return;
+            if (typeof text !== 'string') {
+                t._beforeParams.innerHTML = `<p class="note">${webui.escapeForHTML(path)} could not be read.</p>`;
+                return;
+            }
+            const parameters = readScriptParameters(text);
+            const saved = getBeforeCommit().values[path] || {};
+            t._buildingBeforeParams = true;
+            try {
+                const fields = parameters.map(param => {
+                    const label = `${param.name}${param.mandatory ? ' (required)' : ''}`;
+                    let el;
+                    if (param.kind === 'switch' || param.kind === 'bool') {
+                        el = webui.create('webui-toggle-icon', { label, 'theme-on': 'primary' });
+                    } else if (param.kind === 'choice') {
+                        el = webui.create('webui-dropdown', { label });
+                    } else {
+                        el = webui.create('webui-input-text', { label });
+                        if (param.kind === 'number') el.setAttribute('type', 'number');
+                        const shown = param.defaultValue === undefined || typeof param.defaultValue === 'boolean' ? '' : String(param.defaultValue);
+                        if (shown) el.setAttribute('placeholder', shown);
+                        else if (param.kind === 'list') el.setAttribute('placeholder', 'Separate items with commas');
+                    }
+                    el.dataset.param = param.name;
+                    const help = param.help || (param.kind === 'list' ? 'Separate items with commas.' : '');
+                    if (help) el.setAttribute('title', help);
+                    t._beforeParams.appendChild(el);
+                    return { el, param };
+                });
+                await Promise.all(fields.map(async ({ el, param }) => {
+                    await whenReady(el);
+                    const value = startingValue(param, saved);
+                    if (param.kind === 'choice') {
+                        el.setOptions(param.choices.map(choice => ({ id: choice, value: choice, display: choice })));
+                    }
+                    el.value = value;
+                }));
+            } finally {
+                t._buildingBeforeParams = false;
+            }
+            if (t._shownBeforeScript !== path) return;
+            t._beforeParameters = parameters;
+        },
+        /** The value of each parameter field shown, by parameter name. */
+        readBeforeCommitValues() {
+            const t = this;
+            const values = {};
+            t._beforeParameters.forEach(param => {
+                const el = t._beforeParams.querySelector(`[data-param="${CSS.escape(param.name)}"]`);
+                if (!el) return;
+                values[param.name] = param.kind === 'switch' || param.kind === 'bool'
+                    ? el.value === true || el.value === 'true'
+                    : `${el.value ?? ''}`;
+            });
+            return values;
+        },
+        rememberBeforeCommitValues() {
+            const t = this;
+            const path = t._shownBeforeScript;
+            if (t._buildingBeforeParams || !path || !t._beforeParameters.length || webui.projectData.path !== t._beforePath) return;
+            getBeforeCommit().values[path] = t.readBeforeCommitValues();
+            clearTimeout(t._beforeSyncTimer);
+            t._beforeSyncTimer = setTimeout(() => webui.proxy.syncProjectData(), messageSyncDelay);
+        },
+        /**
+         * Runs the repo's before commit script, with the Terminals panel open to show it, then refreshes the
+         * changes it made. Resolves to whether the commit should go ahead.
+         */
+        async runBeforeCommit(repo) {
+            const t = this;
+            const path = getBeforeCommit().scripts[repo];
+            if (!path) return true;
+            const text = await webui.proxy.getProjectFile(path, () => null);
+            if (typeof text !== 'string') {
+                t.setAlert(`${path} could not be read, so nothing was committed.`, 'danger');
+                return false;
+            }
+            const parameters = readScriptParameters(text);
+            const values = path === t._shownBeforeScript && t._beforeParameters.length ? t.readBeforeCommitValues() : (getBeforeCommit().values[path] || {});
+            const missing = parameters.filter(param => param.mandatory && param.kind !== 'switch' && param.kind !== 'bool' && `${values[param.name] ?? ''}`.trim() === '');
+            if (missing.length) {
+                t.setAlert(`Fill in ${missing.map(param => param.name).join(', ')} for ${path} before committing.`, 'warning');
+                return false;
+            }
+            if (!await webui.proxy.confirmProjectScript(text)) return false;
+            const helpers = webui.proxy.terminalHelpers;
+            helpers.ensureListeners();
+            helpers.getState().activeId = beforeCommitTerminal;
+            // Choices made in the Git Controller are not shown to other files, so the masked copy is the same.
+            const wrapper = buildBeforeCommitScript(path, parameters, values);
+            const excluded = new Set(t._files.filter(file => file.state === includeStates.exclude).map(file => file.fileName));
+            t.setAlert(`Running ${path} before committing...`, 'info');
+            let finished;
+            try {
+                finished = helpers.runAndWait(beforeCommitTerminal, wrapper);
+                // Started before the panel opens, so the panel shows this script.
+                await webui.wait(50);
+                document.querySelector('app-terminals')?.openDrawer();
+                finished = await finished;
+            } catch (err) {
+                t.setAlert(`${path} could not run, so nothing was committed: ${err?.message ?? err}`, 'danger');
+                return false;
+            }
+            // The script can change files, such as minified copies and version numbers, so show what it changed.
+            await t.loadRepoChanges(excluded);
+            if (finished !== 0) {
+                const how = finished === null ? 'was stopped' : `failed with exit code ${finished}`;
+                t.setAlert(`${path} ${how}, so nothing was committed. Its output is in the Terminals panel.`, 'danger');
+                return false;
+            }
+            document.querySelector('webui-drawer.shared')?.classList.remove('open');
+            return true;
+        },
+        async commit() {
+            const t = this;
+            let message = t._message.value.trim();
+            t.setAlert();
+            if (!message) {
+                t.setAlert('You forgot to set your message!');
+                return;
+            }
+            let repo = t._repos.value;
+            if (repo === undefined) {
+                t.setAlert('No repo is set!');
+                return;
+            }
+            const includedFiles = () => t._files.filter(item => item.isIncluded).map(item => item.fileName);
+            if (includedFiles().length === 0) {
+                t.setAlert('Select at least one file to commit.', 'warning');
+                return;
+            }
+            if (!await t.runBeforeCommit(repo)) return;
+            // Taken after the script, which can add or change files.
+            let files = includedFiles();
+            if (files.length === 0) {
+                t.setAlert('No files are left to commit.', 'warning');
+                return;
+            }
+            let result = await webui.proxy.git.commit(repo, files, message, msg => t.setAlert(msg));
+            if (result) {
+                t.setAlert(result, 'success');
+                t.clearMessage();
+                if (t._toggleSync.value === true || t._toggleSync.value === 'true') {
+                    t.setAlert('Commit successful. Syncing with remote...', 'info');
+                    let syncResult = await webui.proxy.git.sync(repo, msg => t.setAlert(msg));
+                    if (syncResult) {
+                        t.setAlert('Commit and Sync successful!', 'success');
+                    }
+                }
+            }
+            t.loadRepoChanges();
+        },
         async loadRepos() {
             let t = this;
             await whenProxyReady();
@@ -176,6 +575,7 @@
                     t._repos.value = selectedGitRepo;
                 }
                 await t.restoreMessage();
+                t.loadBeforeCommit();
                 await t.loadBranches();
                 t.loadRepoChanges();
             }
@@ -383,7 +783,8 @@
             // The name's extension tells the preview what kind of file it is.
             t._filePreview.setFile({ name: changeDetail.fileName.split('/').pop(), content: bytes });
         },
-        async loadRepoChanges() {
+        /** `excluded` lists files to keep out of the commit, which a refresh would otherwise include again. */
+        async loadRepoChanges(excluded) {
             let t = this;
             let repo = t._repos.value;
             if (repo === undefined) return;
@@ -403,6 +804,9 @@
             t._files.forEach(details => {
                 if (ignoredFiles.has(`${details.repo}/${details.fileName}`)) {
                     details.state = includeStates.ignore;
+                    details.isIncluded = false;
+                } else if (excluded?.has(details.fileName)) {
+                    details.state = includeStates.exclude;
                     details.isIncluded = false;
                 }
             });
@@ -526,9 +930,13 @@
                 });
             }, 50);
             t._message.addEventListener('input', _ => t.rememberMessage(t._message.value));
+            t._beforeScript.addEventListener('change', _ => t.chooseBeforeCommit(t._beforeScript.value || ''));
+            t._beforeParams.addEventListener('change', _ => t.rememberBeforeCommitValues());
+            t._beforeParams.addEventListener('input', _ => t.rememberBeforeCommitValues());
             t._repos.addEventListener('change', async _ => {
                 await webui.wait(20);
                 await t.restoreMessage();
+                t.loadBeforeCommit();
                 await t.loadBranches();
                 t.loadRepoChanges();
             });
@@ -780,40 +1188,13 @@
                 t.setAlert(`PAT successfully saved to ${scope} scope.`, 'success');
             });
             t._btnCommit.addEventListener('click', async _ => {
-                let message = t._message.value.trim();
-                t.setAlert();
-                if (!message) {
-                    t.setAlert('You forgot to set your message!');
-                    return;
+                if (t._committing) return;
+                t._committing = true;
+                try {
+                    await t.commit();
+                } finally {
+                    t._committing = false;
                 }
-                let files = [];
-                t._files.forEach(item => {
-                    if (item.isIncluded) {
-                        files.push(item.fileName);
-                    }
-                });
-                let repo = t._repos.value;
-                if (repo === undefined) {
-                    t.setAlert('No repo is set!');
-                    return;
-                }
-                if (files.length === 0) {
-                    t.setAlert('Select at least one file to commit.', 'warning');
-                    return;
-                }
-                let result = await webui.proxy.git.commit(repo, files, message, msg => t.setAlert(msg));
-                if (result) {
-                    t.setAlert(result, 'success');
-                    t.clearMessage();
-                    if (t._toggleSync.value === true || t._toggleSync.value === 'true') {
-                        t.setAlert('Commit successful. Syncing with remote...', 'info');
-                        let syncResult = await webui.proxy.git.sync(repo, msg => t.setAlert(msg));
-                        if (syncResult) {
-                            t.setAlert('Commit and Sync successful!', 'success');
-                        }
-                    }
-                }
-                t.loadRepoChanges();
             });
             t._btnPull.addEventListener('click', async _ => {
                 t.setAlert();
@@ -947,6 +1328,30 @@ pre {
 }
 .commit-actions {
     justify-content: flex-end;
+}
+.before-commit {
+    display: flex;
+    flex-direction: column;
+    gap: calc(0.5 * var(--padding));
+}
+.before-commit-params {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: calc(0.5 * var(--padding)) var(--padding);
+    max-height: 30vh;
+    overflow: auto;
+}
+.before-commit-params:empty {
+    display: none;
+}
+.before-commit-params > webui-input-text,
+.before-commit-params > webui-dropdown {
+    flex: 1 1 10em;
+}
+.before-commit-params .note {
+    margin: 0;
+    font-size: 0.9em;
 }
 .file-filter {
     flex: 1;
@@ -1115,6 +1520,10 @@ button.revert {
                 <div class="commit-actions">
                     <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" theme-on="primary"></webui-toggle-icon>
                     <webui-button theme="primary" label="Commit"></webui-button>
+                </div>
+                <div class="before-commit">
+                    <webui-dropdown id="before-commit-script" label="Run Before Commit" title="A script in this project to run before each commit. If it fails, nothing is committed."></webui-dropdown>
+                    <div class="before-commit-params"></div>
                 </div>
                 <div class="list-tools">
                     <webui-button theme="info" label="Toggle All" title="Include or exclude every file shown"></webui-button>

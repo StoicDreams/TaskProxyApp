@@ -163,6 +163,12 @@ fn is_command_available(cmd: &str) -> bool {
 }
 
 fn get_install_info() -> (bool, String, String) {
+    install_info(is_command_available)
+}
+
+/// Whether PowerShell can be installed automatically, the command that does it, and instructions,
+/// given which commands are available. Taking the check as a parameter lets tests try each kind of machine.
+fn install_info(is_command_available: impl Fn(&str) -> bool) -> (bool, String, String) {
     #[cfg(target_os = "windows")]
     {
         if is_command_available("winget") {
@@ -1256,5 +1262,64 @@ mod tests {
         write_private_file(&path, "secret").unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    const PACKAGE_TOOLS: [&str; 7] = ["winget", "brew", "yay", "paru", "pacman", "apt-get", "dnf"];
+
+    #[test]
+    fn install_info_always_has_instructions_and_a_command_only_when_it_can_install() {
+        let mut machines: Vec<Vec<&str>> = vec![vec![]];
+        machines.extend(PACKAGE_TOOLS.iter().map(|tool| vec![*tool]));
+        machines.push(PACKAGE_TOOLS.to_vec());
+        for tools in machines {
+            let (can_install, command, instructions) = install_info(|cmd| tools.contains(&cmd));
+            assert!(!instructions.is_empty(), "no instructions with {:?}", tools);
+            assert_eq!(can_install, !command.is_empty(), "with {:?}", tools);
+            if can_install {
+                assert!(
+                    instructions.contains("Install PowerShell"),
+                    "with {:?}",
+                    tools
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn with_no_package_tools_powershell_is_installed_by_hand() {
+        let (can_install, command, _) = install_info(|_| false);
+        assert!(!can_install);
+        assert!(command.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn on_linux_an_aur_helper_installs_powershell_and_yay_is_preferred() {
+        let (can_install, command, _) = install_info(|cmd| cmd == "yay" || cmd == "paru");
+        assert!(can_install);
+        assert_eq!(command, "yay -S powershell-bin --noconfirm");
+        let (can_install, command, _) = install_info(|cmd| cmd == "paru");
+        assert!(can_install);
+        assert!(command.starts_with("paru "));
+        let (can_install, _, instructions) = install_info(|cmd| cmd == "pacman");
+        assert!(!can_install);
+        assert!(instructions.contains("AUR helper"));
+        let (can_install, _, instructions) = install_info(|cmd| cmd == "apt-get");
+        assert!(!can_install);
+        assert!(instructions.contains("apt-get install -y powershell"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn on_windows_winget_installs_powershell() {
+        assert!(install_info(|cmd| cmd == "winget").0);
+        assert!(!install_info(|_| false).0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn on_macos_homebrew_installs_powershell() {
+        assert!(install_info(|cmd| cmd == "brew").0);
+        assert!(!install_info(|_| false).0);
     }
 }

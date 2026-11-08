@@ -482,6 +482,9 @@
                 state.terminals[id].interactive = false;
                 state.terminals[id].status = 'Running';
                 state.terminals[id].script = displayScript ?? scriptContent;
+                state.terminals[id].exitCode = null;
+                // Settles with the exit code when this run ends. Made before starting, since a short script can end first.
+                state.terminals[id].finished = new Promise(resolve => state.terminals[id]._resolveFinished = resolve);
                 if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
                     state.allScripts.push(id);
                 }
@@ -500,13 +503,27 @@
                     throw err;
                 }
             },
-            _scriptFinished(id, projectId) {
+            /** `code` is the exit code, or null when the script was stopped or its exit code is unknown. */
+            _scriptFinished(id, projectId, code) {
                 let state = this.getState(projectId);
-                if (state.terminals[id]) {
-                    state.terminals[id].status = 'Finished';
+                const term = state.terminals[id];
+                if (term) {
+                    term.status = 'Finished';
+                    term.exitCode = Number.isInteger(code) ? code : null;
+                    term._resolveFinished?.(term.exitCode);
+                    term._resolveFinished = null;
                     webui.setData('app-terminal-refresh', Date.now());
                 }
                 this.runNextQueued();
+            },
+            /**
+             * Runs a script now and resolves with its exit code once it ends, or null when it was stopped.
+             * Throws when it cannot start, such as when the same terminal is already running a script.
+             */
+            async runAndWait(id, scriptContent, displayScript) {
+                const state = this.getState();
+                await this.runScript(id, scriptContent, [], false, false, false, displayScript);
+                return state.terminals[id].finished;
             },
             /** Scripts run in the open project, so another project's queue waits until it reopens. */
             runNextQueued() {
@@ -546,7 +563,7 @@
                 });
                 webui.proxy.terminal.onFinished((event) => {
                     const data = event.payload;
-                    this._scriptFinished(data.terminalId, data.projectId);
+                    this._scriptFinished(data.terminalId, data.projectId, data.code);
                 });
             },
             async getDropdownOptions(state, showAll) {

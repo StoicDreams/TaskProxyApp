@@ -28,6 +28,26 @@ test('shows install instructions when PowerShell is missing', async ({ page }) =
     await page.locator('#btn-install-pwsh').click();
     await expect.poll(async () => (await calls(page, 'auto_install_powershell')).length).toBe(1);
 });
+test('with no way to install it automatically, only the instructions show', async ({ page }) => {
+    await open(page, { powershell: { installed: false, executable: '', canAutoInstall: false, installCommand: '', instructions: 'Download it from the website' } });
+    await expect(page.locator('#term-install-instructions')).toContainText('Download it from the website');
+    await expect(page.locator('#btn-install-pwsh')).toBeHidden();
+    await expect(page.locator('#term-content-wrapper')).toBeHidden();
+});
+test('when detecting PowerShell fails, the install area shows instead of the terminals', async ({ page }) => {
+    await openApp(page);
+    await onCommand(page, 'get_powershell_status', () => { throw 'detection failed'; });
+    await page.locator('app-terminals').click();
+    await expect(page.locator('#term-install-wrapper')).toBeVisible();
+    await expect(page.locator('#term-content-wrapper')).toBeHidden();
+});
+test('a failed install says why, and leaves the install area showing', async ({ page }) => {
+    await open(page, { powershell: { installed: false, executable: '', canAutoInstall: true, installCommand: 'x', instructions: 'x' } });
+    await onCommand(page, 'auto_install_powershell', () => { throw 'winget is not available'; });
+    await page.locator('#btn-install-pwsh').click();
+    await expect(page.locator('webui-alerts, webui-alert').filter({ hasText: 'winget is not available' }).first()).toBeAttached();
+    await expect(page.locator('#term-install-wrapper')).toBeVisible();
+});
 test('output for the shown terminal appears live', async ({ page }) => {
     await open(page);
     await ready(page);

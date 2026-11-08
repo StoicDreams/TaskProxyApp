@@ -188,6 +188,130 @@ test('ahead and behind counts are shown', async ({ page }) => {
     await expect(manager(page).locator('#val-sync-status')).toContainText('3 Commits Behind');
 });
 
+test.describe('branches', () => {
+    const branches = [{ name: 'main', isCurrent: true, updatedDate: '' }, { name: 'other', isCurrent: false, updatedDate: '' }];
+    // With no uncommitted work, so branches can change.
+    const openClean = async page => {
+        await openApp(page, { currentPage: '/git-controller', git: { changes: [], branches, currentBranch: 'main' } }, '/git-controller');
+        await openBranches(page);
+    };
+    const row = (page, name) => manager(page).locator(`webui-button[data-branch="${name}"]`);
+
+    test('switching branches calls the backend and refreshes the files', async ({ page }) => {
+        await openClean(page);
+        const before = (await calls(page, 'get_git_changes')).length;
+        await row(page, 'other').and(page.locator('.btn-switch')).click();
+        await expect.poll(async () => (await calls(page, 'git_switch_branch'))).toEqual([{ repo: '', branch: 'other' }]);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Branch switched successfully.');
+        await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(before);
+    });
+    test('a new branch needs a name, and starts from the branch it was made from', async ({ page }) => {
+        await openClean(page);
+        await row(page, 'other').and(page.locator('.btn-new')).click();
+        await expect(page.locator('dialog[open]')).toContainText("Create New Branch from 'other'");
+        await dialogButton(page, 'Create').click();
+        await expect(page.locator('dialog[open]')).toContainText('Branch name cannot be empty.');
+        expect(await calls(page, 'git_create_branch')).toEqual([]);
+        await page.locator('dialog[open] webui-input-text[name="branchName"] input').fill('  feature  ');
+        await dialogButton(page, 'Create').click();
+        await expect.poll(async () => (await calls(page, 'git_create_branch'))).toEqual([{ repo: '', branch: 'feature', baseBranch: 'other' }]);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Branch created.');
+    });
+    test('a new branch cannot be made with uncommitted work', async ({ page }) => {
+        await open(page, { branches, currentBranch: 'main' });
+        await openBranches(page);
+        await row(page, 'other').and(page.locator('.btn-new')).click();
+        await expect(manager(page).locator('webui-alert').first()).toContainText('uncommitted changes');
+        await expect(page.locator('dialog[open]')).toHaveCount(0);
+    });
+    test('merging asks first, naming both branches', async ({ page }) => {
+        await openClean(page);
+        await row(page, 'other').and(page.locator('.btn-merge')).click();
+        await expect(page.locator('dialog[open]')).toContainText('merge other into the current branch (main)');
+        await dialogButton(page, 'Cancel').click();
+        await page.waitForTimeout(100);
+        expect(await calls(page, 'git_merge_branch')).toEqual([]);
+        await row(page, 'other').and(page.locator('.btn-merge')).click();
+        await dialogButton(page, 'Merge').click();
+        await expect.poll(async () => (await calls(page, 'git_merge_branch'))).toEqual([{ repo: '', branch: 'other' }]);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Merge successful.');
+    });
+    test('a merge that fails says why, and leaves the dialog open', async ({ page }) => {
+        await openClean(page);
+        await onCommand(page, 'git_merge_branch', () => { throw 'Merge conflicts in a.txt'; });
+        await row(page, 'other').and(page.locator('.btn-merge')).click();
+        await dialogButton(page, 'Merge').click();
+        await expect(page.locator('dialog[open]')).toContainText('Merge conflicts in a.txt');
+    });
+    test('the current branch cannot be merged or deleted', async ({ page }) => {
+        await openClean(page);
+        await expect(row(page, 'main').and(page.locator('.btn-merge'))).toHaveCount(0);
+        await expect(row(page, 'main').and(page.locator('.btn-delete'))).toHaveCount(0);
+        await expect(row(page, 'main').and(page.locator('.btn-switch'))).toHaveCount(0);
+    });
+    test('deleting a local branch asks first', async ({ page }) => {
+        await openClean(page);
+        await row(page, 'other').and(page.locator('.btn-delete')).click();
+        await expect(page.locator('dialog[open]')).toContainText('delete the branch other?');
+        await expect(page.locator('dialog[open]')).not.toContainText('from the remote');
+        await dialogButton(page, 'Delete').click();
+        await expect.poll(async () => (await calls(page, 'git_delete_branch'))).toEqual([{ repo: '', branch: 'other' }]);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Branch deleted.');
+    });
+});
+
+test.describe('stash and force pull', () => {
+    test('stash sends the commit message, then clears it and refreshes the files', async ({ page }) => {
+        await open(page);
+        await manager(page).locator('webui-input-message[label="Commit Message"] textarea').fill('half done');
+        const before = (await calls(page, 'get_git_changes')).length;
+        await manager(page).locator('#btn-stash').click();
+        await expect.poll(async () => (await calls(page, 'git_stash'))).toEqual([{ repo: '', message: 'half done' }]);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Changes stashed successfully.');
+        await expect(manager(page).locator('webui-input-message[label="Commit Message"] textarea')).toHaveValue('');
+        await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(before);
+    });
+    test('with nothing changed, there is nothing to stash', async ({ page }) => {
+        await openApp(page, { currentPage: '/git-controller', git: { changes: [] } }, '/git-controller');
+        await expect(manager(page).locator('#val-commit-files')).toHaveText('No changes');
+        await manager(page).locator('#btn-stash').click();
+        await expect(manager(page).locator('webui-alert').first()).toContainText('No pending changes to stash.');
+        expect(await calls(page, 'git_stash')).toEqual([]);
+    });
+    test('pop stash calls the backend and refreshes the files', async ({ page }) => {
+        await open(page);
+        const before = (await calls(page, 'get_git_changes')).length;
+        await manager(page).locator('#btn-stash-pop').click();
+        await expect.poll(async () => (await calls(page, 'git_stash_pop')).length).toBe(1);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Stash popped successfully.');
+        await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(before);
+    });
+    test('a stash that cannot be applied says why', async ({ page }) => {
+        await open(page);
+        await onCommand(page, 'git_stash_pop', () => { throw '1 conflict prevents checkout'; });
+        await manager(page).locator('#btn-stash-pop').click();
+        await expect(manager(page).locator('webui-alert').first()).toContainText('1 conflict prevents checkout');
+    });
+    test('force pull asks first, and only overwrites once confirmed', async ({ page }) => {
+        await open(page);
+        await manager(page).locator('#btn-pull-overwrite').click();
+        await expect(page.locator('dialog[open]')).toContainText('overwrite all local changes');
+        await dialogButton(page, 'Cancel').click();
+        await page.waitForTimeout(100);
+        expect(await calls(page, 'git_pull_overwrite')).toEqual([]);
+        await manager(page).locator('#btn-pull-overwrite').click();
+        await dialogButton(page, 'Overwrite').click();
+        await expect.poll(async () => (await calls(page, 'git_pull_overwrite'))).toEqual([{ repo: '' }]);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Successfully pulled and overwrote local branch');
+    });
+    test('a pull picks up project files that changed underneath the app', async ({ page }) => {
+        await open(page);
+        const before = (await calls(page, 'reload_project_files')).length;
+        await manager(page).locator('webui-button[label="Pull"]').click();
+        await expect.poll(async () => (await calls(page, 'reload_project_files')).length).toBeGreaterThan(before);
+    });
+});
+
 test.describe('commit message memory', () => {
     const textarea = page => manager(page).locator('webui-input-message[label="Commit Message"] textarea');
     const typeMessage = (page, message) => expect(async () => {
@@ -478,5 +602,151 @@ test.describe('files that are not text', () => {
         await select(page, 'logo.png');
         await expect(preview(page).locator('img')).toBeVisible();
         await expect(preview(page).locator('a')).toHaveCount(0);
+    });
+});
+
+test.describe('before commit script', () => {
+    const SCRIPT = 'PowerShell/Publish.ps1';
+    const PUBLISH = `<#
+.SYNOPSIS
+Gets ready to publish.
+
+.PARAMETER Version
+Which part of the version to increment.
+#>
+[CmdletBinding()]
+param(
+    # A comment with a comma, and a $Fake variable.
+    [ValidateSet('patch', 'minor', 'major')]
+    [string]$Version = 'minor',
+    [switch]$SkipMinify,
+    [Parameter(Mandatory)][string]$Note,
+    [string[]]$Tags,
+    [int]$Count = 2,
+    [bool]$Check = $true
+)
+function Inner { param($Ignored) }
+Write-Host 'done'
+`;
+    const VALUES = { Version: 'major', SkipMinify: true, Note: "it's", Tags: 'a, b', Count: '3', Check: false };
+    const WRAPPER = [
+        `$ErrorActionPreference = 'Stop'`,
+        `$PSNativeCommandUseErrorActionPreference = $true`,
+        `$global:LASTEXITCODE = 0`,
+        `& './PowerShell/Publish.ps1' -Version 'major' -SkipMinify -Note 'it''s' -Tags @('a', 'b') -Count 3 -Check:$false`,
+        `if ($LASTEXITCODE) { exit $LASTEXITCODE }`,
+        '',
+    ].join('\n');
+    const openWith = (page, data = {}, git = {}) => open(page, git, {
+        scripts: [SCRIPT, 'other.ps1'],
+        files: { [SCRIPT]: PUBLISH, 'other.ps1': 'Write-Host hi' },
+        appData: { 'app-trusted-projects': ['/repo'] },
+        data,
+    });
+    const saved = { _gitBeforeCommit: { scripts: { '': SCRIPT }, values: { [SCRIPT]: VALUES } } };
+    const field = (page, name) => manager(page).locator(`.before-commit-params [data-param="${name}"]`);
+    const drawerOpen = page => page.locator('webui-drawer.shared.open');
+    const finish = (page, code) => page.evaluate(code => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: 'Before Commit', code }), code);
+
+    test('a chosen script shows a field for each of its parameters, and the choices are remembered', async ({ page }) => {
+        await openWith(page);
+        await manager(page).locator('#before-commit-script select').selectOption(SCRIPT);
+        await expect(field(page, 'Version')).toHaveCount(1);
+        expect(await manager(page).locator('.before-commit-params [data-param]').evaluateAll(els => els.map(el => `${el.localName}:${el.dataset.param}`))).toEqual([
+            'webui-dropdown:Version', 'webui-toggle-icon:SkipMinify', 'webui-input-text:Note', 'webui-input-text:Tags', 'webui-input-text:Count', 'webui-toggle-icon:Check',
+        ]);
+        // Starting values come from the script's defaults.
+        await expect.poll(() => field(page, 'Version').evaluate(el => el.value)).toBe('minor');
+        expect(await field(page, 'Check').evaluate(el => el.value)).toBe(true);
+        expect(await field(page, 'SkipMinify').evaluate(el => el.value)).toBe(false);
+        await expect(field(page, 'Note')).toHaveAttribute('label', 'Note (required)');
+        await expect(field(page, 'Count')).toHaveAttribute('placeholder', '2');
+        await expect(field(page, 'Version')).toHaveAttribute('title', 'Which part of the version to increment.');
+        await field(page, 'Version').locator('select').selectOption('major');
+        await field(page, 'SkipMinify').click();
+        await field(page, 'Note').locator('input').fill('hello');
+        await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data?.data?._gitBeforeCommit).toEqual({
+            scripts: { '': SCRIPT },
+            values: { [SCRIPT]: { Version: 'major', SkipMinify: true, Note: 'hello', Tags: '', Count: '', Check: true } },
+        });
+    });
+    test('the saved script and values show when the Git Controller opens', async ({ page }) => {
+        await openWith(page, saved);
+        await expect.poll(() => manager(page).locator('#before-commit-script').evaluate(el => el.value)).toBe(SCRIPT);
+        await expect.poll(() => field(page, 'Version').evaluate(el => el.value)).toBe('major');
+        expect(await field(page, 'SkipMinify').evaluate(el => el.value)).toBe(true);
+        expect(await field(page, 'Note').evaluate(el => el.value)).toBe("it's");
+        expect(await field(page, 'Check').evaluate(el => el.value)).toBe(false);
+    });
+    test('choosing Nothing stops running a script before commits', async ({ page }) => {
+        await openWith(page, saved);
+        await expect(field(page, 'Version')).toHaveCount(1);
+        await manager(page).locator('#before-commit-script select').selectOption('');
+        await expect(manager(page).locator('.before-commit-params [data-param]')).toHaveCount(0);
+        await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data?.data?._gitBeforeCommit?.scripts).toEqual({});
+        await commit(page);
+        await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
+        expect(await calls(page, 'start_script')).toEqual([]);
+    });
+    test('commit runs the script first in the Terminals panel, then commits what it changed once it succeeds', async ({ page }) => {
+        await openWith(page, saved);
+        await expect(field(page, 'Version')).toHaveCount(1);
+        await include(page, 'b.txt').selectOption('0');
+        await commit(page);
+        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+        const started = (await calls(page, 'start_script'))[0];
+        expect(started.terminalId).toBe('Before Commit');
+        expect(started.scriptContent).toBe(WRAPPER);
+        await expect(drawerOpen(page)).toHaveCount(1);
+        await expect(page.locator('webui-drawer.shared app-terminal-view')).toHaveCount(1);
+        await page.waitForTimeout(100);
+        expect(await calls(page, 'git_commit')).toEqual([]);
+        // The script changes a file, which the refresh after it adds to the commit.
+        await page.evaluate(() => window.__backend.git.changes.push(' M a.min.txt'));
+        await finish(page, 0);
+        await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
+        // The file left out before the script stays out.
+        expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt', 'c.txt', 'a.min.txt'], message: 'msg' });
+        await expect(drawerOpen(page)).toHaveCount(0);
+    });
+    test('a script that fails cancels the commit, and leaves its output showing', async ({ page }) => {
+        await openWith(page, saved);
+        await expect(field(page, 'Version')).toHaveCount(1);
+        await commit(page);
+        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+        await finish(page, 1);
+        await expect(manager(page).locator('webui-alert').first()).toContainText(`${SCRIPT} failed with exit code 1, so nothing was committed`);
+        await page.waitForTimeout(200);
+        expect(await calls(page, 'git_commit')).toEqual([]);
+        await expect(drawerOpen(page)).toHaveCount(1);
+        // The message stays, ready to try again.
+        expect(await manager(page).evaluate(el => el._message.value)).toBe('msg');
+    });
+    test('a stopped script cancels the commit', async ({ page }) => {
+        await openWith(page, saved);
+        await expect(field(page, 'Version')).toHaveCount(1);
+        await commit(page);
+        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+        await finish(page, null);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
+        expect(await calls(page, 'git_commit')).toEqual([]);
+    });
+    test('a required parameter must be filled in before the script runs', async ({ page }) => {
+        await openWith(page, { _gitBeforeCommit: { scripts: { '': SCRIPT }, values: { [SCRIPT]: { ...VALUES, Note: ' ' } } } });
+        await expect(field(page, 'Version')).toHaveCount(1);
+        await commit(page);
+        await expect(manager(page).locator('webui-alert').first()).toContainText(`Fill in Note for ${SCRIPT}`);
+        expect(await calls(page, 'start_script')).toEqual([]);
+        expect(await calls(page, 'git_commit')).toEqual([]);
+    });
+    test('a script from a project that is not trusted yet asks first', async ({ page }) => {
+        await open(page, {}, { scripts: [SCRIPT], files: { [SCRIPT]: PUBLISH }, data: saved });
+        await expect(field(page, 'Version')).toHaveCount(1);
+        await commit(page);
+        await expect(dialogButton(page, 'Trust Project & Run')).toBeVisible();
+        await dialogButton(page, 'Cancel').click();
+        await page.waitForTimeout(100);
+        expect(await calls(page, 'start_script')).toEqual([]);
+        expect(await calls(page, 'git_commit')).toEqual([]);
     });
 });

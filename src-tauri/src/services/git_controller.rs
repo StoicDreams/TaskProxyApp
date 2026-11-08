@@ -1156,6 +1156,33 @@ pub(crate) async fn git_fetch(
     result.map_err(|err| format!("{}", err))?
 }
 
+/// Stash uncommitted changes to tracked files, with an optional message.
+fn stash_changes(repository: &mut Repository, message: &str) -> Result<String, String> {
+    let signature = repository
+        .signature()
+        .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
+        .map_err(|e| e.to_string())?;
+    let msg = if message.is_empty() {
+        None
+    } else {
+        Some(message)
+    };
+    repository
+        .stash_save2(&signature, msg, Some(git2::StashFlags::DEFAULT))
+        .map_err(|e| e.to_string())?;
+    Ok(String::from("Changes stashed successfully."))
+}
+
+/// Apply the newest stash and drop it. libgit2 checks out safely, so uncommitted work is never overwritten,
+/// and the stash is kept if it cannot be applied.
+fn pop_stash(repository: &mut Repository) -> Result<String, String> {
+    let mut options = git2::StashApplyOptions::new();
+    repository
+        .stash_pop(0, Some(&mut options))
+        .map_err(|e| e.to_string())?;
+    Ok(String::from("Stash popped successfully."))
+}
+
 #[tauri::command]
 pub(crate) async fn git_stash(
     repo: String,
@@ -1165,19 +1192,7 @@ pub(crate) async fn git_stash(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let mut repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let signature = repository
-            .signature()
-            .or_else(|_| git2::Signature::now("Task Proxy User", "user@taskproxy.local"))
-            .map_err(|e| e.to_string())?;
-        let msg = if message.is_empty() {
-            None
-        } else {
-            Some(message.as_str())
-        };
-        repository
-            .stash_save2(&signature, msg, Some(git2::StashFlags::DEFAULT))
-            .map_err(|e| e.to_string())?;
-        Ok(String::from("Changes stashed successfully."))
+        stash_changes(&mut repository, &message)
     })
     .await;
     result.map_err(|err| format!("{}", err))?
@@ -1191,11 +1206,7 @@ pub(crate) async fn git_stash_pop(
     let git_path = get_repo_path(&state, &repo)?;
     let result = task::spawn_blocking(move || {
         let mut repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
-        let mut options = git2::StashApplyOptions::new();
-        repository
-            .stash_pop(0, Some(&mut options))
-            .map_err(|e| e.to_string())?;
-        Ok(String::from("Stash popped successfully."))
+        pop_stash(&mut repository)
     })
     .await;
     result.map_err(|err| format!("{}", err))?
@@ -2079,5 +2090,84 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let repo = new_repo(dir.path());
         assert!(line_stats(&repo).is_empty());
+    }
+
+    /// A repo with one commit holding a.txt, and a name and email for stashing.
+    fn repo_with_commit(dir: &Path) -> Repository {
+        let repo = Repository::init(dir.join("repo")).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+        write(&repo, "a.txt", "one\n");
+        commit_all(&repo, "first");
+        repo
+    }
+
+    #[test]
+    fn stash_sets_changes_aside_and_pop_brings_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut repo = repo_with_commit(dir.path());
+        write(&repo, "a.txt", "my work\n");
+        stash_changes(&mut repo, "before pulling").unwrap();
+        assert_eq!(read(&repo, "a.txt"), "one\n");
+        let mut messages = Vec::new();
+        repo.stash_foreach(|_, message, _| {
+            messages.push(message.to_string());
+            true
+        })
+        .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].contains("before pulling"));
+
+        pop_stash(&mut repo).unwrap();
+        assert_eq!(read(&repo, "a.txt"), "my work\n");
+        let mut count = 0;
+        repo.stash_foreach(|_, _, _| {
+            count += 1;
+            true
+        })
+        .unwrap();
+        assert_eq!(count, 0, "a popped stash is dropped");
+    }
+
+    #[test]
+    fn stash_with_no_message_still_stashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut repo = repo_with_commit(dir.path());
+        write(&repo, "a.txt", "my work\n");
+        stash_changes(&mut repo, "").unwrap();
+        assert_eq!(read(&repo, "a.txt"), "one\n");
+    }
+
+    #[test]
+    fn stash_with_nothing_changed_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut repo = repo_with_commit(dir.path());
+        assert!(stash_changes(&mut repo, "").is_err());
+    }
+
+    #[test]
+    fn pop_with_no_stash_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut repo = repo_with_commit(dir.path());
+        assert!(pop_stash(&mut repo).is_err());
+    }
+
+    #[test]
+    fn pop_never_overwrites_uncommitted_work_and_keeps_the_stash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut repo = repo_with_commit(dir.path());
+        write(&repo, "a.txt", "stashed work\n");
+        stash_changes(&mut repo, "").unwrap();
+        write(&repo, "a.txt", "newer work\n");
+        assert!(pop_stash(&mut repo).is_err());
+        assert_eq!(read(&repo, "a.txt"), "newer work\n");
+        let mut count = 0;
+        repo.stash_foreach(|_, _, _| {
+            count += 1;
+            true
+        })
+        .unwrap();
+        assert_eq!(count, 1, "the stash is kept when it cannot be applied");
     }
 }
