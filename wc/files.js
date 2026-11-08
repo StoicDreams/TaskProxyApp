@@ -20,7 +20,7 @@
         },
         async connected() {
             const t = this;
-            await webui.wait(() => !!webui.proxy);
+            await whenProxyReady();
             webui.proxy.projects.runWhenLoaded(async () => {
                 await t.fetchData();
             });

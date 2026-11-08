@@ -71,6 +71,14 @@
             if (t._skipReconnect) {
                 return;
             }
+            // The switch can still be loading, even though it is preloaded, so wait for it before using it.
+            if (typeof t._type.setOptions !== 'function') {
+                customElements.whenDefined('webui-switch').then(() => {
+                    customElements.upgrade(t._type);
+                    if (t.isConnected) t.connected();
+                });
+                return;
+            }
             t._type.setOptions(TYPES);
             t.setMarkdown(t.dataset.markdown || '');
             const liveUpdate = () => {

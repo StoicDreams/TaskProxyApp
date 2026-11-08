@@ -97,7 +97,7 @@
         async loadScript(file) {
             const t = this;
             t._fileName = file;
-            await webui.wait(()=>!!webui.proxy);
+            await whenProxyReady();
             let content = await webui.proxy.getProjectFile(file);
             if (t._fileName !== file) return;
             if (content === undefined) {

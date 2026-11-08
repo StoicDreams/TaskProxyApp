@@ -72,3 +72,17 @@ test('runWhenLoaded waits for a project, and runs at once when one is open', asy
     await page.evaluate(() => webui.proxy.projects.runWhenLoaded(() => window.__ran.push('second')));
     expect(await page.evaluate(() => window.__ran)).toEqual(['first', 'second']);
 });
+test('components wait for the backend however long the app takes to start', async ({ page }) => {
+    // webui.wait gives up after about 10 seconds, so components that used it ran on without webui.proxy and threw.
+    test.setTimeout(60000);
+    await openApp(page, { projects: [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }] });
+    await page.evaluate(() => {
+        // As on a slow start, webui.proxy does not exist yet when the component loads.
+        const proxy = webui.proxy;
+        webui.proxy = undefined;
+        webui.setData('app-projects', []);
+        setTimeout(() => { webui.proxy = proxy; }, 11000);
+        document.body.appendChild(document.createElement('app-project-dropdown'));
+    });
+    await expect.poll(() => page.evaluate(() => (webui.getData('app-projects') || []).length), { timeout: 20000 }).toBe(2);
+});

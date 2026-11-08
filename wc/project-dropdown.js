@@ -1,7 +1,7 @@
 "use strict"
 {
     async function loadProjects() {
-        await webui.wait(() => !!webui.proxy);
+        await whenProxyReady();
         let projects = await webui.proxy.getProjects() || [];
         webui.setData('app-projects', projects);
     }

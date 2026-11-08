@@ -95,13 +95,25 @@ export const PROJECT = { name: 'Repo', path: '/repo' };
  */
 export async function openApp(page, state = {}, path = '/') {
     await installBackend(page, state);
+    // Opening a project reloads its page by going to _reloading and back. Record that it happened.
+    await page.addInitScript(() => {
+        const pushState = history.pushState;
+        history.pushState = function (...args) {
+            const result = pushState.apply(this, args);
+            if (`${args[2]}`.includes('_reloading')) window.__projectReloading = true;
+            else if (window.__projectReloading) window.__projectReloaded = true;
+            return result;
+        };
+    });
     await page.goto(path);
     const hasProject = state.project !== null;
     await page.waitForFunction(() => typeof webui === 'object' && webui.proxy && webui.taskProxyData && webui.getProjectData);
     if (hasProject) {
         await page.waitForFunction(() => webui.proxy.projects.isLoaded);
-        // Opening a project reloads its page shortly after, which clears page level data.
-        await page.waitForTimeout(450);
+        // The reload replaces the page's components and clears page level data, so tests must start after it.
+        // A fixed wait was not always long enough when the machine was busy.
+        await page.waitForFunction(() => window.__projectReloaded === true);
+        await page.waitForTimeout(150);
     }
     return page;
 }

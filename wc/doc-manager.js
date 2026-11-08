@@ -20,7 +20,7 @@
         },
         async loadFiles() {
             let t = this;
-            await webui.wait(() => !!webui.proxy);
+            await whenProxyReady();
             webui.proxy.projects.runWhenLoaded(() => {
                 t._files = webui.projectData.docs || [];
                 let options = [];
@@ -48,7 +48,7 @@
             t._loadingFile = file;
             t._message.value = '';
             if (!file) return;
-            await webui.wait(() => !!webui.proxy);
+            await whenProxyReady();
             let fileContent = await webui.proxy.getProjectFile(file);
             await customElements.whenDefined('webui-content');
             // Another file was selected while this one loaded.

@@ -21,8 +21,11 @@
     let onTitleClick = () => {
         // Set after opening, because markup in a dialog's content is processed before it renders.
         webui.wait(() => webui.querySelector('webui-input-text[name="pageSubtitle"]')?.setValue).then(() => {
-            webui.querySelector('webui-input-text[name="pageTitle"]').value = webui.getData('page-title') || '';
-            webui.querySelector('webui-input-text[name="pageSubtitle"]').value = webui.getData('page-subtitle') || '';
+            // Typing can start before the inputs are ready, and what was typed must not be replaced.
+            const title = webui.querySelector('webui-input-text[name="pageTitle"]');
+            const subtitle = webui.querySelector('webui-input-text[name="pageSubtitle"]');
+            if (!title.value) title.value = webui.getData('page-title') || '';
+            if (!subtitle.value) subtitle.value = webui.getData('page-subtitle') || '';
         });
         webui.dialog({
             title: 'Edit Page Title',
@@ -57,7 +60,7 @@
         myId = location.pathname.substring(1);
         const file = `.taskproxy/pages/${myId}.md`;
         myFile = file;
-        await webui.wait(()=>!!webui.proxy);
+        await whenProxyReady();
         let error = null;
         let md = await webui.proxy.getProjectFile(file, err => { error = `${err}`; });
         // Leaving this page while it loads must not put its content on the next page.

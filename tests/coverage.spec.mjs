@@ -28,3 +28,10 @@ test('the mock backend answers every registered command', () => {
     const mock = read('./support/backend.mjs');
     expect(registered.filter(name => !mock.includes(`${name}:`) && name !== 'greet')).toEqual([]);
 });
+test('app.min.css has every rule in app.css', () => {
+    // The app loads app.min.css, so a rule missing from it never reaches the app, while npm test still passes on app.css.
+    const selectors = css => [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
+        .map(match => match[1].replace(/::(before|after)/g, ':$1').replace(/\s*([>+~,])\s*/g, '$1').replace(/\s+/g, ' ').trim());
+    const minified = selectors(read('../css/app.min.css'));
+    expect(selectors(read('../css/app.css')).filter(selector => !minified.includes(selector)), 'Regenerate css/app.min.css from css/app.css').toEqual([]);
+});

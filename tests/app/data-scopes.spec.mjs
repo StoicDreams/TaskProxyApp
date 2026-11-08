@@ -71,3 +71,8 @@ test('app state changes reach the backend, and variables do not', async ({ page 
     await expect.poll(() => page.evaluate(() => window.__backend.calls.filter(call => call.command === 'sync_app_data').some(call => call.args.data.data['app-smoke']?.a === 1))).toBe(true);
     expect(await page.evaluate(() => webui.taskProxyData.data.not_app_state)).toBeUndefined();
 });
+test('global variables are not copied into page data at startup, where they would hide project values', async ({ page }) => {
+    await openApp(page, state);
+    expect(await page.evaluate(() => webui.getNestedData('shared', window.appData))).toBeUndefined();
+    expect(await page.evaluate(() => webui.getData('global.shared'))).toBe('global');
+});

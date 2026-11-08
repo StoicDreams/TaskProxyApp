@@ -11,7 +11,7 @@
         },
         async loadScripts(selectFile) {
             let t = this;
-            await webui.wait(() => !!webui.proxy);
+            await whenProxyReady();
             webui.proxy.projects.runWhenLoaded(async () => {
                 let scripts = await webui.proxy.getScripts();
                 let options = (scripts || []).map(fileName => {

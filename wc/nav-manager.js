@@ -110,7 +110,7 @@
         async loadNavigation() {
             const t = this;
             await customElements.whenDefined('app-nav-preview');
-            await webui.wait(() => !!webui.proxy);
+            await whenProxyReady();
             webui.proxy.projects.runWhenLoaded(() => {
                 if (webui.projectData.navigation === undefined) return;
                 t.nav = webui.clone(webui.projectData.navigation);

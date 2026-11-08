@@ -150,7 +150,7 @@
         },
         async loadRepos() {
             let t = this;
-            await webui.wait(()=>!!webui.proxy);
+            await whenProxyReady();
             let repos = await webui.proxy.git.getRepos() || [];
             if (repos.length === 0) {
                 t._repos.classList.add('hidden');
@@ -174,7 +174,7 @@
             let t = this;
             let repo = t._repos.value;
             if (repo === undefined) return;
-            await webui.wait(()=>!!webui.proxy);
+            await whenProxyReady();
             let branchInfo = await webui.proxy.git.getBranches(repo, msg => t.setAlert(msg));
             if (branchInfo && branchInfo.branches) {
                 t._branchList = branchInfo.branches;
@@ -267,7 +267,7 @@
             if (repo === undefined) return;
             t._valSyncStatus.innerHTML = '<em>Checking remote sync status...</em>';
             t.loadExistingPat();
-            await webui.wait(()=>!!webui.proxy);
+            await whenProxyReady();
             let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
             if (!status) {
                 t._valSyncStatus.innerHTML = '<em style="color: var(--color-danger);">Failed to retrieve remote status.</em>';
@@ -300,7 +300,7 @@
             if (changeDetail.fileName.endsWith('/')) {
                 return;
             }
-            await webui.wait(()=>!!webui.proxy);
+            await whenProxyReady();
             let data = { change: changeDetail.change, isCompare: false };
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
             data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName, showError) : '';
@@ -345,7 +345,7 @@
             let t = this;
             let repo = t._repos.value;
             if (repo === undefined) return;
-            await webui.wait(()=>!!webui.proxy);
+            await whenProxyReady();
             // Line counts are extra detail, so a failure shows as unavailable rather than an alert.
             let [changes, lineStats] = await Promise.all([
                 webui.proxy.git.getChanges(repo),
@@ -477,7 +477,7 @@
         connected() {
             const t = this;
             setTimeout(async () => {
-                await webui.wait(()=>!!webui.proxy);
+                await whenProxyReady();
                 webui.proxy.projects.runWhenLoaded(() => {
                     t.loadRepos();
                 });

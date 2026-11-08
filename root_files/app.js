@@ -693,6 +693,10 @@
         }
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1 || patKeys.includes(key)) return;
+            // Global variables are read from webui.taskProxyData. Copying them into page data would hide a
+            // project value of the same name until the page changed.
+            const isAppKey = key.startsWith("app-") || key.startsWith("session-") || ["page-path", "page-title", "page-subtitle"].includes(key);
+            if (!isAppKey) return;
             webui.setData(key, value);
         });
         // Variables work until a scope is switched off, including on a new install.
@@ -843,6 +847,17 @@
     }
 }
 
+/**
+ * Resolves once webui.proxy exists. Unlike webui.wait, it never gives up, since the app can take longer to start
+ * than webui.wait allows on a slow connection, and code that ran on without the proxy would throw.
+ */
+function whenProxyReady() {
+    return new Promise(resolve => {
+        // The loader declares webui as a global, not a window property, so typeof is the safe check before it loads.
+        const check = () => typeof webui !== 'undefined' && webui.proxy ? resolve(webui.proxy) : setTimeout(check, 50);
+        check();
+    });
+}
 /**
  * Clean HTML built from project files before it reaches the DOM. Those files come from
  * repositories, and scripts running in this window could reach every app command.
