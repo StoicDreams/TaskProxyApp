@@ -1,9 +1,12 @@
 "use strict"
 {
     function getHeaderContent() {
-        const container = webui.create('header');
+        const container = webui.create('div');
         container.style.padding = 'var(--padding)';
         container.setAttribute('slot', 'header');
+        // A drawer's title, not a second banner for the page.
+        container.setAttribute('role', 'heading');
+        container.setAttribute('aria-level', '2');
         container.innerHTML = 'Icons & Emojis';
         return container;
     }
@@ -62,6 +65,7 @@
         },
         connected() {
             const t = this;
+            makeButton(t);
             t.addEventListener('click', _ev => {
                 openDrawer(t.drawer);
                 return true;

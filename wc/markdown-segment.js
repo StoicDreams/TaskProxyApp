@@ -169,14 +169,14 @@ align-items: stretch;
 position: relative;
 width: 100%;
 }
-aside {
+.tools {
 display: flex;
 flex-direction: column;
 gap: 4px;
 flex: 0 0 36px;
 margin-right: var(--padding);
 }
-aside webui-button {
+.tools webui-button {
 flex-grow: 1;
 min-height: 36px;
 }
@@ -222,10 +222,10 @@ flex-grow: 1;
 display: none;
 }
 </style>
-<aside>
-<webui-button id="btn-edit" class="drag-handle" title="Click to toggle edit, drag to move" start-icon="pencil" theme="info"></webui-button>
+<div class="tools">
+<webui-button id="btn-edit" class="drag-handle" title="Edit segment. Drag, or press Alt+Up or Alt+Down, to move it" start-icon="pencil" theme="info"></webui-button>
 <webui-button id="btn-undo" title="Revert changes & close" start-icon="circle_arrow|rotate:180|bordered|inverted|theme:warning" theme="warning"></webui-button>
-</aside>
+</div>
 <div class="content">
 <div class="input">
 <webui-flex align="center" gap="var(--padding)">
@@ -234,8 +234,8 @@ display: none;
 <webui-button id="btn-delete" theme="danger" start-icon="emoji-wastebasket" label="Delete" title="Delete this segment"></webui-button>
 </webui-flex>
 <div class="input-options">
-<webui-input-text></webui-input-text>
-<webui-input-message></webui-input-message>
+<webui-input-text aria-label="Heading text"></webui-input-text>
+<webui-input-message aria-label="Segment content"></webui-input-message>
 </div>
 </div>
 <webui-content></webui-content>

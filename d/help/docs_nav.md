@@ -13,7 +13,7 @@
         <webui-page-segment>
         - **Organizing Pages**: Click **Add Page** to create a new custom page layout, or **Add Folder** to organize your pages hierarchically.
         - **Editing Navigation**: Select a page or folder in the preview list to rename it or change its icon using the integrated Icon Search component.
-        - **Reordering**: Drag and drop items in the navigation list to reorder them or nest pages inside folders.
+        - **Reordering**: Drag and drop items in the navigation list to reorder them or nest pages inside folders. From the keyboard, select a page with Tab and press Alt+Up or Alt+Down to move it.
         - **Committing Changes**: Click **Save** to apply the new navigation structure, or **Cancel** to revert any unsaved drag-and-drop operations.
         </webui-page-segment>
     </webui-content>
@@ -26,7 +26,7 @@
         - **Deleting**: Click **Delete** while editing a segment to remove it. The page keeps it until you save, so leaving without saving brings it back.
         - **Page Layout**: Content that is not a heading or line break is kept in a segment. When a page opens, any loose content is wrapped in a segment that runs until the next heading, line break, or segment.
         - **Data Binding**: Any variables defined in your Project or Global scopes (or explicitly listed via `data-bind`) are dynamically injected when the page renders.
-        - **Reordering & Saving**: Drag segments by their handles to reorder content, and click **Save** in the top or bottom toolbar to commit the full page layout.
+        - **Reordering & Saving**: Drag segments by their handles to reorder content, or focus a segment's edit button and press Alt+Up or Alt+Down. Click **Save** in the top or bottom toolbar to commit the full page layout.
         </webui-page-segment>
     </webui-content>
 </webui-tabs>

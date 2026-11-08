@@ -357,7 +357,7 @@
 <div class="params-container"></div>
 <webui-flex column>
 <webui-code language="powershell"></webui-code>
-<webui-input-message style="min-height: 60vh;"></webui-input-message>
+<webui-input-message aria-label="Script" style="min-height: 60vh;"></webui-input-message>
 </webui-flex>
 `
     });

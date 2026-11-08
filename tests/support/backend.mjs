@@ -5,6 +5,7 @@
  * - project: { name, path } to open, or null for none. Defaults to /repo.
  * - projects: the saved project list.
  * - files: { 'relative/path': 'contents' }, which get_project_file reads and save_project_file writes.
+ * - binaryFiles: { 'relative/path': 'base64' }, files that are not text, which get_project_file cannot read.
  * - data, variables, navigation, docs, currentPage: fields of the open project.
  * - appData, appVariables: saved global values and their definitions.
  * - scripts: what get_scripts returns.
@@ -24,6 +25,7 @@ export function installBackend(page, state) {
 function setup(state) {
     const project = state.project === null ? null : (state.project || { name: 'Repo', path: '/repo' });
     const files = { ...(state.files || {}) };
+    const binaryFiles = { ...(state.binaryFiles || {}) };
     const git = {
         repos: [''], changes: [], lineStats: [], branches: [{ name: 'main', isCurrent: true, updatedDate: '2026-01-01' }], currentBranch: 'main',
         status: { hasUpstream: true, upstreamName: 'origin/main', ahead: 0, behind: 0, remoteUrl: 'https://example.com/repo.git' },
@@ -80,7 +82,13 @@ function setup(state) {
             add_project: () => 'Project Successfully Added',
             add_projects_multi: () => ['Added \'one\''],
             get_project_file: ({ filePath }) => {
+                if (filePath in binaryFiles) throw 'Failed to load file: stream did not contain valid UTF-8';
                 if (filePath in files) return files[filePath];
+                throw 'Get Project File: File not found';
+            },
+            get_project_file_base64: ({ filePath }) => {
+                if (filePath in binaryFiles) return binaryFiles[filePath];
+                if (filePath in files) return btoa(String.fromCharCode(...new TextEncoder().encode(files[filePath])));
                 throw 'Get Project File: File not found';
             },
             save_project_file: ({ filePath, contents }) => {

@@ -3803,6 +3803,8 @@ function setupWebuiTooltips() {
     }
     const Tooltip = webui.create("div");
     Tooltip.className = "tooltip closed";
+    // The tooltip repeats the aria-label the element is given, so screen readers would hear it twice.
+    Tooltip.setAttribute("aria-hidden", "true");
     let capturedElement = null;
     // Element whose own text already shows its label, skipped to avoid forcing layout on every mouse move.
     let skippedElement = null;

@@ -19,6 +19,7 @@
             const t = this;
             // Subscribed here, since a subscriber's handler must be a method of that element.
             t.dataset.subscribe = 'app-terminal-refresh:onTerminalRefresh|app-terminal-cleared:onTerminalCleared';
+            makeButton(t);
             t.addEventListener('click', () => {
                 t.openDrawer();
                 return true;
@@ -38,9 +39,12 @@
                 return;
             }
             el.innerHTML = '';
-            const header = webui.create('header');
+            const header = webui.create('div');
             header.style.padding = 'var(--padding)';
             header.setAttribute('slot', 'header');
+            // A drawer's title, not a second banner for the page.
+            header.setAttribute('role', 'heading');
+            header.setAttribute('aria-level', '2');
             header.innerHTML = 'Terminal Manager';
             header.style.width = '2000px';
             header.style.maxWidth = '100%';

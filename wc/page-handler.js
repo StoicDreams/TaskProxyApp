@@ -402,6 +402,7 @@
                         title: 'Run Script'
                     });
                     playBtn.addEventListener('click', () => runPageScript(scriptMeta));
+                    makeButton(playBtn, `Run script: ${scriptMeta.lastText || `#${scriptMeta.scriptIndex}`}`);
                     if (copyBtn) {
                         copyBtn.after(playBtn);
                     } else if (header) {

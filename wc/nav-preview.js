@@ -18,6 +18,8 @@ webui.define('app-nav-preview', {
         let el = null;
         if (link.url) {
             el = webui.create('webui-nav-link');
+            // Pages here have no address to follow, so keyboard users select them as buttons.
+            makeButton(el);
             t.dragNDrop(el);
         } else {
             if (!link.children) {
@@ -44,6 +46,7 @@ webui.define('app-nav-preview', {
             switch (changes.property) {
                 case 'name':
                     el.setAttribute('name', changes.newValue);
+                    if (link.url) el.setAttribute('aria-label', `${changes.newValue}, Alt+Up or Alt+Down to move`);
                     break;
                 case 'icon':
                     el.setAttribute('icon', changes.newValue);
@@ -55,6 +58,7 @@ webui.define('app-nav-preview', {
             el.setAttribute('icon', link.icon);
         }
         el.setAttribute('name', link.name);
+        if (link.url) el.setAttribute('aria-label', `${link.name}, Alt+Up or Alt+Down to move`);
         el.addEventListener('click', ev => {
             ev.preventDefault();
             ev.stopPropagation();

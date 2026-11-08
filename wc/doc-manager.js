@@ -107,7 +107,7 @@ display:none;
 </webui-grid>
 <webui-grid columns="1fr 1fr">
 <webui-content></webui-content>
-<webui-input-message></webui-input-message>
+<webui-input-message aria-label="Markdown"></webui-input-message>
 </webui-grid>
 `
     });

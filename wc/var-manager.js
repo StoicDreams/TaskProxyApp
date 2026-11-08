@@ -74,9 +74,12 @@
         webui.projectData.data._activeEnvironment = name;
     }
     function getHeaderContent() {
-        const container = webui.create('header');
+        const container = webui.create('div');
         container.style.padding = 'var(--padding)';
         container.setAttribute('slot', 'header');
+        // A drawer's title, not a second banner for the page.
+        container.setAttribute('role', 'heading');
+        container.setAttribute('aria-level', '2');
         container.innerHTML = 'Variable Manager';
         return container;
     }
@@ -89,7 +92,8 @@
         variables.forEach(v => {
             const wrap = webui.create('webui-grid', { columns: '1fr 2fr max-content', gap: 'var(--padding)', style: 'margin-bottom: 0.5rem; align-items: center;' });
             wrap.appendChild(webui.create('span', { text: v.key }));
-            const input = webui.create('webui-input-text', { value: v.value || '' });
+            // The key beside it is plain text, so the input is named for screen readers.
+            const input = webui.create('webui-input-text', { value: v.value || '', 'aria-label': `${scope} value of ${v.key}` });
             // Setting this attribute to false would still disable the input.
             if (isReadOnly) input.setAttribute('disabled', 'true');
             if (!isReadOnly) {
@@ -124,6 +128,7 @@
                     title: title
                 });
                 iconEl.addEventListener('click', onClick);
+                makeButton(iconEl, `${title}: ${v.key}`);
                 actionsFlex.appendChild(iconEl);
             };
             const copyToProj = () => {
@@ -175,7 +180,7 @@
             const deleteVar = () => {
                 webui.dialog({
                     title: 'Delete Variable',
-                    content: `<p>Are you sure you want to delete the variable <strong>${webui.escapeForHTML(v.key)}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                    content: `<p>Are you sure you want to delete the variable <strong>${webui.escapeForHTML(v.key)}</strong>?</p><p style="background: var(--color-danger); color: var(--color-danger-offset); padding: 0.25em 0.5em; border-radius: var(--corners);">This action cannot be undone.</p>`,
                     confirm: 'Delete',
                     cancel: 'Cancel',
                     onconfirm: () => {
@@ -242,7 +247,7 @@
     <webui-content slot="content" nodetach>
         <webui-flex align="center" justify="start" gap="var(--padding)" style="margin-bottom: 1rem;">
             <label>Environment:</label>
-            <webui-dropdown id="env-selector" style="flex-grow: 1; padding: 0.25rem;"></webui-dropdown>
+            <webui-dropdown id="env-selector" aria-label="Environment" style="flex-grow: 1; padding: 0.25rem;"></webui-dropdown>
             <webui-button id="btn-manage-env" label="Manage" theme="primary"></webui-button>
         </webui-flex>
         <webui-flex justify="center" gap="var(--padding)">
@@ -538,6 +543,7 @@
         },
         connected() {
             const t = this;
+            makeButton(t);
             t.addEventListener('click', _ev => {
                 openDrawer(t.drawer);
                 return true;

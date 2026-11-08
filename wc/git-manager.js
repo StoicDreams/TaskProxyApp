@@ -66,6 +66,14 @@
             state: includeStates.include,
         };
     }
+    /** A theme color as text on the page is hard to read, so status text shows on the color, in its paired text color. */
+    function badge(theme, html) {
+        return `<span class="badge" style="background: var(--color-${theme}); color: var(--color-${theme}-offset);">${html}</span>`;
+    }
+    /** A warning in a dialog, shown on the danger color so it is easy to read. */
+    function dangerNote(html, bold) {
+        return `<p style="background: var(--color-danger); color: var(--color-danger-offset); padding: 0.25em 0.5em; border-radius: var(--corners);${bold ? ' font-weight: bold;' : ''}">${html}</p>`;
+    }
     function rowHtml(details, index) {
         const isNew = details.change === 'Add';
         const options = [[includeStates.include, 'Include'], [includeStates.exclude, 'Exclude'], [includeStates.ignore, 'Ignore']]
@@ -83,13 +91,15 @@
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: 'tabs table dropdown input-message input-text toggle-icon alert content-compare',
+        preload: 'tabs table dropdown input-message input-text toggle-icon alert content-compare file-preview',
         constructor() {
             const t = this;
             t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
-            t._fileName = t.template.querySelector('h3');
+            t._fileName = t.template.querySelector('.preview h2');
             t._filesContainer = t.template.querySelector('.files');
             t._diffViewer = t.template.querySelector('webui-content-compare');
+            t._filePreview = t.template.querySelector('webui-file-preview');
+            t._previewPane = t.template.querySelector('.preview');
             t._message = t.template.querySelector('webui-input-message[label="Commit Message"]');
             t._alert = t.template.querySelector('webui-alert');
             t._btnRefresh = t.template.querySelector('webui-button[label="Refresh"]');
@@ -197,7 +207,7 @@
                     nameHtml: `${isCurrent ? '<webui-icon icon="star|fill|theme:warning" style="margin-right: 0.5rem;"></webui-icon>' : ''}${name}`,
                     actionsHtml: `
                         <webui-flex gap="0.5rem" justify="right" align="center">
-                            ${!isCurrent ? `<webui-button theme="info" class="btn-switch" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Switch</webui-button>` : `<span style="padding: 0.25rem 0.5rem; font-size: 0.85rem; color: var(--color-success); font-weight: bold;">Active</span>`}
+                            ${!isCurrent ? `<webui-button theme="info" class="btn-switch" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Switch</webui-button>` : `<span class="badge" style="background: var(--color-success); color: var(--color-success-offset); font-size: 0.85rem; font-weight: bold;">Active</span>`}
                             <webui-button theme="secondary" class="btn-new" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">New</webui-button>
                             ${!isCurrent ? `<webui-button theme="warning" class="btn-merge" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Merge</webui-button>` : ''}
                             ${!isCurrent ? `<webui-button theme="danger" class="btn-delete" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Delete</webui-button>` : ''}
@@ -259,7 +269,7 @@
                 deletions += stats.deletions;
             });
             const binaryNote = binary ? ` <span class="binary-note">(${binary} binary ${binary === 1 ? 'file' : 'files'} not counted)</span>` : '';
-            t._valCommitLines.innerHTML = `<span style="color: var(--color-success);">+${additions.toLocaleString()}</span> <span style="color: var(--color-danger);">-${deletions.toLocaleString()}</span>${binaryNote}`;
+            t._valCommitLines.innerHTML = `${badge('success', `+${additions.toLocaleString()}`)} ${badge('danger', `-${deletions.toLocaleString()}`)}${binaryNote}`;
         },
         async loadRemoteStatus() {
             let t = this;
@@ -270,7 +280,7 @@
             await whenProxyReady();
             let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
             if (!status) {
-                t._valSyncStatus.innerHTML = '<em style="color: var(--color-danger);">Failed to retrieve remote status.</em>';
+                t._valSyncStatus.innerHTML = badge('danger', '<em>Failed to retrieve remote status.</em>');
                 return;
             }
             // A URL can hold a token, as in https://user:token@host.
@@ -279,15 +289,15 @@
                 t._valTrackingBranch.textContent = status.upstreamName;
                 let syncHtml = '';
                 if (status.ahead === 0 && status.behind === 0) {
-                    syncHtml = `<span style="color: var(--color-success);">Up to date with remote</span>`;
+                    syncHtml = badge('success', 'Up to date with remote');
                 } else {
-                    if (status.ahead > 0) syncHtml += `<span style="color: rgb(181, 181, 255); margin-right: 1rem;">${status.ahead} Commits Ahead (Pending Push)</span> `;
-                    if (status.behind > 0) syncHtml += `<span style="color: var(--color-warning);">${status.behind} Commits Behind (Pending Pull)</span>`;
+                    if (status.ahead > 0) syncHtml += `${badge('info', `${status.ahead} Commits Ahead (Pending Push)`)} `;
+                    if (status.behind > 0) syncHtml += badge('warning', `${status.behind} Commits Behind (Pending Pull)`);
                 }
                 t._valSyncStatus.innerHTML = syncHtml;
             } else {
                 t._valTrackingBranch.innerHTML = '<em>None</em>';
-                t._valSyncStatus.innerHTML = `<span style="color: var(--color-danger);">No remote tracking branch set. Publish this branch to synchronize.</span>`;
+                t._valSyncStatus.innerHTML = badge('danger', 'No remote tracking branch set. Publish this branch to synchronize.');
             }
         },
         async loadFileDiff(changeDetail) {
@@ -297,6 +307,7 @@
             await customElements.whenDefined('webui-content-compare');
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
             t._diffViewer.clear?.();
+            t.showFilePreview(false);
             if (changeDetail.fileName.endsWith('/')) {
                 return;
             }
@@ -327,9 +338,20 @@
                     data.fileContent = '';
                 }
             } else {
-                // Binary files cannot be read as text, which is not worth interrupting the user for.
-                data.fileContent = await webui.proxy.getProjectFile(fullFilePath, showError);
-                if (t._diffRequest !== request) return;
+                // Images and other files that are not text are shown as they are, rather than compared line by line.
+                let isBinary = !!t._lineStats?.get(changeDetail.fileName)?.binary;
+                if (!isBinary) {
+                    let readError = null;
+                    data.fileContent = await webui.proxy.getProjectFile(fullFilePath, err => { readError = `${err}`; });
+                    if (t._diffRequest !== request) return;
+                    // Git can call a file text that is not valid UTF-8, and only reading it shows that.
+                    isBinary = data.fileContent === undefined && /UTF-8/i.test(readError || '');
+                    if (readError && !isBinary) showError(readError);
+                }
+                if (isBinary) {
+                    await t.loadFilePreview(changeDetail, fullFilePath, request);
+                    return;
+                }
             }
             if (data.fileContent !== undefined) {
                 let result = await webui.proxy.worker.send('processFileDiff', data);
@@ -340,6 +362,26 @@
                 t._diffViewer.setDiff?.(result.old, result.new, changeDetail.change);
             }
             t._fileName.innerHTML = changeDetail.display;
+        },
+        /** Shows the file preview in place of the comparison, or the comparison again. */
+        showFilePreview(show) {
+            const t = this;
+            t._previewPane.classList.toggle('showing-file', show);
+            if (!show) t._filePreview.clear?.();
+        },
+        async loadFilePreview(changeDetail, fullFilePath, request) {
+            const t = this;
+            const base64 = await webui.proxy.getProjectFileBase64(fullFilePath, msg => t.setAlert(msg, 'warning'));
+            if (t._diffRequest !== request) return;
+            t._fileName.innerHTML = changeDetail.display;
+            if (base64 === undefined) return;
+            await customElements.whenDefined('webui-file-preview');
+            if (t._diffRequest !== request) return;
+            if (typeof t._filePreview.setFile !== 'function') customElements.upgrade(t._filePreview);
+            const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+            t.showFilePreview(true);
+            // The name's extension tells the preview what kind of file it is.
+            t._filePreview.setFile({ name: changeDetail.fileName.split('/').pop(), content: bytes });
         },
         async loadRepoChanges() {
             let t = this;
@@ -375,6 +417,7 @@
                 t._selectedFile = undefined;
                 t._fileName.innerHTML = '';
                 t._diffViewer.clear?.();
+                t.showFilePreview(false);
             } else {
                 t.selectFile(index);
             }
@@ -429,8 +472,8 @@
             webui.dialog({
                 title: isNew ? 'Delete File' : 'Revert File',
                 content: isNew
-                    ? `<p>Are you sure you want to permanently delete <strong>${name}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`
-                    : `<p>Are you sure you want to discard all uncommitted changes in <strong>${name}</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                    ? `<p>Are you sure you want to permanently delete <strong>${name}</strong>?</p>${dangerNote(`This action cannot be undone.`)}`
+                    : `<p>Are you sure you want to discard all uncommitted changes in <strong>${name}</strong>?</p>${dangerNote(`This action cannot be undone.`)}`,
                 confirm: isNew ? 'Delete' : 'Revert',
                 cancel: 'Cancel',
                 onconfirm: async (data, content) => {
@@ -553,7 +596,7 @@
                     await webui.dialog({
                         title: 'Delete Branch',
                         content: targetBranch.startsWith('origin/')
-                            ? `<p>Are you sure you want to delete <strong>${safeBranch}</strong> from the remote?</p><p style="color: var(--color-danger);">This removes the branch for everyone using this remote.</p>`
+                            ? `<p>Are you sure you want to delete <strong>${safeBranch}</strong> from the remote?</p>${dangerNote(`This removes the branch for everyone using this remote.`)}`
                             : `<p>Are you sure you want to delete the branch <strong>${safeBranch}</strong>?</p>`,
                         confirm: 'Delete',
                         cancel: 'Cancel',
@@ -576,7 +619,7 @@
                     title: 'Revert All Changes',
                     content: `
                         <p>Are you sure you want to discard <strong>all</strong> uncommitted changes in this repository?</p>
-                        <p style="color: var(--color-danger); font-weight: bold;">This action cannot be undone. All modified tracked files and untracked additions will be deleted.</p>
+                        ${dangerNote('This action cannot be undone. All modified tracked files and untracked additions will be deleted.', true)}
                     `,
                     confirm: 'Revert All',
                     cancel: 'Cancel',
@@ -794,7 +837,7 @@
                 }
                 await webui.dialog({
                     title: 'Force Pull (Overwrite Local)',
-                    content: `<p>Are you sure you want to pull and <strong>overwrite all local changes</strong>?</p><p style="color: var(--color-danger);">This action cannot be undone.</p>`,
+                    content: `<p>Are you sure you want to pull and <strong>overwrite all local changes</strong>?</p>${dangerNote(`This action cannot be undone.`)}`,
                     confirm: 'Overwrite',
                     cancel: 'Cancel',
                     onconfirm: async (data, content) => {
@@ -989,14 +1032,17 @@ button.file .name {
     white-space: nowrap;
     font-size: 0.85em;
     font-weight: normal;
-    opacity: 0.8;
+}
+.badge {
+    padding: 0 0.4em;
+    border-radius: var(--corners);
 }
 button.revert {
     padding: 0 0.5rem;
     background: var(--color-danger);
     color: var(--color-danger-offset);
 }
-.preview h3 {
+.preview h2 {
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1005,6 +1051,15 @@ button.revert {
 .preview webui-content-compare {
     flex: 1;
     min-height: 0;
+}
+.preview webui-file-preview {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+.preview.showing-file webui-content-compare,
+.preview:not(.showing-file) webui-file-preview {
+    display: none;
 }
 /* Side by side panes are too narrow on small windows, so stack them and let the page scroll. */
 @media (max-width: 900px) {
@@ -1068,8 +1123,9 @@ button.revert {
                 <div class="files"></div>
             </div>
             <div class="preview">
-                <h3></h3>
+                <h2></h2>
                 <webui-content-compare></webui-content-compare>
+                <webui-file-preview nodownload noframes></webui-file-preview>
             </div>
         </div>
     </webui-content>
@@ -1090,7 +1146,7 @@ button.revert {
     <webui-button slot="tabs" id="tab-remote">Auth</webui-button>
     <webui-content slot="content" nodetach>
         <webui-flex column gap="var(--padding)">
-            <h3>Authentication Settings</h3>
+            <h2>Authentication Settings</h2>
             <p class="pa-1">Set your Personal Access Token (PAT) for remote Git operations.</p>
             <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="end">
                 <webui-input-text id="input-git-pat" label="Personal Access Token (PAT)"></webui-input-text>

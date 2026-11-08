@@ -176,7 +176,7 @@ test('build a team page', async ({ page }) => {
 
 /** Opens a segment's editor, sets its type and text, and closes it again. */
 async function editSegment(page, segment, type, text) {
-    await clickOn(page, segment.locator('aside webui-button').first(), { after: 700 });
+    await clickOn(page, segment.locator('#btn-edit'), { after: 700 });
     await clickOn(page, segment.locator('webui-switch [role="radio"]', { hasText: new RegExp(`^${type}$`) }), { after: 300 });
     await page.waitForTimeout(500);
     const input = segment.getByRole('textbox').first();
@@ -184,5 +184,5 @@ async function editSegment(page, segment, type, text) {
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.type(text, { delay: 22 });
     await page.waitForTimeout(700);
-    await clickOn(page, segment.locator('aside webui-button').first(), { after: 1200 });
+    await clickOn(page, segment.locator('#btn-edit'), { after: 1200 });
 }

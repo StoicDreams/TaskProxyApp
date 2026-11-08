@@ -167,6 +167,7 @@ pub fn run() {
             services::projects::add_projects_multi,
             services::projects::get_project_data,
             services::projects::get_project_file,
+            services::projects::get_project_file_base64,
             services::projects::get_projects,
             services::projects::load_projects,
             services::projects::rename_project,

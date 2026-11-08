@@ -105,6 +105,7 @@ test('a renamed file uses its new name', async ({ page }) => {
 test('a binary file does not interrupt with a popup', async ({ page }) => {
     await openApp(page, { project: { name: 'Repo', path: '/repo' } });
     await onCommand(page, 'get_project_file', () => { throw 'Failed to load file: stream did not contain valid UTF-8'; });
+    await onCommand(page, 'get_project_file_base64', () => 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
     await page.evaluate(() => {
         window.__alerts = [];
         const original = webui.alert;
@@ -113,7 +114,9 @@ test('a binary file does not interrupt with a popup', async ({ page }) => {
         webui.navigateTo('/git-controller');
     });
     await page.locator('app-git-manager .files button.file').first().waitFor();
-    await expect(manager(page).locator('webui-alert').first()).toContainText('valid UTF-8');
+    // It shows in the file preview instead, with no warning.
+    await expect(manager(page).locator('webui-file-preview')).toBeVisible();
+    await expect(manager(page).locator('webui-alert').first()).not.toContainText('valid UTF-8');
     expect(await page.evaluate(() => window.__alerts)).toEqual([]);
 });
 test('a slow diff cannot replace the file selected after it', async ({ page }) => {
@@ -438,5 +441,42 @@ test.describe('file list', () => {
         await openList(page, { changes: many });
         await expect(manager(page).locator('.files .file-row')).toHaveCount(600);
         await expect(manager(page).locator('#val-commit-files')).toHaveText('600 of 600');
+    });
+});
+
+test.describe('files that are not text', () => {
+    const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const openWithImage = (page, change, stats) => open(page, { changes: [`${change}  logo.png`, 'M  a.txt'], lineStats: stats }, { binaryFiles: { 'logo.png': PNG } });
+    const select = (page, file) => manager(page).locator(`.files button.file[title="${file}"]`).click();
+    const preview = page => manager(page).locator('webui-file-preview');
+    test('an added image git marks as binary shows in the file preview', async ({ page }) => {
+        await openWithImage(page, '??', [{ path: 'logo.png', additions: 0, deletions: 0, binary: true }]);
+        await select(page, 'logo.png');
+        await expect(preview(page).locator('img')).toHaveAttribute('alt', 'logo.png');
+        await expect.poll(() => preview(page).locator('img').evaluate(img => img.naturalWidth)).toBe(1);
+        await expect(manager(page).locator('webui-content-compare')).toBeHidden();
+        expect((await calls(page, 'get_project_file_base64'))[0]).toEqual({ filePath: 'logo.png' });
+    });
+    test('a modified file that cannot be read as text shows in the preview, without a warning', async ({ page }) => {
+        // No line counts, so only reading the file shows it is not text.
+        await openWithImage(page, 'M ', []);
+        await select(page, 'logo.png');
+        await expect(preview(page).locator('img')).toBeVisible();
+        await expect(manager(page).locator('webui-alert[show]')).toHaveCount(0);
+    });
+    test('text files go back to the comparison', async ({ page }) => {
+        await openWithImage(page, '??', [{ path: 'logo.png', additions: 0, deletions: 0, binary: true }]);
+        await select(page, 'logo.png');
+        await expect(preview(page).locator('img')).toBeVisible();
+        await select(page, 'a.txt');
+        await expect(preview(page)).toBeHidden();
+        await expect(manager(page).locator('webui-content-compare')).toBeVisible();
+        await expect(preview(page).locator('img')).toHaveCount(0);
+    });
+    test('the preview has no download link', async ({ page }) => {
+        await openWithImage(page, '??', [{ path: 'logo.png', additions: 0, deletions: 0, binary: true }]);
+        await select(page, 'logo.png');
+        await expect(preview(page).locator('img')).toBeVisible();
+        await expect(preview(page).locator('a')).toHaveCount(0);
     });
 });

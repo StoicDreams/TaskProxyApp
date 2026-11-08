@@ -52,7 +52,7 @@
                     title: 'Remove Project',
                     content: `
                     <p>Are you sure you want to remove the project <strong>${webui.escapeForHTML(currentProject.display)}</strong>?</p>
-                    <p style="color: var(--color-danger);">This will only remove the project from Task Proxy. No files or folders will be deleted.</p>
+                    <p style="background: var(--color-danger); color: var(--color-danger-offset); padding: 0.25em 0.5em; border-radius: var(--corners);">This will only remove the project from Task Proxy. No files or folders will be deleted.</p>
                     `,
                     confirm: 'Remove',
                     cancel: 'Cancel',

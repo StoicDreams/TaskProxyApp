@@ -266,6 +266,12 @@
             let cleanPath = (filePath || '').replace(/\\/g, '/');
             return tauri.core.invoke('get_project_file', { filePath: cleanPath }).catch(errHandler);
         }
+        /** A file's bytes as base64, for previewing images and other files that are not text. */
+        getProjectFileBase64(filePath, errHandler) {
+            errHandler ??= defaultErrHandler;
+            let cleanPath = (filePath || '').replace(/\\/g, '/');
+            return tauri.core.invoke('get_project_file_base64', { filePath: cleanPath }).catch(errHandler);
+        }
         searchProjectFiles(filter, display, errHandler) {
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('search_project_files', { filter: filter, display: display }).catch(errHandler);
@@ -848,6 +854,25 @@
 }
 
 /**
+ * Lets keyboard and screen reader users use an element that responds to clicks: it is announced as a button,
+ * Tab reaches it, and Enter or Space clicks it. Its title, or the label given here, names it.
+ */
+function makeButton(el, label) {
+    if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+    if (label) el.setAttribute('aria-label', label);
+    if (el._isButton) return el;
+    el._isButton = true;
+    el.addEventListener('keydown', ev => {
+        if (ev.target !== el || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            el.click();
+        }
+    });
+    return el;
+}
+/**
  * Resolves once webui.proxy exists. Unlike webui.wait, it never gives up, since the app can take longer to start
  * than webui.wait allows on a slow connection, and code that ran on without the proxy would throw.
  */
@@ -972,6 +997,34 @@ function getDragNDropSetup(getSegments) {
             placeholder.remove();
             document.body.classList.remove('dragging');
         }
+        // Alt+Up and Alt+Down move the item one place, as a drag does, for people who do not use a mouse.
+        segment.addEventListener('keydown', ev => {
+            if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) return;
+            const handle = webui.closest(ev, '.drag-handle');
+            // Keys pressed on an item inside this one, such as a page in a folder, move that item instead.
+            if (!handle || (handle !== segment && handle.getRootNode().host !== segment)) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            const focused = ev.composedPath()[0];
+            const others = getSegments(handle).filter(el => el !== segment && !segment.contains(el));
+            const down = ev.key === 'ArrowDown';
+            const candidates = down
+                ? others.filter(el => segment.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+                : others.filter(el => segment.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING).reverse();
+            const parent = segment.parentNode;
+            const next = segment.nextSibling;
+            // Placeholders, such as the start of a folder, say which side of them an item goes.
+            for (const target of candidates) {
+                const place = target.getAttribute('place') || (down ? 'below' : 'above');
+                if (place === 'below') target.after(segment);
+                else target.before(segment);
+                if (segment.parentNode !== parent || segment.nextSibling !== next) break;
+            }
+            if (typeof onSet === 'function') {
+                onSet();
+            }
+            focused?.focus?.();
+        });
         segment.addEventListener('mousedown', ev => {
             if (ev.buttons !== 1 || mouseisdown) return;
             const target = webui.closest(ev, '.drag-handle');
