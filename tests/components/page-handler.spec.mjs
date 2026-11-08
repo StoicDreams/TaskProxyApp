@@ -254,6 +254,9 @@ test.describe('help', () => {
         await tabs.nth(2).click();
         await expect(help.locator('webui-code[language="pwsh"]')).toBeVisible();
         await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(0);
+        // The panel can cover the Save button.
+        await help.locator('.panel button.close').click();
+        await expect(help.locator('.panel')).toBeHidden();
         await save(page);
         expect((await saved(page)).contents).toBe('<webui-data data-page-title="" data-page-subtitle=""></webui-data>\n\n# One');
     });

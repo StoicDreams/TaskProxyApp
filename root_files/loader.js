@@ -3810,13 +3810,21 @@ function setupWebuiTooltips() {
     let skippedElement = null;
     document.body.appendChild(Tooltip);
     let isShowing = false;
+    let visibilityTimer = 0;
     function CloseIfOpen() {
         if (!isShowing) {
             return;
         }
         isShowing = false;
         capturedElement = null;
+        clearInterval(visibilityTimer);
         Tooltip.className = "tooltip closed";
+    }
+    /** An element that is hidden or removed under a still pointer gets no mouse event, so check on it. */
+    function CloseIfHidden() {
+        if (!capturedElement || !capturedElement.isConnected || !capturedElement.getClientRects().length) {
+            CloseIfOpen();
+        }
     }
     function CheckContainersForAriaLabel(target) {
         while (target && target !== target.parentNode) {
@@ -3872,6 +3880,8 @@ function setupWebuiTooltips() {
                 let client = target.getBoundingClientRect();
                 isShowing = true;
                 capturedElement = target;
+                clearInterval(visibilityTimer);
+                visibilityTimer = setInterval(CloseIfHidden, 250);
                 Tooltip.innerText = display;
                 Tooltip.className = "tooltip open";
                 let myposition = {
