@@ -176,6 +176,18 @@
         focusTerminal() {
             this._term?.focus();
         },
+        /** Selects all output, scrollback included, and returns it. The terminal keeps focus, so Ctrl+C copies it again. */
+        selectAll() {
+            const t = this;
+            if (!t._term) return '';
+            t._term.selectAll();
+            t._term.focus();
+            return t._term.getSelection();
+        },
+        /** The selected text, for tests. */
+        getSelectedText() {
+            return this._term?.getSelection() ?? '';
+        },
         /** The text on screen, for tests and copying. */
         getScreenText() {
             const t = this;

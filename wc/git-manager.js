@@ -605,6 +605,7 @@
             }
             const result = await webui.proxy.git.commit(repo, files, message, msg => report(msg, 'danger'), origin.path);
             if (!result) return;
+            document.dispatchEvent(new CustomEvent('app-git-changes'));
             const messages = origin.data.data?._gitCommitMessages;
             if (messages && repo in messages) {
                 delete messages[repo];
@@ -884,6 +885,7 @@
             t.loadRemoteStatus();
             t.autoFetch(repo);
             webui.proxy.reloadProjectFiles();
+            document.dispatchEvent(new CustomEvent('app-git-changes'));
         },
         getRow(index) {
             return this._filesContainer.querySelector(`.file-row[data-index="${index}"]`);

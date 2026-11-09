@@ -164,6 +164,8 @@
             getChangeStats: (repo, err) => invokeGit('get_git_change_stats', { repo }, err),
             getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),
             getRepos: (err) => invokeGit('get_git_repos', {}, err),
+            /** Changed files by project path, for every saved project. */
+            getProjectChangeCounts: (err) => invokeGit('get_project_change_counts', {}, err),
             getBranches: (repo, err) => invokeGit('get_git_branches', { repo }, err),
             switchBranch: (repo, branch, err) => invokeGit('git_switch_branch', { repo, branch }, err),
             createBranch: (repo, branch, baseBranch, err) => invokeGit('git_create_branch', { repo, branch, baseBranch }, err),

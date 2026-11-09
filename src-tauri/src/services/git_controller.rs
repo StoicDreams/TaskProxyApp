@@ -773,6 +773,92 @@ pub(crate) async fn get_git_changes(
     result.map_err(|err| format!("{}", err))?
 }
 
+/// How many changed files each saved project has, by project path, as its Git Controller would list
+/// them across all its repos, leaving out the files that project ignores. A project that cannot be read
+/// is left out.
+#[tauri::command]
+pub(crate) async fn get_project_change_counts(
+    app_handle: AppHandle,
+    state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
+) -> Result<HashMap<String, usize>, String> {
+    let known = projects
+        .lock()
+        .map_err(|err| format!("State failure: {}", err))?
+        .clone();
+    let (current_path, current_data) = {
+        let current = state
+            .lock()
+            .map_err(|err| format!("State failure: {}", err))?;
+        (current.path.replace('\\', "/"), current.data.clone())
+    };
+    let mut counts = HashMap::new();
+    for project in known {
+        let path = project.path.replace('\\', "/");
+        // The open project's settings can be newer than what is saved.
+        let data = if path == current_path {
+            Some(current_data.clone())
+        } else {
+            get_data_from_local_storage(&app_handle, &format!("{}.enc", get_hash_code(&path)))
+                .await
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<HashMap<String, Value>>(&bytes).ok())
+        };
+        let ignored = data.map(|data| ignored_files(&data)).unwrap_or_default();
+        let root = PathBuf::from(&path);
+        let count = task::spawn_blocking(move || count_project_changes(&root, &ignored))
+            .await
+            .map_err(|err| format!("{}", err))?;
+        if let Some(count) = count {
+            counts.insert(project.path, count);
+        }
+    }
+    Ok(counts)
+}
+
+/// The files a project's Git Controller always leaves out, written as repo/file.
+fn ignored_files(data: &HashMap<String, Value>) -> std::collections::HashSet<String> {
+    data.get("_gitIgnoreFiles")
+        .and_then(|value| value.as_array())
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|file| file.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Counts the changed files in every repo of a project, or None when it has no repo that can be read.
+fn count_project_changes(
+    root: &Path,
+    ignored: &std::collections::HashSet<String>,
+) -> Option<usize> {
+    if !root.is_dir() {
+        return None;
+    }
+    let mut total = None;
+    for repo in find_git_repos(root) {
+        let Ok(repository) = Repository::open(root.join(&repo)) else {
+            continue;
+        };
+        let Ok(changes) = collect_changes(&repository) else {
+            continue;
+        };
+        let count = changes
+            .iter()
+            .filter_map(|line| line.get(3..))
+            .map(|name| {
+                let name = name.trim();
+                name.split(" -> ").last().unwrap_or(name)
+            })
+            .filter(|name| !ignored.contains(&format!("{}/{}", repo, name)))
+            .count();
+        total = Some(total.unwrap_or(0) + count);
+    }
+    total
+}
+
 fn collect_changes(repository: &Repository) -> Result<Vec<String>, String> {
     let mut options = git2::StatusOptions::new();
     options.include_untracked(true).recurse_untracked_dirs(true);
@@ -1459,6 +1545,55 @@ mod tests {
 
     fn head_branch(repo: &Repository) -> String {
         repo.head().unwrap().shorthand().unwrap().to_string()
+    }
+
+    #[test]
+    fn project_changes_are_counted_across_its_repos() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        let first = Repository::init(root.join("first")).unwrap();
+        commit_all(&first, "start");
+        let second = Repository::init(root.join("libs").join("second")).unwrap();
+        write(&first, "a.txt", "new\n");
+        write(&second, "b.txt", "new\n");
+        write(&second, "c.txt", "new\n");
+        let none = std::collections::HashSet::new();
+        assert_eq!(count_project_changes(&root, &none), Some(3));
+    }
+
+    #[test]
+    fn project_changes_leave_out_ignored_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        write(&repo, "a.txt", "new\n");
+        write(&repo, "local.env", "secret\n");
+        let ignored = ignored_files(&HashMap::from([(
+            String::from("_gitIgnoreFiles"),
+            serde_json::json!(["/local.env"]),
+        )]));
+        assert_eq!(count_project_changes(dir.path(), &ignored), Some(1));
+    }
+
+    #[test]
+    fn a_project_with_no_changes_counts_zero_and_one_without_a_repo_is_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path().join("repo")).unwrap();
+        write(&repo, "a.txt", "one\n");
+        commit_all(&repo, "start");
+        let none = std::collections::HashSet::new();
+        assert_eq!(
+            count_project_changes(&dir.path().join("repo"), &none),
+            Some(0)
+        );
+        std::fs::create_dir(dir.path().join("plain")).unwrap();
+        assert_eq!(
+            count_project_changes(&dir.path().join("plain"), &none),
+            None
+        );
+        assert_eq!(
+            count_project_changes(&dir.path().join("missing"), &none),
+            None
+        );
     }
 
     #[test]

@@ -119,6 +119,64 @@ test('clear empties the console', async ({ page }) => {
     await expect.poll(() => screen(page)).toBe('');
     await expect(placeholder(page)).toBeVisible();
 });
+test('select all selects every line, scrolled out ones too, and copies them', async ({ page }) => {
+    await open(page);
+    await ready(page);
+    await start(page, 'a.ps1');
+    const lines = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`);
+    await output(page, 'a.ps1', lines.join('\r\n') + '\r\n');
+    await expect.poll(() => screen(page)).toContain('line 200');
+    await page.evaluate(() => {
+        window.__copied = [];
+        navigator.clipboard.writeText = async text => { window.__copied.push(text); };
+    });
+    await page.locator('#btn-select-all').click();
+    await expect.poll(() => page.evaluate(() => window.__copied.length)).toBe(1);
+    expect(await page.evaluate(() => window.__copied[0])).toBe(lines.join('\n'));
+    expect(await page.evaluate(() => document.querySelector('#term-console').getSelectedText())).toContain('line 200');
+    await expect(page.locator('webui-alerts, webui-alert').filter({ hasText: 'Copied the terminal output.' }).first()).toBeAttached();
+    // The terminal keeps focus, so Ctrl+C copies again rather than stopping the script.
+    await page.keyboard.press('Control+c');
+    await expect.poll(() => page.evaluate(() => window.__copied.length)).toBe(2);
+    expect((await calls(page, 'write_terminal_input')).filter(call => call.data === '\x03')).toEqual([]);
+});
+test('select all copies without blank lines or whitespace around the text', async ({ page }) => {
+    await open(page);
+    await ready(page);
+    await start(page, 'a.ps1');
+    await output(page, 'a.ps1', '\r\n   \r\n  Build started   \r\n\r\n\r\n    Compiling\r\n \t \r\nDone  \r\n\r\n');
+    await expect.poll(() => screen(page)).toContain('Done');
+    await page.evaluate(() => {
+        window.__copied = [];
+        navigator.clipboard.writeText = async text => { window.__copied.push(text); };
+    });
+    await page.locator('#btn-select-all').click();
+    await expect.poll(() => page.evaluate(() => window.__copied.length)).toBe(1);
+    // Indents inside the text stay, as they are part of the output.
+    expect(await page.evaluate(() => window.__copied[0])).toBe('Build started\n    Compiling\nDone');
+});
+test('select all says so when the clipboard refuses', async ({ page }) => {
+    await open(page);
+    await ready(page);
+    await start(page, 'a.ps1');
+    await output(page, 'a.ps1', 'some output\r\n');
+    await expect.poll(() => screen(page)).toContain('some output');
+    await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('Not allowed'); }; });
+    await page.locator('#btn-select-all').click();
+    await expect(page.locator('webui-alerts, webui-alert').filter({ hasText: 'could not be copied: Not allowed' }).first()).toBeAttached();
+});
+test('select all with no output copies nothing', async ({ page }) => {
+    await open(page);
+    await ready(page);
+    await start(page, 'a.ps1');
+    await page.evaluate(() => {
+        window.__copied = [];
+        navigator.clipboard.writeText = async text => { window.__copied.push(text); };
+    });
+    await page.locator('#btn-select-all').click();
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => window.__copied)).toEqual([]);
+});
 test('a status change during a dropdown refresh is not lost', async ({ page }) => {
     await open(page);
     await ready(page);

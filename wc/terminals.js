@@ -77,7 +77,8 @@
         <webui-button id="btn-kill-all" theme="danger" label="Kill All" title="End every running script now"></webui-button>
         <webui-button id="btn-remove-script" theme="secondary" label="Remove" title="Remove this finished page script from the list"></webui-button>
         <webui-button id="btn-remove-finished" theme="secondary" label="Remove Finished Page Scripts"></webui-button>
-        <webui-button id="btn-clear" theme="secondary" label="Clear Output" style="margin-left: auto;"></webui-button>
+        <webui-button id="btn-select-all" theme="secondary" label="Select All" title="Select all of this terminal's output and copy it to the clipboard" style="margin-left: auto;"></webui-button>
+        <webui-button id="btn-clear" theme="secondary" label="Clear Output"></webui-button>
     </webui-flex>
     <!-- The script scrolls when it is long, so the terminal below always keeps its space. -->
     <webui-flex column style="flex: 0 1 auto; min-height: 120px; overflow: auto;">
@@ -171,6 +172,22 @@
                     // Clear the queue first, so finishing scripts do not start the next one.
                     webui.proxy.terminalHelpers.getState().queue = [];
                     await webui.proxy.terminal.killAll().catch(err => webui.alert(err));
+                });
+                container.querySelector('#btn-select-all').addEventListener('click', async () => {
+                    // The terminal pads rows with spaces and keeps blank rows, so only the lines with text are copied.
+                    const text = t._activeConsole.selectAll()
+                        .split(/\r?\n/)
+                        .map(line => line.trimEnd())
+                        .filter(line => line.trim() !== '')
+                        .join('\n')
+                        .trim();
+                    if (!text) return;
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        webui.alert('Copied the terminal output.', 'success');
+                    } catch (err) {
+                        webui.alert(`The terminal output could not be copied: ${err?.message ?? err}`, 'danger');
+                    }
                 });
                 btnClear.addEventListener('click', () => {
                     let state = webui.proxy.terminalHelpers.getState();

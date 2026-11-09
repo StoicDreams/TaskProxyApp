@@ -142,6 +142,7 @@ pub fn run() {
             services::emojis::init_emoji_search,
             services::emojis::search_emojis,
             services::git_controller::get_git_changes,
+            services::git_controller::get_project_change_counts,
             services::git_controller::get_git_change_stats,
             services::git_controller::get_git_file_diff,
             services::git_controller::get_git_repos,

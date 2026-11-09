@@ -9,6 +9,7 @@
  * - data, variables, navigation, docs, currentPage: fields of the open project.
  * - appData, appVariables: saved global values and their definitions.
  * - scripts: what get_scripts returns.
+ * - changeCounts: { path: count } of changed files, which get_project_change_counts returns.
  * - projectFiles: what search_project_files returns, after searchDelay milliseconds when set.
  * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
@@ -114,6 +115,7 @@ function setup(state) {
             install_update: () => 'App is up to date.',
             get_git_repos: () => git.repos,
             get_git_changes: () => git.changes,
+            get_project_change_counts: () => state.changeCounts || {},
             get_git_change_stats: () => git.lineStats,
             get_git_file_diff: ({ file }) => git.diffs[file] || '',
             get_git_branches: () => ({ branches: git.branches, currentBranch: git.currentBranch }),
