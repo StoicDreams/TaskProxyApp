@@ -113,6 +113,10 @@
             await whenProxyReady();
             webui.proxy.projects.runWhenLoaded(() => {
                 if (webui.projectData.navigation === undefined) return;
+                // A manager removed from the page while it waited, as on a reload, has a preview that is never upgraded.
+                if (!t.isConnected) return;
+                customElements.upgrade(t._navPreview);
+                if (typeof t._navPreview.setNavRoutes !== 'function') return;
                 t.nav = webui.clone(webui.projectData.navigation);
                 t._navPreview.setNavRoutes(t.nav);
             });

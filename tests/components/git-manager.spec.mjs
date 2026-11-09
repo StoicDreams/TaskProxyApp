@@ -646,11 +646,16 @@ Write-Host 'done'
     const saved = { _gitBeforeCommit: { scripts: { '': SCRIPT }, values: { [SCRIPT]: VALUES } } };
     const field = (page, name) => manager(page).locator(`.before-commit-params [data-param="${name}"]`);
     const drawerOpen = page => page.locator('webui-drawer.shared.open');
+    // Web UI dropdowns open a list of options rather than the native select, so an option is picked from that list.
+    const pick = async (dropdown, value) => {
+        await dropdown.locator('button').first().click();
+        await dropdown.locator(`[role="option"][data-value="${value}"]`).click();
+    };
     const finish = (page, code) => page.evaluate(code => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: 'Before Commit', code }), code);
 
     test('a chosen script shows a field for each of its parameters, and the choices are remembered', async ({ page }) => {
         await openWith(page);
-        await manager(page).locator('#before-commit-script select').selectOption(SCRIPT);
+        await pick(manager(page).locator('#before-commit-script'), SCRIPT);
         await expect(field(page, 'Version')).toHaveCount(1);
         expect(await manager(page).locator('.before-commit-params [data-param]').evaluateAll(els => els.map(el => `${el.localName}:${el.dataset.param}`))).toEqual([
             'webui-dropdown:Version', 'webui-toggle-icon:SkipMinify', 'webui-input-text:Note', 'webui-input-text:Tags', 'webui-input-text:Count', 'webui-toggle-icon:Check',
@@ -662,7 +667,7 @@ Write-Host 'done'
         await expect(field(page, 'Note')).toHaveAttribute('label', 'Note (required)');
         await expect(field(page, 'Count')).toHaveAttribute('placeholder', '2');
         await expect(field(page, 'Version')).toHaveAttribute('title', 'Which part of the version to increment.');
-        await field(page, 'Version').locator('select').selectOption('major');
+        await pick(field(page, 'Version'), 'major');
         await field(page, 'SkipMinify').click();
         await field(page, 'Note').locator('input').fill('hello');
         await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data?.data?._gitBeforeCommit).toEqual({
@@ -681,7 +686,7 @@ Write-Host 'done'
     test('choosing Nothing stops running a script before commits', async ({ page }) => {
         await openWith(page, saved);
         await expect(field(page, 'Version')).toHaveCount(1);
-        await manager(page).locator('#before-commit-script select').selectOption('');
+        await pick(manager(page).locator('#before-commit-script'), '');
         await expect(manager(page).locator('.before-commit-params [data-param]')).toHaveCount(0);
         await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data?.data?._gitBeforeCommit?.scripts).toEqual({});
         await commit(page);
