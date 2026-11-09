@@ -412,6 +412,16 @@ fn spawn_in_pty(
     let pair = native_pty_system()
         .openpty(size)
         .map_err(|e| format!("Failed to open a terminal: {}", e))?;
+    // The script leads the terminal's session, so when it ends every program it started there is sent a
+    // hangup, which closes terminal windows it opened. In a terminal window the shell leads the session
+    // instead, so ignore the hangup, as programs the script starts inherit that.
+    #[cfg(unix)]
+    let mut cmd = {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.args(["-c", "trap '' HUP; exec \"$0\" \"$@\"", program]);
+        cmd
+    };
+    #[cfg(not(unix))]
     let mut cmd = CommandBuilder::new(program);
     cmd.args(args);
     cmd.cwd(working_dir);
@@ -1119,6 +1129,31 @@ mod tests {
         let output = collected.into_inner().unwrap();
         assert!(output.contains("25 90"), "{output:?}");
         assert!(output.contains("40 150"), "{output:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn programs_a_pty_script_starts_keep_running_after_it_finishes() {
+        let is_alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 };
+        // As a terminal window the script opened would, the child outlives the script.
+        let (output, code) = run_in_pty("sleep 60 & echo \"child=$!\"", None).await;
+        assert_eq!(code, Some(0));
+        let child: i32 = output
+            .split("child=")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|pid| pid.parse().ok())
+            .unwrap_or_else(|| panic!("no child pid in {output:?}"));
+        // The hangup arrives as the script ends and the terminal closes, so give it time to land.
+        sleep(Duration::from_millis(300)).await;
+        let alive = is_alive(child);
+        unsafe {
+            libc::kill(child, libc::SIGKILL);
+        }
+        assert!(
+            alive,
+            "The script's child process was stopped when the script finished"
+        );
     }
 
     #[cfg(unix)]
