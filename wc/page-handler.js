@@ -274,15 +274,32 @@
             });
             lastMatchIndex = scriptRegex.lastIndex;
         }
-        syncInitialBoundElements();
+        syncBoundElements();
         applyScriptUI();
     }
-    function syncInitialBoundElements(attempt = 0) {
+    /** The data keys an element attribute names, without their getters or setters. */
+    function attributeKeys(value) {
+        return (value || '').split('|').map(k => k.split(':')[0].trim()).filter(Boolean);
+    }
+    function shownValue(el) {
+        return webui.getDefined(typeof el.getValue === 'function' ? el.getValue() : undefined, el.value, el.dataset.value);
+    }
+    const isBlank = value => value === undefined || value === null || value === '';
+    /**
+     * Makes the values bound fields show and the values scripts use agree. A field starts its data at the
+     * value it shows, when the data has none. A field whose choices come from data, such as a dropdown of
+     * project files, gets its choices after the page loads and then shows the first one, which nothing
+     * writes to the data, and it loses a saved value that arrived before its choices. So once its choices
+     * arrive, it shows the saved value, or the data takes the value it shows when the saved one is not a choice.
+     * With subscribedKey, only fields whose choices come from that key are checked.
+     */
+    function syncBoundElements(attempt = 0, subscribedKey) {
         if (attempt > 20) return;
         let boundEls = [];
         segments.forEach(seg => {
             webui.querySelectorAll('[data-bind],[data-trigger]', seg).forEach(el => {
                 if (webui.closest(el, '.input')) return;
+                if (subscribedKey && !attributeKeys(el.dataset.subscribe).some(key => key === subscribedKey || webui.toSnake(key, '-') === subscribedKey)) return;
                 boundEls.push(el);
             });
         });
@@ -292,26 +309,26 @@
                 needsRetry = true;
                 return;
             }
-            let keyAttr = [el.dataset.trigger, el.dataset.bind].filter(Boolean).join('|');
-            keyAttr.split('|').forEach(k => {
-                let rawKey = k.split(':')[0].trim();
-                if (!rawKey) return;
-                if (webui.getData(rawKey) === undefined) {
-                    let val = webui.getDefined(
-                        typeof el.getValue === 'function' ? el.getValue() : undefined,
-                        el.value,
-                        el.dataset.value
-                    );
-                    if (val !== undefined && val !== '') {
-                        webui.setData(rawKey, val);
-                    } else if (el.hasAttribute('options') || el.hasAttribute('data-options')) {
+            const hasChoices = !!el.dataset.subscribe;
+            attributeKeys([el.dataset.trigger, el.dataset.bind].filter(Boolean).join('|')).forEach(rawKey => {
+                const current = webui.getData(rawKey);
+                const shown = shownValue(el);
+                if (isBlank(current)) {
+                    if (!isBlank(shown)) {
+                        webui.setData(rawKey, shown);
+                    } else if (hasChoices || el.hasAttribute('options') || el.hasAttribute('data-options')) {
                         needsRetry = true;
                     }
+                    return;
                 }
+                if (!hasChoices || typeof current === 'object' || isBlank(shown) || `${shown}` === `${current}`) return;
+                if (typeof el.setValue === 'function') el.setValue(current);
+                const now = shownValue(el);
+                if (!isBlank(now) && `${now}` !== `${current}`) webui.setData(rawKey, now);
             });
         });
         if (needsRetry) {
-            setTimeout(() => syncInitialBoundElements(attempt + 1), 50);
+            setTimeout(() => syncBoundElements(attempt + 1, subscribedKey), 50);
         }
     }
     function applyScriptUI(attempt = 0) {
@@ -581,6 +598,8 @@
     function onAppDataChanged(changes) {
         if (!changes || !changes.property) return;
         let prop = changes.property;
+        // Fields given their choices by this data now show the first choice, which scripts need to use.
+        setTimeout(() => syncBoundElements(0, prop), 0);
         let tracked = webui.currentPageVariables.find(v => getVariableKeyName(v) === prop || v === prop);
         if (tracked) {
             // Only segments showing this value need rendering. Bound inputs update themselves.

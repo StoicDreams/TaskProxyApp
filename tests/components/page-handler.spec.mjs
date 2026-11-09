@@ -234,6 +234,50 @@ test.describe('page scripts', () => {
         await page.locator('app-page-handler webui-input-text[label="Version"] input').fill('2.1.0');
         expect(await runScript(page)).toContain("$Version = '2.1.0'");
     });
+    test.describe('a dropdown of project files', () => {
+        // The layout of a page that picks a solution, as in the page help's app-files example.
+        const filesPage = (files = 'page-solutions') => [
+            '# NuGet',
+            '',
+            '<webui-page-segment>',
+            '',
+            `<app-files data-trigger="${files}" display="[parent]/[file].[ext]" filter="*.sln"></app-files>`,
+            `<webui-dropdown data-subscribe="${files}:setOptions" data-bind="solution"></webui-dropdown>`,
+            '',
+            '```PowerShell',
+            "$solution = ''",
+            'dotnet list $solution package --outdated',
+            '```',
+            '',
+            '</webui-page-segment>',
+        ].join('\n');
+        const options = [{ value: '/One.sln', display: '/One.sln' }, { value: 'sub/Two.sln', display: 'sub/Two.sln' }];
+        const openFilesPage = async (page, found, state = {}) => {
+            // Searching a large project takes a while, so the options can arrive well after the page has loaded.
+            await openApp(page, {
+                currentPage: '/abc', projectFiles: found, searchDelay: 1500,
+                ...state, files: { '.taskproxy/pages/abc.md': filesPage() },
+            }, '/abc');
+            await page.waitForSelector('app-page-handler > app-markdown-segment');
+        };
+        test('the first file shown is used by the script without choosing it', async ({ page }) => {
+            await openFilesPage(page, options);
+            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length), { timeout: 5000 }).toBe(2);
+            expect(await runScript(page)).toContain("$solution = '/One.sln'");
+        });
+        test('a dropdown with one file sets it', async ({ page }) => {
+            // Defining the variable with no default, as the variable manager does, leaves it blank rather than unset.
+            await openFilesPage(page, options.slice(0, 1), { variables: ['solution|text|'], data: { solution: '' } });
+            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length), { timeout: 5000 }).toBe(1);
+            expect(await runScript(page)).toContain("$solution = '/One.sln'");
+        });
+        test('a file chosen before is kept', async ({ page }) => {
+            await openFilesPage(page, options, { data: { solution: 'sub/Two.sln' } });
+            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length), { timeout: 5000 }).toBe(2);
+            await expect.poll(() => page.locator('app-page-handler webui-dropdown').evaluate(el => el.value)).toBe('sub/Two.sln');
+            expect(await runScript(page)).toContain("$solution = 'sub/Two.sln'");
+        });
+    });
 });
 test.describe('help', () => {
     const openHelp = async page => {

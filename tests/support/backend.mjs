@@ -9,6 +9,7 @@
  * - data, variables, navigation, docs, currentPage: fields of the open project.
  * - appData, appVariables: saved global values and their definitions.
  * - scripts: what get_scripts returns.
+ * - projectFiles: what search_project_files returns, after searchDelay milliseconds when set.
  * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
  * - newInstall: leave out the saved settings an existing install has.
@@ -95,7 +96,10 @@ function setup(state) {
                 files[filePath] = contents;
                 return 'File saved';
             },
-            search_project_files: () => [],
+            search_project_files: async () => {
+                if (state.searchDelay) await new Promise(resolve => setTimeout(resolve, state.searchDelay));
+                return state.projectFiles || [];
+            },
             get_scripts: () => state.scripts || [],
             start_script: () => ({ message: 'Script started', interactive: state.interactive !== false }),
             write_terminal_input: () => null,
