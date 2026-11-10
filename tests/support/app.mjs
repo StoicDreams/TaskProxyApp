@@ -100,8 +100,12 @@ export async function openApp(page, state = {}, path = '/') {
         const pushState = history.pushState;
         history.pushState = function (...args) {
             const result = pushState.apply(this, args);
-            if (`${args[2]}`.includes('_reloading')) window.__projectReloading = true;
-            else if (window.__projectReloading) window.__projectReloaded = true;
+            if (`${args[2]}`.includes('_reloading')) {
+                window.__projectReloading = true;
+                // The page shown before the reload, which the loader removes once the reloaded page is ready.
+                const app = document.querySelector('webui-app');
+                window.__pageBeforeReload = app ? [...app.children].filter(el => !el.slot && el.localName !== 'webui-page-footer') : [];
+            } else if (window.__projectReloading) window.__projectReloaded = true;
             return result;
         };
     });
@@ -111,8 +115,14 @@ export async function openApp(page, state = {}, path = '/') {
     if (hasProject) {
         await page.waitForFunction(() => webui.proxy.projects.isLoaded);
         // The reload replaces the page's components and clears page level data, so tests must start after it.
-        // A fixed wait was not always long enough when the machine was busy.
-        await page.waitForFunction(() => window.__projectReloaded === true);
+        // The loader swaps the page in at least 300ms after navigating, so wait for the old page to go and
+        // the transition to end. Waiting only for the navigation let tests act on the old page on a busy machine.
+        await page.waitForFunction(() => {
+            const app = document.querySelector('webui-app');
+            return window.__projectReloaded === true
+                && window.__pageBeforeReload.every(el => !el.isConnected)
+                && !!app && !app.main.classList.contains('transition');
+        });
         await page.waitForTimeout(150);
     }
     return page;
