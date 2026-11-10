@@ -776,13 +776,36 @@ Write-Host 'done'
             // The file left out and the ignored file stay out, and the script's change goes in.
             expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt', 'a.min.txt'], message: 'msg', project: '/repo' });
             expect((await calls(page, 'get_git_changes')).at(-1)).toEqual({ path: '', project: '/repo' });
-            await expect.poll(() => alerts(page)).toEqual([['Repo: Commit successful. Sync it from the Git Controller once this project is open again.', 'success']]);
-            // Syncing would pull into the open project, so it waits.
-            expect(await calls(page, 'git_sync')).toEqual([]);
+            // Sync after commit is on, so the project the script started in is synced, not the open one.
+            await expect.poll(() => alerts(page)).toEqual([['Repo: Commit and Sync successful!', 'success']]);
+            expect(await calls(page, 'git_sync')).toEqual([{ repo: '', project: '/repo' }]);
             // The sent message is cleared from the project it was written in.
             await expect.poll(async () => (await calls(page, 'save_project_data')).filter(call => call.data.path === '/repo').at(-1)?.data.data._gitCommitMessages).toEqual({});
             expect(page.url()).toContain('/git-controller');
             expect(await page.evaluate(() => webui.projectData.path)).toBe('/other');
+        });
+        test('without sync after commit, the project is only committed', async ({ page }) => {
+            await openBoth(page);
+            await expect(field(page, 'Version')).toHaveCount(1);
+            await manager(page).evaluate(el => { el._toggleSync.value = false; });
+            await commit(page);
+            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await switchToOther(page);
+            await finish(page, 0);
+            await expect.poll(() => alerts(page)).toEqual([['Repo: Commit successful.', 'success']]);
+            expect(await calls(page, 'git_sync')).toEqual([]);
+        });
+        test('a sync that fails after switching says why, and does not ask for a token for the open project', async ({ page }) => {
+            await openBoth(page);
+            await expect(field(page, 'Version')).toHaveCount(1);
+            await manager(page).evaluate(el => { el._toggleSync.value = true; });
+            await commit(page);
+            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await switchToOther(page);
+            await onCommand(page, 'git_sync', () => { throw 'Credentials Missing/Invalid'; });
+            await finish(page, 0);
+            await expect.poll(() => alerts(page)).toEqual([['Repo: Commit successful. Syncing failed, so sync it from the Git Controller: Credentials Missing/Invalid', 'danger']]);
+            await expect(dialogButton(page, 'Save & Retry')).toHaveCount(0);
         });
         test('a script that fails after switching says which project it was for, and commits nothing', async ({ page }) => {
             await openBoth(page);

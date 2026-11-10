@@ -67,31 +67,66 @@ fn get_project_repo_path(
     Ok(path)
 }
 
+const PAT_KEYS: [&str; 2] = ["git_pat", "github_pat"];
+
+/// The first token saved under one of the token variables.
+fn token_in(data: &HashMap<String, Value>) -> Option<String> {
+    PAT_KEYS.iter().find_map(|key| {
+        data.get(*key)
+            .and_then(|value| value.as_str())
+            .filter(|token| !token.is_empty())
+            .map(String::from)
+    })
+}
+
+fn global_git_credentials(app_handle: &AppHandle) -> Option<String> {
+    crate::appdata::get_state_data::<TaskProxyData>(app_handle)
+        .ok()
+        .and_then(|global| token_in(&global.data))
+}
+
 fn get_git_credentials(app_handle: &AppHandle) -> Option<String> {
-    let pat_keys = ["git_pat", "github_pat"];
-    if let Ok(project_state) = crate::appdata::get_state_data::<ProjectData>(app_handle) {
-        for key in &pat_keys {
-            if let Some(val) = project_state.data.get(*key) {
-                if let Some(token) = val.as_str() {
-                    if !token.is_empty() {
-                        return Some(token.to_string());
-                    }
-                }
-            }
-        }
+    crate::appdata::get_state_data::<ProjectData>(app_handle)
+        .ok()
+        .and_then(|project| token_in(&project.data))
+        .or_else(|| global_git_credentials(app_handle))
+}
+
+/// The saved variable values of the project a command names, when that is not the open project.
+async fn other_project_values(
+    app_handle: &AppHandle,
+    state: &State<'_, CurrentProject>,
+    project: Option<&str>,
+) -> Result<Option<HashMap<String, Value>>, String> {
+    let Some(project) = project.map(|path| path.replace('\\', "/")) else {
+        return Ok(None);
+    };
+    let current = state
+        .lock()
+        .map_err(|err| format!("State failure: {}", err))?
+        .path
+        .replace('\\', "/");
+    if current == project {
+        return Ok(None);
     }
-    if let Ok(global_state) = crate::appdata::get_state_data::<TaskProxyData>(app_handle) {
-        for key in &pat_keys {
-            if let Some(val) = global_state.data.get(*key) {
-                if let Some(token) = val.as_str() {
-                    if !token.is_empty() {
-                        return Some(token.to_string());
-                    }
-                }
-            }
-        }
+    let values =
+        get_data_from_local_storage(app_handle, &format!("{}.enc", get_hash_code(&project)))
+            .await
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<HashMap<String, Value>>(&bytes).ok())
+            .unwrap_or_default();
+    Ok(Some(values))
+}
+
+/// Finds the token for a command: the named project's own token, or the open project's, then the global one.
+fn credentials_for(
+    app_handle: AppHandle,
+    other_project: Option<HashMap<String, Value>>,
+) -> impl Fn() -> Option<String> {
+    move || match &other_project {
+        Some(values) => token_in(values).or_else(|| global_git_credentials(&app_handle)),
+        None => get_git_credentials(&app_handle),
     }
-    None
 }
 
 /// Helper to construct Git2 remote callbacks for authentication injections.
@@ -478,10 +513,14 @@ pub(crate) struct GitFileLineStats {
 #[tauri::command]
 pub(crate) async fn git_push(
     repo: String,
+    project: Option<String>,
     state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    let git_path = get_repo_path(&state, &repo)?;
+    let git_path = get_project_repo_path(&state, &projects, project.as_deref(), &repo)?;
+    let other_project = other_project_values(&app_handle, &state, project.as_deref()).await?;
+    let token = credentials_for(app_handle, other_project);
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
         let mut remote = repository
@@ -490,7 +529,7 @@ pub(crate) async fn git_push(
         let head = repository.head().map_err(|e| e.to_string())?;
         let branch_name = head.shorthand().ok_or("Invalid branch name")?;
         let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
-        push_refspec(&mut remote, &refspec, || get_git_credentials(&app_handle))?;
+        push_refspec(&mut remote, &refspec, token)?;
         if let Ok(mut local_branch) = repository.find_branch(branch_name, git2::BranchType::Local) {
             let upstream_name = format!("origin/{}", branch_name);
             let _ = local_branch.set_upstream(Some(&upstream_name));
@@ -504,11 +543,14 @@ pub(crate) async fn git_push(
 #[tauri::command]
 pub(crate) async fn git_pull(
     repo: String,
+    project: Option<String>,
     state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    let git_path = get_repo_path(&state, &repo)?;
-    let app_handle_clone = app_handle.clone();
+    let git_path = get_project_repo_path(&state, &projects, project.as_deref(), &repo)?;
+    let other_project = other_project_values(&app_handle, &state, project.as_deref()).await?;
+    let token = credentials_for(app_handle, other_project);
     let result = task::spawn_blocking(move || {
         let repository = Repository::open(&git_path).map_err(|e| e.to_string())?;
         let mut remote = repository
@@ -524,7 +566,7 @@ pub(crate) async fn git_pull(
                 "No remote tracking branch set. Skipping pull.",
             ));
         }
-        let callbacks = create_remote_callbacks(|| get_git_credentials(&app_handle_clone));
+        let callbacks = create_remote_callbacks(token);
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
         let refspec = format!(
@@ -601,11 +643,20 @@ pub(crate) async fn git_pull_overwrite(
 #[tauri::command]
 pub(crate) async fn git_sync(
     repo: String,
+    project: Option<String>,
     state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    let pull = git_pull(repo.clone(), state.clone(), app_handle.clone()).await?;
-    let push = git_push(repo.clone(), state.clone(), app_handle.clone()).await?;
+    let pull = git_pull(
+        repo.clone(),
+        project.clone(),
+        state.clone(),
+        projects.clone(),
+        app_handle.clone(),
+    )
+    .await?;
+    let push = git_push(repo, project, state, projects, app_handle).await?;
     Ok(format!("{}\n{}", pull, push))
 }
 
@@ -1466,6 +1517,30 @@ mod tests {
     fn project_root_is_the_open_project_when_none_is_named() {
         assert_eq!(project_root("/open", &[], None), Ok(PathBuf::from("/open")));
         assert!(project_root("", &[], None).is_err());
+    }
+
+    #[test]
+    fn a_token_is_found_under_either_name_and_blank_ones_are_skipped() {
+        let values = |pairs: &[(&str, &str)]| -> HashMap<String, Value> {
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), Value::from(*value)))
+                .collect()
+        };
+        assert_eq!(token_in(&values(&[("git_pat", "a")])).as_deref(), Some("a"));
+        assert_eq!(
+            token_in(&values(&[("github_pat", "b")])).as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            token_in(&values(&[("git_pat", ""), ("github_pat", "b")])).as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            token_in(&values(&[("git_pat", "a"), ("github_pat", "b")])).as_deref(),
+            Some("a")
+        );
+        assert_eq!(token_in(&values(&[("other", "c")])), None);
     }
 
     #[test]

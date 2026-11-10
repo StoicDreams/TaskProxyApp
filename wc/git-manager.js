@@ -611,8 +611,18 @@
                 delete messages[repo];
                 webui.proxy.saveProjectData(undefined, origin.data);
             }
-            // Syncing pulls into the open project and uses its token, so it waits until this project is open again.
-            report(syncAfter ? `${result} Sync it from the Git Controller once this project is open again.` : result, 'success');
+            if (!syncAfter) {
+                report(result, 'success');
+                return;
+            }
+            let syncError;
+            const synced = await webui.proxy.git.sync(repo, err => { syncError = err; }, origin.path);
+            document.dispatchEvent(new CustomEvent('app-git-changes'));
+            if (synced) {
+                report('Commit and Sync successful!', 'success');
+            } else {
+                report(`${result} Syncing failed, so sync it from the Git Controller: ${syncError ?? 'no reason was given.'}`, 'danger');
+            }
         },
         async loadRepos() {
             let t = this;

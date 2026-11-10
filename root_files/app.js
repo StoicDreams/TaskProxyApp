@@ -94,12 +94,13 @@
             });
         });
     }
+    // A command for a project that is not open never asks for a token, since the prompt saves to the open project.
     const invokeGit = async (command, args = {}, errHandler = defaultErrHandler) => {
         try {
             const result = await tauri.core.invoke(command, args);
             return result || undefined;
         } catch (err) {
-            if (typeof err === 'string' && err.includes('Credentials Missing/Invalid')) {
+            if (typeof err === 'string' && err.includes('Credentials Missing/Invalid') && !args.project) {
                 const tokenSaved = await promptForGitToken();
                 if (tokenSaved) {
                     return await invokeGit(command, args, errHandler);
@@ -171,10 +172,10 @@
             createBranch: (repo, branch, baseBranch, err) => invokeGit('git_create_branch', { repo, branch, baseBranch }, err),
             deleteBranch: (repo, branch, err) => invokeGit('git_delete_branch', { repo, branch }, err),
             mergeBranch: (repo, branch, err) => invokeGit('git_merge_branch', { repo, branch }, err),
-            pull: (repo, err) => invokeGit('git_pull', { repo }, err),
+            pull: (repo, err, project) => invokeGit('git_pull', project ? { repo, project } : { repo }, err),
             pullOverwrite: (repo, err) => invokeGit('git_pull_overwrite', { repo }, err),
-            push: (repo, err) => invokeGit('git_push', { repo }, err),
-            sync: (repo, err) => invokeGit('git_sync', { repo }, err),
+            push: (repo, err, project) => invokeGit('git_push', project ? { repo, project } : { repo }, err),
+            sync: (repo, err, project) => invokeGit('git_sync', project ? { repo, project } : { repo }, err),
             getRemoteStatus: (repo, err) => invokeGit('get_git_remote_status', { repo }, err),
             fetch: (repo, err) => invokeGit('git_fetch', { repo }, err),
             // For automatic refreshes, which should not interrupt the user about credentials.
