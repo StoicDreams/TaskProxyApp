@@ -40,6 +40,17 @@ NOTE: Deleting your security key only removes the key from your OS' key store. Y
 <app-update-manager></app-update-manager>
 </webui-page-segment>
 
+<webui-line></webui-line>
+
+<webui-flex class="my-3" justify="center">
+<webui-link href="/about" icon="circle_exclamation|backing|bordered">About Task Proxy</webui-link>
+<webui-link href="/contact" icon="messages|fill|shade:tri">Contact Stoic Dreams</webui-link>
+<webui-link href="/privacy" icon="shield_exclamation|backing|bordered">Privacy</webui-link>
+<webui-link href="/terms" icon="handshake|fill|shade|tri">Terms & Conditions</webui-link>
+</webui-flex>
+
+<webui-stoic-social-links class="mb-2"></webui-stoic-social-links>
+
 <webui-page-help heading="Settings Help">
 <h3>Project Management</h3>
 <webui-content src="d/help/project_management.md"></webui-content>

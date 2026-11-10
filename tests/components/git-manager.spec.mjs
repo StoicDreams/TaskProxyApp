@@ -589,6 +589,7 @@ test.describe('file list', () => {
                 panesBottom: Math.round(panes.bottom),
                 visibleBottom: Math.round(scroller.getBoundingClientRect().bottom),
                 pageScroll: scroller.scrollTop,
+                pageOverflow: scroller.scrollHeight - scroller.clientHeight,
             };
         });
         await expect.poll(async () => (await layout()).listScrolls).toBe(true);
@@ -596,6 +597,8 @@ test.describe('file list', () => {
         // The panes stop at the bottom of the visible page, less its padding, give or take rounding.
         expect(before.panesBottom).toBeLessThanOrEqual(before.visibleBottom + 1);
         expect(before.panesBottom).toBeGreaterThan(before.visibleBottom - 10);
+        // Nothing below the panes makes the page itself scroll, so a scroll that reaches the end of a pane goes nowhere.
+        await expect.poll(async () => (await layout()).pageOverflow).toBeLessThanOrEqual(0);
         await manager(page).locator('.files').evaluate(files => { files.scrollTop = files.scrollHeight; });
         await page.waitForTimeout(100);
         expect((await layout()).pageScroll).toBe(0);

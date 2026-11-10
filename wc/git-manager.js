@@ -999,7 +999,9 @@
             const bottom = scrollerRect.bottom - (parseFloat(style.borderBottomWidth) || 0) - (parseFloat(style.paddingBottom) || 0);
             // Measured as if the page were scrolled to the top, so scrolling does not change the size.
             const top = panesRect.top + scroller.scrollTop;
-            const height = Math.max(minPanesHeight, Math.floor(bottom - top));
+            // Anything of the page below the panes, such as a border on the tabs, would still make the page scroll.
+            const below = Math.max(0, Math.ceil(t.getBoundingClientRect().bottom - panesRect.bottom));
+            const height = Math.max(minPanesHeight, Math.floor(bottom - top - below));
             if (Math.abs(height - (t._panesHeight || 0)) > 1) {
                 t._panesHeight = height;
                 panes.style.setProperty('--panes-height', `${height}px`);
