@@ -86,3 +86,32 @@ test('components wait for the backend however long the app takes to start', asyn
     });
     await expect.poll(() => page.evaluate(() => (webui.getData('app-projects') || []).length), { timeout: 20000 }).toBe(2);
 });
+test('the right panel can be resized and closed, and its width is remembered', async ({ page }) => {
+    await page.setViewportSize({ width: 1300, height: 800 });
+    await openApp(page);
+    const panel = page.locator('webui-drawer.shared');
+    await page.evaluate(() => document.querySelector('webui-drawer.shared').setAttribute('docked', 'true'));
+    const handle = panel.locator('.resize');
+    await expect(handle).toBeVisible();
+    // Docking slides the panel into place, so wait for it to stop moving.
+    let last;
+    await expect.poll(async () => {
+        const box = JSON.stringify(await panel.boundingBox());
+        const settled = box === last;
+        last = box;
+        return settled;
+    }, { intervals: [100] }).toBe(true);
+    const before = await panel.evaluate(el => el.getBoundingClientRect().width);
+    const box = await handle.boundingBox();
+    await page.mouse.move(box.x + 3, box.y + 50);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 150, box.y + 50, { steps: 3 });
+    await page.mouse.up();
+    await expect(panel).toHaveAttribute('width', `${Math.round(Math.max(240, before + 153))}`);
+    // The width is one of the attributes Web UI saves for the panel.
+    expect(await panel.evaluate(el => el.dataset.state.split('|'))).toContain('width');
+    // A real click, which also shows the page's Help button has moved up out of the panel's footer.
+    await panel.locator('[slot="footer"] .drawer-close').click();
+    await expect(panel).not.toHaveAttribute('docked');
+    await expect(panel).not.toHaveClass(/open/);
+});
