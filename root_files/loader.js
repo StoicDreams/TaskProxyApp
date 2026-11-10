@@ -3808,6 +3808,14 @@ function setupWebuiTooltips() {
     let capturedElement = null;
     // Element whose own text already shows its label, skipped to avoid forcing layout on every mouse move.
     let skippedElement = null;
+    // Open popovers, such as a dropdown's list, sit in the top layer above every z-index, so the tooltip joins
+    // the top layer too and is shown again for each element, which puts it above them.
+    const usePopover = typeof Tooltip.showPopover === "function";
+    if (usePopover) {
+        Tooltip.popover = "manual";
+        Tooltip.style.inset = "auto";
+        Tooltip.style.margin = "0";
+    }
     document.body.appendChild(Tooltip);
     let isShowing = false;
     let visibilityTimer = 0;
@@ -3819,6 +3827,7 @@ function setupWebuiTooltips() {
         capturedElement = null;
         clearInterval(visibilityTimer);
         Tooltip.className = "tooltip closed";
+        if (usePopover && Tooltip.matches(":popover-open")) Tooltip.hidePopover();
     }
     /** An element that is hidden or removed under a still pointer gets no mouse event, so check on it. */
     function CloseIfHidden() {
@@ -3884,6 +3893,10 @@ function setupWebuiTooltips() {
                 visibilityTimer = setInterval(CloseIfHidden, 250);
                 Tooltip.innerText = display;
                 Tooltip.className = "tooltip open";
+                if (usePopover) {
+                    if (Tooltip.matches(":popover-open")) Tooltip.hidePopover();
+                    Tooltip.showPopover();
+                }
                 let myposition = {
                     x: client.left + client.width / 2 - Tooltip.clientWidth / 2,
                     y: client.top - tooltipDistancePadding,

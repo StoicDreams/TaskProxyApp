@@ -824,15 +824,15 @@ pub(crate) async fn get_git_changes(
     result.map_err(|err| format!("{}", err))?
 }
 
-/// How many changed files each saved project has, by project path, as its Git Controller would list
-/// them across all its repos, leaving out the files that project ignores. A project that cannot be read
-/// is left out.
+/// Changed files and commits ahead of and behind the remote for every saved project, each totalled
+/// across all its repos and leaving out the files that project ignores. Ahead and behind compare with
+/// the last fetch, so they use no network. A project that cannot be read is left out.
 #[tauri::command]
-pub(crate) async fn get_project_change_counts(
+pub(crate) async fn get_project_git_status(
     app_handle: AppHandle,
     state: State<'_, CurrentProject>,
     projects: State<'_, SharedProjects>,
-) -> Result<HashMap<String, usize>, String> {
+) -> Result<HashMap<String, ProjectGitStatus>, String> {
     let known = projects
         .lock()
         .map_err(|err| format!("State failure: {}", err))?
@@ -843,7 +843,7 @@ pub(crate) async fn get_project_change_counts(
             .map_err(|err| format!("State failure: {}", err))?;
         (current.path.replace('\\', "/"), current.data.clone())
     };
-    let mut counts = HashMap::new();
+    let mut statuses = HashMap::new();
     for project in known {
         let path = project.path.replace('\\', "/");
         // The open project's settings can be newer than what is saved.
@@ -857,14 +857,66 @@ pub(crate) async fn get_project_change_counts(
         };
         let ignored = data.map(|data| ignored_files(&data)).unwrap_or_default();
         let root = PathBuf::from(&path);
-        let count = task::spawn_blocking(move || count_project_changes(&root, &ignored))
+        let status = task::spawn_blocking(move || project_git_status(&root, &ignored))
             .await
             .map_err(|err| format!("{}", err))?;
-        if let Some(count) = count {
-            counts.insert(project.path, count);
+        if let Some(status) = status {
+            statuses.insert(project.path, status);
         }
     }
-    Ok(counts)
+    Ok(statuses)
+}
+
+/// Fetches every saved project's repos from their origin, each with its own project's token, so ahead
+/// and behind counts stay current for projects that are not open. Failures are skipped quietly, since
+/// a project may be offline or have no token.
+#[tauri::command]
+pub(crate) async fn fetch_project_remotes(
+    app_handle: AppHandle,
+    state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
+) -> Result<usize, String> {
+    let known = projects
+        .lock()
+        .map_err(|err| format!("State failure: {}", err))?
+        .clone();
+    let mut fetched = 0;
+    for project in known {
+        let other_project = other_project_values(&app_handle, &state, Some(&project.path)).await?;
+        let token = credentials_for(app_handle.clone(), other_project);
+        let root = PathBuf::from(&project.path);
+        fetched += task::spawn_blocking(move || fetch_project_repos(&root, token))
+            .await
+            .map_err(|err| format!("{}", err))?;
+    }
+    Ok(fetched)
+}
+
+/// Fetches each repo in a project that has an origin. Returns how many fetched.
+fn fetch_project_repos(root: &Path, token: impl Fn() -> Option<String>) -> usize {
+    if !root.is_dir() {
+        return 0;
+    }
+    find_git_repos(root)
+        .into_iter()
+        .filter(|repo| {
+            let Ok(repository) = Repository::open(root.join(repo)) else {
+                return false;
+            };
+            let Ok(mut remote) = repository.find_remote("origin") else {
+                return false;
+            };
+            let mut fetch_options = FetchOptions::new();
+            fetch_options.remote_callbacks(create_remote_callbacks(&token));
+            remote
+                .fetch(
+                    &["+refs/heads/*:refs/remotes/origin/*"],
+                    Some(&mut fetch_options),
+                    None,
+                )
+                .is_ok()
+        })
+        .count()
 }
 
 /// The files a project's Git Controller always leaves out, written as repo/file.
@@ -881,14 +933,23 @@ fn ignored_files(data: &HashMap<String, Value>) -> std::collections::HashSet<Str
 }
 
 /// Counts the changed files in every repo of a project, or None when it has no repo that can be read.
-fn count_project_changes(
+/// What the project dropdown shows for a project, totalled across its repos.
+#[derive(Serialize, Default, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectGitStatus {
+    pub changes: usize,
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+fn project_git_status(
     root: &Path,
     ignored: &std::collections::HashSet<String>,
-) -> Option<usize> {
+) -> Option<ProjectGitStatus> {
     if !root.is_dir() {
         return None;
     }
-    let mut total = None;
+    let mut total: Option<ProjectGitStatus> = None;
     for repo in find_git_repos(root) {
         let Ok(repository) = Repository::open(root.join(&repo)) else {
             continue;
@@ -905,7 +966,11 @@ fn count_project_changes(
             })
             .filter(|name| !ignored.contains(&format!("{}/{}", repo, name)))
             .count();
-        total = Some(total.unwrap_or(0) + count);
+        let remote = remote_status(&repository).ok();
+        let total = total.get_or_insert_with(ProjectGitStatus::default);
+        total.changes += count;
+        total.ahead += remote.as_ref().map_or(0, |status| status.ahead as usize);
+        total.behind += remote.as_ref().map_or(0, |status| status.behind as usize);
     }
     total
 }
@@ -1633,7 +1698,7 @@ mod tests {
         write(&second, "b.txt", "new\n");
         write(&second, "c.txt", "new\n");
         let none = std::collections::HashSet::new();
-        assert_eq!(count_project_changes(&root, &none), Some(3));
+        assert_eq!(project_git_status(&root, &none).map(|s| s.changes), Some(3));
     }
 
     #[test]
@@ -1646,7 +1711,10 @@ mod tests {
             String::from("_gitIgnoreFiles"),
             serde_json::json!(["/local.env"]),
         )]));
-        assert_eq!(count_project_changes(dir.path(), &ignored), Some(1));
+        assert_eq!(
+            project_git_status(dir.path(), &ignored).map(|s| s.changes),
+            Some(1)
+        );
     }
 
     #[test]
@@ -1657,18 +1725,46 @@ mod tests {
         commit_all(&repo, "start");
         let none = std::collections::HashSet::new();
         assert_eq!(
-            count_project_changes(&dir.path().join("repo"), &none),
-            Some(0)
+            project_git_status(&dir.path().join("repo"), &none),
+            Some(ProjectGitStatus::default())
         );
         std::fs::create_dir(dir.path().join("plain")).unwrap();
+        assert_eq!(project_git_status(&dir.path().join("plain"), &none), None);
+        assert_eq!(project_git_status(&dir.path().join("missing"), &none), None);
+    }
+
+    #[test]
+    fn project_status_counts_commits_ahead_and_behind_the_last_fetch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (upstream, local) = upstream_and_clone(dir.path());
+        write(&local, "mine.txt", "x\n");
+        commit_all(&local, "mine");
+        write(&local, "theirs.txt", "y\n");
+        let none = std::collections::HashSet::new();
+        let root = dir.path().join("local");
         assert_eq!(
-            count_project_changes(&dir.path().join("plain"), &none),
-            None
+            project_git_status(&root, &none),
+            Some(ProjectGitStatus {
+                changes: 1,
+                ahead: 1,
+                behind: 1
+            })
         );
-        assert_eq!(
-            count_project_changes(&dir.path().join("missing"), &none),
-            None
-        );
+        // Behind only changes once the remote is fetched.
+        write(&upstream, "a.txt", "three\n");
+        commit_all(&upstream, "third");
+        assert_eq!(project_git_status(&root, &none).unwrap().behind, 1);
+        assert_eq!(fetch_project_repos(&root, || None), 1);
+        assert_eq!(project_git_status(&root, &none).unwrap().behind, 2);
+    }
+
+    #[test]
+    fn fetching_skips_repos_without_an_origin_and_missing_projects() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path().join("plain")).unwrap();
+        commit_all(&repo, "start");
+        assert_eq!(fetch_project_repos(&dir.path().join("plain"), || None), 0);
+        assert_eq!(fetch_project_repos(&dir.path().join("missing"), || None), 0);
     }
 
     #[test]

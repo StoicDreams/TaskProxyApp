@@ -166,7 +166,9 @@
             getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),
             getRepos: (err) => invokeGit('get_git_repos', {}, err),
             /** Changed files by project path, for every saved project. */
-            getProjectChangeCounts: (err) => invokeGit('get_project_change_counts', {}, err),
+            getProjectStatus: (err) => invokeGit('get_project_git_status', {}, err),
+            // Runs in the background, so it never asks for a token or reports a failure.
+            fetchProjectRemotes: () => tauri.core.invoke('fetch_project_remotes').catch(() => undefined),
             getBranches: (repo, err) => invokeGit('get_git_branches', { repo }, err),
             switchBranch: (repo, branch, err) => invokeGit('git_switch_branch', { repo, branch }, err),
             createBranch: (repo, branch, baseBranch, err) => invokeGit('git_create_branch', { repo, branch, baseBranch }, err),
