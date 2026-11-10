@@ -11,8 +11,9 @@ export default defineConfig({
     testMatch: '**/*.spec.mjs',
     fullyParallel: true,
     forbidOnly: !!process.env.CI,
-    // Components load from the live CDN, which can occasionally be slow.
-    retries: 1,
+    // Components load from the live CDN, which can occasionally be slow, so CI tries a failed test again.
+    // Locally a test that only passes on its second try fails, so a timing problem shows before CI finds it.
+    retries: process.env.CI ? 1 : 0,
     reporter: [['list'], ['html', { open: 'never' }]],
     use: {
         // Nothing listens here. Tests answer every request, and the loader picks the local copy on this host.

@@ -6,6 +6,7 @@
     "test": "playwright test --project=source",
     "test:ui": "playwright test --project=source --ui",
     "test:min": "playwright test --project=min",
+    "test:stress": "playwright test --project=min --repeat-each=10 --workers=150% --timeout=60000",
     "test:report": "playwright show-report",
     "capture": "playwright test -c tools/capture/playwright.config.mjs"
   },

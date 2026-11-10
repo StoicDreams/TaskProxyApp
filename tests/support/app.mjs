@@ -169,6 +169,14 @@ export function calls(page, command) {
     return page.evaluate(command => window.__backend.calls.filter(call => call.command === command).map(call => call.args), command);
 }
 
+/**
+ * Calls to the listed commands in the order the app made them, each as `{ command, args }`. Use this to check what
+ * came before what, rather than which call came last, since other parts of the app can call the same command at any time.
+ */
+export function callOrder(page, ...commands) {
+    return page.evaluate(commands => window.__backend.calls.filter(call => commands.includes(call.command)).map(({ command, args }) => ({ command, args })), commands);
+}
+
 /** Answer a backend command differently from now on. `handler` runs in the page, with the call's arguments. */
 export function onCommand(page, command, handler) {
     return page.evaluate(({ command, source }) => {

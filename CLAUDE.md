@@ -20,6 +20,7 @@ cargo fmt --all                  # Format Rust
 cargo test -p taskproxy <name>   # Run one Rust test by name filter
 npm test                         # UI tests against the source files (npm install first)
 npm run test:min                 # UI tests against the .min.js files, as CI runs them
+npm run test:stress -- <spec>    # Run specs 10 times each under heavy parallel load, to find timing races
 npx playwright test -g "<name>"  # Run UI tests by name
 npm run capture                  # Regenerate the website's screenshots and videos (tools/capture/README.md)
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
@@ -33,6 +34,7 @@ UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.m
 
 - **UI tests load `webui-*` components from the live CDN,** so a CDN deploy that breaks the app fails them, and a slow CDN can make one retry. They need network access. Set `WEBUI_CDN_ROOT` to a MyFiCDN checkout's `cdn` folder to test against components that are not deployed yet. When an app change depends on a CDN change, deploy the CDN first, or CI fails.
 - **`npm test` runs the sources and CI runs the minified files,** for both `.min.js` and `app.min.css`, so after re-minifying, run `npm run test:min` before pushing.
+- **CI's runners are slower than a dev machine, so the order of independent async work differs there.** A test that asserts which call came last, or that one part of the app finished before another, can pass every time locally and fail on CI. Wait for the state you expect with `expect.poll` or a locator, and check order with `callOrder` only between calls that depend on each other. Run new or changed specs with `npm run test:stress -- <spec>` before pushing: heavy parallel load is what shows these races locally, and slowing the CPU alone does not. Locally a test that only passes on retry fails, while CI retries once for CDN slowness.
 - **`tests/app/service-worker.spec.mjs` and `tests/app/scripts.spec.mjs` are shared** with every website and MyFiCDN, so change them in all of them at once. The script tests run the `PowerShell/` scripts in temporary folders and need `pwsh`.
 
 ## Things that will catch you out

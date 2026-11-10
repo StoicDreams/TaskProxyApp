@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, onCommand, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, calls, callOrder, onCommand, dialogButton } from '../support/app.mjs';
 
 const open = async (page, git = {}, state = {}) => {
     await openApp(page, { currentPage: '/git-controller', git: { changes: ['M  a.txt', '?? b.txt', ' D c.txt'], ...git }, ...state, files: { 'a.txt': 'one', 'b.txt': 'two', ...(state.files || {}) } }, '/git-controller');
@@ -820,7 +820,10 @@ Write-Host 'done'
             await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
             // The file left out and the ignored file stay out, and the script's change goes in.
             expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt', 'a.min.txt'], message: 'msg', project: '/repo' });
-            expect((await calls(page, 'get_git_changes')).at(-1)).toEqual({ path: '', project: '/repo' });
+            // The files were read from that project just before committing. The open Git Controller can also be loading its own.
+            const order = await callOrder(page, 'get_git_changes', 'git_commit');
+            const commitAt = order.findIndex(call => call.command === 'git_commit');
+            expect(order.slice(0, commitAt).findLast(call => call.args.project)).toEqual({ command: 'get_git_changes', args: { path: '', project: '/repo' } });
             // Sync after commit is on, so the project the script started in is synced, not the open one.
             await expect.poll(() => alerts(page)).toEqual([['Repo: Commit and Sync successful!', 'success']]);
             expect(await calls(page, 'git_sync')).toEqual([{ repo: '', project: '/repo' }]);
