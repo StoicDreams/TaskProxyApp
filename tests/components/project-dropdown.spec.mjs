@@ -90,6 +90,21 @@ test.describe('changed files and commits', () => {
         for (const color of colors) expect(color.text).toBe(color.icon);
         expect(new Set(colors.map(color => color.text)).size).toBe(3);
     });
+    test('the open project\'s counts are for the repo chosen in its Git Controller', async ({ page }) => {
+        await openApp(page, { project: projects[1], projects, gitStatus: counts, data: { selectedGitRepo: 'libs/second' } });
+        const lastRequest = async () => (await calls(page, 'get_project_git_status')).at(-1);
+        await expect.poll(lastRequest).toEqual({ currentRepo: 'libs/second' });
+        // Choosing another repo is sent straight away, before it is synced to the backend.
+        await page.evaluate(() => {
+            webui.setProjectData('selectedGitRepo', 'third');
+            document.dispatchEvent(new CustomEvent('app-git-changes'));
+        });
+        await expect.poll(lastRequest).toEqual({ currentRepo: 'third' });
+    });
+    test('with no repo chosen, the backend picks the first repo', async ({ page }) => {
+        await openApp(page, { project: projects[1], projects, gitStatus: counts });
+        await expect.poll(async () => (await calls(page, 'get_project_git_status')).at(-1)).toEqual({});
+    });
     test('every project is fetched when the app starts, and the counts are loaded again after', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: counts });
         await expect.poll(async () => (await calls(page, 'fetch_project_remotes')).length).toBe(1);

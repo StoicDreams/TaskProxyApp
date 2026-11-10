@@ -824,11 +824,13 @@ pub(crate) async fn get_git_changes(
     result.map_err(|err| format!("{}", err))?
 }
 
-/// Changed files and commits ahead of and behind the remote for every saved project, each totalled
-/// across all its repos and leaving out the files that project ignores. Ahead and behind compare with
-/// the last fetch, so they use no network. A project that cannot be read is left out.
+/// Changed files and commits ahead of and behind the remote for every saved project, for the repo
+/// selected in that project's Git Controller and leaving out the files that project ignores. Ahead and
+/// behind compare with the last fetch, so they use no network. A project that cannot be read is left out.
+/// The open project's selected repo comes from the UI, since a new choice may not have reached here yet.
 #[tauri::command]
 pub(crate) async fn get_project_git_status(
+    current_repo: Option<String>,
     app_handle: AppHandle,
     state: State<'_, CurrentProject>,
     projects: State<'_, SharedProjects>,
@@ -855,11 +857,17 @@ pub(crate) async fn get_project_git_status(
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<HashMap<String, Value>>(&bytes).ok())
         };
+        let selected = if path == current_path && current_repo.is_some() {
+            current_repo.clone()
+        } else {
+            data.as_ref().and_then(selected_repo)
+        };
         let ignored = data.map(|data| ignored_files(&data)).unwrap_or_default();
         let root = PathBuf::from(&path);
-        let status = task::spawn_blocking(move || project_git_status(&root, &ignored))
-            .await
-            .map_err(|err| format!("{}", err))?;
+        let status =
+            task::spawn_blocking(move || project_git_status(&root, &ignored, selected.as_deref()))
+                .await
+                .map_err(|err| format!("{}", err))?;
         if let Some(status) = status {
             statuses.insert(project.path, status);
         }
@@ -919,6 +927,18 @@ fn fetch_project_repos(root: &Path, token: impl Fn() -> Option<String>) -> usize
         .count()
 }
 
+/// The repo chosen in a project's Git Controller, saved as its path or as the chosen option.
+fn selected_repo(data: &HashMap<String, Value>) -> Option<String> {
+    match data.get("selectedGitRepo")? {
+        Value::String(repo) => Some(repo.clone()),
+        Value::Object(option) => option
+            .get("value")
+            .and_then(|value| value.as_str())
+            .map(String::from),
+        _ => None,
+    }
+}
+
 /// The files a project's Git Controller always leaves out, written as repo/file.
 fn ignored_files(data: &HashMap<String, Value>) -> std::collections::HashSet<String> {
     data.get("_gitIgnoreFiles")
@@ -933,7 +953,7 @@ fn ignored_files(data: &HashMap<String, Value>) -> std::collections::HashSet<Str
 }
 
 /// Counts the changed files in every repo of a project, or None when it has no repo that can be read.
-/// What the project dropdown shows for a project, totalled across its repos.
+/// What the project dropdown shows for a project, for one of its repos.
 #[derive(Serialize, Default, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectGitStatus {
@@ -942,37 +962,38 @@ pub(crate) struct ProjectGitStatus {
     pub behind: usize,
 }
 
+/// The status of the selected repo, or of the first repo, as the Git Controller shows when none is chosen
+/// or the chosen one is gone.
 fn project_git_status(
     root: &Path,
     ignored: &std::collections::HashSet<String>,
+    selected: Option<&str>,
 ) -> Option<ProjectGitStatus> {
     if !root.is_dir() {
         return None;
     }
-    let mut total: Option<ProjectGitStatus> = None;
-    for repo in find_git_repos(root) {
-        let Ok(repository) = Repository::open(root.join(&repo)) else {
-            continue;
-        };
-        let Ok(changes) = collect_changes(&repository) else {
-            continue;
-        };
-        let count = changes
-            .iter()
-            .filter_map(|line| line.get(3..))
-            .map(|name| {
-                let name = name.trim();
-                name.split(" -> ").last().unwrap_or(name)
-            })
-            .filter(|name| !ignored.contains(&format!("{}/{}", repo, name)))
-            .count();
-        let remote = remote_status(&repository).ok();
-        let total = total.get_or_insert_with(ProjectGitStatus::default);
-        total.changes += count;
-        total.ahead += remote.as_ref().map_or(0, |status| status.ahead as usize);
-        total.behind += remote.as_ref().map_or(0, |status| status.behind as usize);
-    }
-    total
+    let repos = find_git_repos(root);
+    let repo = selected
+        .and_then(|selected| repos.iter().find(|repo| repo.as_str() == selected))
+        .or_else(|| repos.first())?
+        .clone();
+    let repository = Repository::open(root.join(&repo)).ok()?;
+    let changes = collect_changes(&repository).ok()?;
+    let count = changes
+        .iter()
+        .filter_map(|line| line.get(3..))
+        .map(|name| {
+            let name = name.trim();
+            name.split(" -> ").last().unwrap_or(name)
+        })
+        .filter(|name| !ignored.contains(&format!("{}/{}", repo, name)))
+        .count();
+    let remote = remote_status(&repository).ok();
+    Some(ProjectGitStatus {
+        changes: count,
+        ahead: remote.as_ref().map_or(0, |status| status.ahead as usize),
+        behind: remote.as_ref().map_or(0, |status| status.behind as usize),
+    })
 }
 
 fn collect_changes(repository: &Repository) -> Result<Vec<String>, String> {
@@ -1688,17 +1709,47 @@ mod tests {
     }
 
     #[test]
-    fn project_changes_are_counted_across_its_repos() {
+    fn project_status_is_for_the_selected_repo_or_else_the_first() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("project");
         let first = Repository::init(root.join("first")).unwrap();
         commit_all(&first, "start");
         let second = Repository::init(root.join("libs").join("second")).unwrap();
+        let third = Repository::init(root.join("third")).unwrap();
         write(&first, "a.txt", "new\n");
         write(&second, "b.txt", "new\n");
         write(&second, "c.txt", "new\n");
+        write(&third, "d.txt", "new\n");
+        write(&third, "e.txt", "new\n");
+        write(&third, "f.txt", "new\n");
         let none = std::collections::HashSet::new();
-        assert_eq!(project_git_status(&root, &none).map(|s| s.changes), Some(3));
+        let changes = |selected| project_git_status(&root, &none, selected).map(|s| s.changes);
+        assert_eq!(changes(Some("third")), Some(3));
+        assert_eq!(changes(Some("libs/second")), Some(2));
+        assert_eq!(changes(Some("first")), Some(1));
+        // With no choice, or one that is gone, it is the first repo the Git Controller lists.
+        let first_listed = find_git_repos(&root)[0].clone();
+        let expected = changes(Some(first_listed.as_str()));
+        assert_eq!(changes(None), expected);
+        assert_eq!(changes(Some("removed")), expected);
+    }
+
+    #[test]
+    fn the_selected_repo_is_read_as_a_path_or_a_chosen_option() {
+        let data = |value: Value| HashMap::from([(String::from("selectedGitRepo"), value)]);
+        assert_eq!(
+            selected_repo(&data(Value::from("third"))).as_deref(),
+            Some("third")
+        );
+        assert_eq!(
+            selected_repo(&data(
+                serde_json::json!({ "value": "libs/second", "display": "libs/second" })
+            ))
+            .as_deref(),
+            Some("libs/second")
+        );
+        assert_eq!(selected_repo(&data(Value::Null)), None);
+        assert_eq!(selected_repo(&HashMap::new()), None);
     }
 
     #[test]
@@ -1712,7 +1763,7 @@ mod tests {
             serde_json::json!(["/local.env"]),
         )]));
         assert_eq!(
-            project_git_status(dir.path(), &ignored).map(|s| s.changes),
+            project_git_status(dir.path(), &ignored, None).map(|s| s.changes),
             Some(1)
         );
     }
@@ -1725,12 +1776,18 @@ mod tests {
         commit_all(&repo, "start");
         let none = std::collections::HashSet::new();
         assert_eq!(
-            project_git_status(&dir.path().join("repo"), &none),
+            project_git_status(&dir.path().join("repo"), &none, None),
             Some(ProjectGitStatus::default())
         );
         std::fs::create_dir(dir.path().join("plain")).unwrap();
-        assert_eq!(project_git_status(&dir.path().join("plain"), &none), None);
-        assert_eq!(project_git_status(&dir.path().join("missing"), &none), None);
+        assert_eq!(
+            project_git_status(&dir.path().join("plain"), &none, None),
+            None
+        );
+        assert_eq!(
+            project_git_status(&dir.path().join("missing"), &none, None),
+            None
+        );
     }
 
     #[test]
@@ -1743,7 +1800,7 @@ mod tests {
         let none = std::collections::HashSet::new();
         let root = dir.path().join("local");
         assert_eq!(
-            project_git_status(&root, &none),
+            project_git_status(&root, &none, None),
             Some(ProjectGitStatus {
                 changes: 1,
                 ahead: 1,
@@ -1753,9 +1810,9 @@ mod tests {
         // Behind only changes once the remote is fetched.
         write(&upstream, "a.txt", "three\n");
         commit_all(&upstream, "third");
-        assert_eq!(project_git_status(&root, &none).unwrap().behind, 1);
+        assert_eq!(project_git_status(&root, &none, None).unwrap().behind, 1);
         assert_eq!(fetch_project_repos(&root, || None), 1);
-        assert_eq!(project_git_status(&root, &none).unwrap().behind, 2);
+        assert_eq!(project_git_status(&root, &none, None).unwrap().behind, 2);
     }
 
     #[test]

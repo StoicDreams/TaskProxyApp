@@ -166,7 +166,12 @@
             getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),
             getRepos: (err) => invokeGit('get_git_repos', {}, err),
             /** Changed files by project path, for every saved project. */
-            getProjectStatus: (err) => invokeGit('get_project_git_status', {}, err),
+            getProjectStatus: (err) => {
+                // The open project's repo choice is sent along, since a new choice may not have been synced yet.
+                let currentRepo = webui.projectData?.path ? webui.getProjectData('selectedGitRepo') : undefined;
+                if (currentRepo && typeof currentRepo === 'object') currentRepo = currentRepo.value;
+                return invokeGit('get_project_git_status', typeof currentRepo === 'string' ? { currentRepo } : {}, err);
+            },
             // Runs in the background, so it never asks for a token or reports a failure.
             fetchProjectRemotes: () => tauri.core.invoke('fetch_project_remotes').catch(() => undefined),
             getBranches: (repo, err) => invokeGit('get_git_branches', { repo }, err),
