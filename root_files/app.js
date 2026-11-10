@@ -95,6 +95,31 @@
         });
     }
     // A command for a project that is not open never asks for a token, since the prompt saves to the open project.
+    const plural = (count, one, many) => count === 1 ? `1 ${one}` : `${count} ${many}`;
+    // Each kind has its own color, and its number matches its icon.
+    const gitStatusMarkers = [
+        { key: 'changes', icon: 'code-commit', theme: 'info', title: count => plural(count, 'changed file', 'changed files') },
+        { key: 'behind', icon: 'download', theme: 'danger', title: count => `${plural(count, 'commit', 'commits')} behind the remote` },
+        { key: 'ahead', icon: 'upload', theme: 'success', title: count => `${plural(count, 'commit', 'commits')} ahead of the remote` },
+    ];
+    /**
+     * A project or repo name for an html-options dropdown, with an icon and number for its changed files and its
+     * commits behind and ahead of the remote. The name is shown as text.
+     */
+    function gitStatusHtml(name, status) {
+        // The list widens to fit a name and its counts on one line. In a narrow picker a long name wraps, and the
+        // counts move below it when there is no room beside it.
+        const label = `<span class="git-name" style="flex:1 1 auto;min-width:0;overflow-wrap:anywhere;text-align:start;">${webui.escapeHtml(`${name}`)}</span>`;
+        const shown = gitStatusMarkers
+            .filter(marker => status?.[marker.key] > 0)
+            .map(marker => {
+                const count = status[marker.key];
+                return `<span class="git-${marker.key}" title="${marker.title(count)}" style="display:inline-flex;align-items:center;gap:0.15em;color:var(--color-${marker.theme});"><webui-icon icon="${marker.icon}" theme="${marker.theme}" aria-hidden="true"></webui-icon>${count}</span>`;
+            });
+        if (shown.length === 0) return label;
+        const markers = `<span class="git-status" style="display:inline-flex;align-items:center;gap:0.45em;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
+        return `<span class="git-option" style="display:flex;flex-wrap:wrap;align-items:center;column-gap:1em;flex:1 1 auto;min-width:0;">${label}${markers}</span>`;
+    }
     const invokeGit = async (command, args = {}, errHandler = defaultErrHandler) => {
         try {
             const result = await tauri.core.invoke(command, args);
@@ -165,7 +190,10 @@
             getChangeStats: (repo, err) => invokeGit('get_git_change_stats', { repo }, err),
             getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),
             getRepos: (err) => invokeGit('get_git_repos', {}, err),
-            /** Changed files by project path, for every saved project. */
+            /** Changed files and commits ahead and behind, by repo, for the open project. */
+            getRepoStatus: (err) => invokeGit('get_git_repo_status', {}, err),
+            statusHtml: gitStatusHtml,
+            /** Changed files and commits ahead and behind, by project path, for every saved project. */
             getProjectStatus: (err) => {
                 // The open project's repo choice is sent along, since a new choice may not have been synced yet.
                 let currentRepo = webui.projectData?.path ? webui.getProjectData('selectedGitRepo') : undefined;

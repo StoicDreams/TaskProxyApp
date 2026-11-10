@@ -9,28 +9,6 @@
     const changeCheckInterval = 30000;
     // Behind only shows what the last fetch saw, so every project's remote is fetched now and then.
     const remoteFetchInterval = 300000;
-    const plural = (count, one, many) => count === 1 ? `1 ${one}` : `${count} ${many}`;
-    // Each kind has its own color, and its number matches its icon.
-    const markers = [
-        { key: 'changes', icon: 'code-commit', theme: 'info', title: count => plural(count, 'changed file', 'changed files') },
-        { key: 'behind', icon: 'download', theme: 'danger', title: count => `${plural(count, 'commit', 'commits')} behind the remote` },
-        { key: 'ahead', icon: 'upload', theme: 'success', title: count => `${plural(count, 'commit', 'commits')} ahead of the remote` },
-    ];
-    /** A project's name, with an icon and number for its changed files and commits behind and ahead. */
-    function projectHtml(name, status) {
-        // The list widens to fit a name and its counts on one line. In the narrow picker a long name wraps, and the
-        // counts move below it when there is no room beside it.
-        const label = `<span class="project-name" style="flex:1 1 auto;min-width:0;overflow-wrap:anywhere;">${webui.escapeHtml(`${name}`)}</span>`;
-        const shown = markers
-            .filter(marker => status?.[marker.key] > 0)
-            .map(marker => {
-                const count = status[marker.key];
-                return `<span class="project-${marker.key}" title="${marker.title(count)}" style="display:inline-flex;align-items:center;gap:0.15em;color:var(--color-${marker.theme});"><webui-icon icon="${marker.icon}" theme="${marker.theme}" aria-hidden="true"></webui-icon>${count}</span>`;
-            });
-        if (shown.length === 0) return label;
-        const markersHtml = `<span class="project-status" style="display:inline-flex;align-items:center;gap:0.45em;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
-        return `<span class="project-option" style="display:flex;flex-wrap:wrap;align-items:center;column-gap:1em;flex:1 1 auto;min-width:0;">${label}${markersHtml}</span>`;
-    }
     webui.define("app-project-dropdown", {
         linkCss: false,
         watchVisibility: false,
@@ -104,7 +82,7 @@
         renderOptions() {
             const t = this;
             if (!t._projects) return [];
-            const options = t._projects.map(item => ({ value: item.path, display: item.name, html: projectHtml(item.name, t._status[item.path]) }));
+            const options = t._projects.map(item => ({ value: item.path, display: item.name, html: webui.proxy.git.statusHtml(item.name, t._status[item.path]) }));
             t._dropdown.setOptions(options);
             return options;
         },

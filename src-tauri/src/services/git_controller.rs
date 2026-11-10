@@ -875,6 +875,36 @@ pub(crate) async fn get_project_git_status(
     Ok(statuses)
 }
 
+/// Changed files and commits ahead of and behind the last fetch for each repo in the open project,
+/// leaving out the files it ignores. A repo that cannot be read is left out.
+#[tauri::command]
+pub(crate) async fn get_git_repo_status(
+    state: State<'_, CurrentProject>,
+) -> Result<HashMap<String, ProjectGitStatus>, String> {
+    let (root, ignored) = {
+        let current = state
+            .lock()
+            .map_err(|err| format!("State failure: {}", err))?;
+        if current.path.is_empty() {
+            return Err(String::from("Project not loaded."));
+        }
+        (PathBuf::from(&current.path), ignored_files(&current.data))
+    };
+    task::spawn_blocking(move || repo_statuses(&root, &ignored))
+        .await
+        .map_err(|err| format!("{}", err))
+}
+
+fn repo_statuses(
+    root: &Path,
+    ignored: &std::collections::HashSet<String>,
+) -> HashMap<String, ProjectGitStatus> {
+    find_git_repos(root)
+        .into_iter()
+        .filter_map(|repo| repo_git_status(root, &repo, ignored).map(|status| (repo, status)))
+        .collect()
+}
+
 /// Fetches every saved project's repos from their origin, each with its own project's token, so ahead
 /// and behind counts stay current for projects that are not open. Failures are skipped quietly, since
 /// a project may be offline or have no token.
@@ -953,7 +983,7 @@ fn ignored_files(data: &HashMap<String, Value>) -> std::collections::HashSet<Str
 }
 
 /// Counts the changed files in every repo of a project, or None when it has no repo that can be read.
-/// What the project dropdown shows for a project, for one of its repos.
+/// What the project and repo dropdowns show for a repo.
 #[derive(Serialize, Default, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectGitStatus {
@@ -975,9 +1005,17 @@ fn project_git_status(
     let repos = find_git_repos(root);
     let repo = selected
         .and_then(|selected| repos.iter().find(|repo| repo.as_str() == selected))
-        .or_else(|| repos.first())?
-        .clone();
-    let repository = Repository::open(root.join(&repo)).ok()?;
+        .or_else(|| repos.first())?;
+    repo_git_status(root, repo, ignored)
+}
+
+/// Changed files and commits ahead of and behind the last fetch for one repo in a project.
+fn repo_git_status(
+    root: &Path,
+    repo: &str,
+    ignored: &std::collections::HashSet<String>,
+) -> Option<ProjectGitStatus> {
+    let repository = Repository::open(root.join(repo)).ok()?;
     let changes = collect_changes(&repository).ok()?;
     let count = changes
         .iter()
@@ -1732,6 +1770,37 @@ mod tests {
         let expected = changes(Some(first_listed.as_str()));
         assert_eq!(changes(None), expected);
         assert_eq!(changes(Some("removed")), expected);
+    }
+
+    #[test]
+    fn each_repo_in_a_project_has_its_own_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_upstream, local) = upstream_and_clone(dir.path());
+        write(&local, "mine.txt", "x\n");
+        commit_all(&local, "mine");
+        let other = Repository::init(dir.path().join("other")).unwrap();
+        write(&other, "a.txt", "new\n");
+        write(&other, "b.txt", "new\n");
+        write(&other, "skip.txt", "new\n");
+        let ignored = std::collections::HashSet::from([String::from("other/skip.txt")]);
+        let statuses = repo_statuses(dir.path(), &ignored);
+        assert_eq!(
+            statuses.get("local"),
+            Some(&ProjectGitStatus {
+                changes: 0,
+                ahead: 1,
+                behind: 1
+            })
+        );
+        assert_eq!(
+            statuses.get("other"),
+            Some(&ProjectGitStatus {
+                changes: 2,
+                ahead: 0,
+                behind: 0
+            })
+        );
+        assert!(statuses.contains_key("upstream"));
     }
 
     #[test]

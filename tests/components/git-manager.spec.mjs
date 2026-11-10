@@ -21,6 +21,48 @@ const openBranches = page => expect(async () => {
 // Rows are found by data-path, because Web UI moves title into aria-label once the mouse is over it.
 const include = (page, file) => manager(page).locator(`.files .file-row[data-path="${file}"] select.include`);
 
+test.describe('repo dropdown', () => {
+    const repoDropdown = page => manager(page).locator('webui-dropdown[label="Repo"]');
+    const repoOption = (page, value) => repoDropdown(page).locator(`[role="option"][data-value="${value}"]`);
+    const repoStatus = { '': { changes: 2 }, 'libs/api': { behind: 4, ahead: 1 }, docs: {} };
+
+    test('each repo shows its changed files and commits behind and ahead', async ({ page }) => {
+        await open(page, { repos: ['', 'libs/api', 'docs'], repoStatus });
+        await expect(repoOption(page, '').locator('.git-changes')).toHaveText('2');
+        await expect(repoOption(page, '').locator('.git-name')).toHaveText('Root');
+        await expect(repoOption(page, 'libs/api').locator('.git-behind')).toHaveText('4');
+        await expect(repoOption(page, 'libs/api').locator('.git-behind')).toHaveAttribute('title', '4 commits behind the remote');
+        await expect(repoOption(page, 'libs/api').locator('.git-ahead')).toHaveText('1');
+        await expect(repoOption(page, 'libs/api').locator('.git-changes')).toHaveCount(0);
+        await expect(repoOption(page, 'docs')).toHaveText('docs');
+        // The chosen repo shows its counts in the picker too.
+        await expect(repoDropdown(page).locator('button .git-changes')).toHaveText('2');
+    });
+    test('a repo name is shown as text, not markup', async ({ page }) => {
+        const odd = '<img src=x onerror="window.__xss=1">';
+        await open(page, { repos: ['', odd], repoStatus: { [odd]: { changes: 1 } } });
+        await expect(repoDropdown(page).locator('[role="option"] .git-changes')).toHaveText('1');
+        await expect(repoDropdown(page).locator('img')).toHaveCount(0);
+        expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    });
+    test('counts update after the changes reload, such as after a fetch or commit', async ({ page }) => {
+        await open(page, { repos: ['', 'libs/api'], repoStatus });
+        await expect(repoOption(page, 'libs/api').locator('.git-behind')).toHaveText('4');
+        await page.evaluate(() => { window.__backend.git.repoStatus = { 'libs/api': { behind: 0, ahead: 0 }, '': { changes: 0, ahead: 3 } }; });
+        await manager(page).locator('webui-button[label="Refresh"]').click();
+        await expect(repoOption(page, '').locator('.git-ahead')).toHaveText('3');
+        await expect(repoOption(page, 'libs/api').locator('.git-status')).toHaveCount(0);
+        await expect(repoOption(page, '').locator('.git-changes')).toHaveCount(0);
+    });
+    test('choosing a repo from the list switches to it', async ({ page }) => {
+        await open(page, { repos: ['', 'libs/api'], repoStatus });
+        await repoDropdown(page).locator('button').first().click();
+        await repoOption(page, 'libs/api').click();
+        await expect.poll(() => repoDropdown(page).evaluate(el => el.value)).toBe('libs/api');
+        await expect.poll(async () => (await calls(page, 'get_git_changes')).at(-1)?.path).toBe('libs/api');
+    });
+});
+
 test('changes are listed with their type', async ({ page }) => {
     await open(page);
     await expect(manager(page).locator('.files button.file[title="a.txt"]')).toContainText('Modify');

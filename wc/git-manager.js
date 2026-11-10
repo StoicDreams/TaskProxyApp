@@ -632,10 +632,10 @@
                 t._repos.classList.add('hidden');
                 webui.setData('git-branches', []);
             } else {
-                let options = repos.map(item => { return { id: item, value: item, display: item === '' ? 'Root' : item } });
+                t._repoList = repos;
                 // On a slow load the dropdown definition can arrive after this component starts.
                 await whenReady(t._repos);
-                t._repos.setOptions(options);
+                t.renderRepoOptions();
                 t._repos.classList.remove('hidden');
                 let selectedGitRepo = webui.getProjectData('selectedGitRepo');
                 if (selectedGitRepo) {
@@ -738,6 +738,24 @@
             const binaryNote = binary ? ` <span class="binary-note">(${binary} binary ${binary === 1 ? 'file' : 'files'} not counted)</span>` : '';
             t._valCommitLines.innerHTML = `${badge('success', `+${additions.toLocaleString()}`)} ${badge('danger', `-${deletions.toLocaleString()}`)}${binaryNote}`;
         },
+        /** Each repo's name in the Repo dropdown, with its changed files and commits behind and ahead. */
+        renderRepoOptions() {
+            const t = this;
+            if (!t._repoList) return;
+            const status = t._repoStatus || {};
+            t._repos.setOptions(t._repoList.map(repo => {
+                const display = repo === '' ? 'Root' : repo;
+                return { id: repo, value: repo, display, html: webui.proxy.git.statusHtml(display, status[repo]) };
+            }));
+        },
+        async loadRepoStatus() {
+            const t = this;
+            await whenProxyReady();
+            const status = await webui.proxy.git.getRepoStatus(() => null);
+            if (!status) return;
+            t._repoStatus = status;
+            t.renderRepoOptions();
+        },
         async loadRemoteStatus() {
             let t = this;
             let repo = t._repos.value;
@@ -745,6 +763,8 @@
             t._valSyncStatus.innerHTML = '<em>Checking remote sync status...</em>';
             t.loadExistingPat();
             await whenProxyReady();
+            // Called after changes load and after every fetch, pull, and push, so the Repo dropdown's counts follow.
+            t.loadRepoStatus();
             let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
             if (!status) {
                 t._valSyncStatus.innerHTML = badge('danger', '<em>Failed to retrieve remote status.</em>');
@@ -1550,7 +1570,7 @@ button.revert {
 </style>
 <webui-flex align="center">
     <webui-button theme="info" label="Refresh"></webui-button>
-    <webui-dropdown class="hidden" data-bind="project.selectedGitRepo" label="Repo"></webui-dropdown>
+    <webui-dropdown class="hidden" html-options data-bind="project.selectedGitRepo" label="Repo"></webui-dropdown>
     <webui-flex align="center" gap="0.5rem" style="margin-left: auto;">
         <webui-button id="btn-revert-all" theme="danger" label="Revert All"></webui-button>
         <webui-button id="btn-stash" theme="warning" label="Stash"></webui-button>

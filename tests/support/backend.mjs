@@ -9,6 +9,8 @@
  * - data, variables, navigation, docs, currentPage: fields of the open project.
  * - appData, appVariables: saved global values and their definitions.
  * - scripts: what get_scripts returns.
+ * - git.repoStatus: { repo: { changes, ahead, behind } } for the open project, which get_git_repo_status returns.
+ *   Missing numbers are 0.
  * - gitStatus: { path: { changes, ahead, behind } } for each project, which get_project_git_status returns.
  *   Missing numbers are 0.
  * - projectFiles: what search_project_files returns, after searchDelay milliseconds when set.
@@ -115,6 +117,8 @@ function setup(state) {
             check_update: () => false,
             install_update: () => 'App is up to date.',
             get_git_repos: () => git.repos,
+            get_git_repo_status: () => Object.fromEntries(Object.entries(git.repoStatus || {})
+                .map(([repo, status]) => [repo, { changes: 0, ahead: 0, behind: 0, ...status }])),
             get_git_changes: () => git.changes,
             get_project_git_status: () => Object.fromEntries(Object.entries(state.gitStatus || {})
                 .map(([path, status]) => [path, { changes: 0, ahead: 0, behind: 0, ...status }])),
