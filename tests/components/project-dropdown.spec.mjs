@@ -22,7 +22,7 @@ test.describe('changed files and commits', () => {
 
     test('a project with changed files shows an icon and how many', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: counts });
-        await expect(option(page, 'One').locator('.git-changes')).toHaveText('3');
+        await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
         await expect(option(page, 'One').locator('.git-changes')).toHaveAttribute('title', '3 changed files');
         await expect(option(page, 'One').locator('webui-icon[icon="code-commit"]')).toHaveCount(1);
         await expect(option(page, 'Two').locator('.git-changes')).toHaveCount(0);
@@ -31,7 +31,7 @@ test.describe('changed files and commits', () => {
     test('the current project shows its count in the picker too', async ({ page }) => {
         await openApp(page, { project: projects[0], projects, gitStatus: { '/one': { changes: 1 } } });
         const picked = dropdown(page).locator('button .git-changes');
-        await expect(picked).toHaveText('1');
+        await expect(picked.locator('webui-icon')).toHaveAttribute('count', '1');
         await expect(picked).toHaveAttribute('title', '1 changed file');
     });
     test('a project name is shown as text, not markup', async ({ page }) => {
@@ -41,19 +41,47 @@ test.describe('changed files and commits', () => {
         await expect(dropdown(page).locator('img')).toHaveCount(0);
         expect(await page.evaluate(() => window.__xss)).toBeUndefined();
     });
+    test('each project shows the result of the CI runs for its last push', async ({ page }) => {
+        const ciStatus = {
+            '/one': { state: 'failure', service: 'GitHub Actions', url: 'https://github.com/o/one/actions/runs/1' },
+            '/two': { state: 'running', service: 'GitHub Actions', url: '' },
+        };
+        await openApp(page, { project: projects[1], projects, gitStatus: counts, ciStatus });
+        const failed = option(page, 'One').locator('.git-ci-failure');
+        await expect(failed).toHaveAttribute('title', 'GitHub Actions failed for the last push');
+        await expect(failed.locator('webui-icon')).toHaveAttribute('icon', 'xmark');
+        await expect(failed.locator('webui-icon')).toHaveAttribute('theme', 'danger');
+        // The CI icon comes first, and the counts still show.
+        await expect(option(page, 'One').locator('.git-status > span').first()).toHaveClass(/git-ci/);
+        await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
+        await expect(option(page, 'Two').locator('.git-ci-running webui-icon')).toHaveAttribute('theme', 'info');
+        await page.evaluate(() => {
+            window.__backend.handlers.get_project_ci_status = () => ({ '/one': { state: 'success', service: 'GitHub Actions', url: '' } });
+            document.dispatchEvent(new CustomEvent('app-git-changes'));
+        });
+        await expect(option(page, 'One').locator('.git-ci-success webui-icon')).toHaveAttribute('theme', 'success');
+        await expect(option(page, 'Two').locator('.git-ci')).toHaveCount(0);
+        await expect(option(page, 'Two')).toHaveText('Two');
+    });
+    test('a project with no CI result shows no CI icon', async ({ page }) => {
+        await openApp(page, { project: projects[1], projects, gitStatus: counts, ciStatus: { '/one': { state: 'unknown' } } });
+        await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
+        await expect.poll(async () => (await calls(page, 'get_project_ci_status')).length).toBeGreaterThan(0);
+        await expect(dropdown(page).locator('.git-ci')).toHaveCount(0);
+    });
     test('counts update when the Git Controller loads changes', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: counts });
-        await expect(option(page, 'One').locator('.git-changes')).toHaveText('3');
+        await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
         await page.evaluate(() => {
             window.__backend.handlers.get_project_git_status = () => ({ '/one': { changes: 0, ahead: 0, behind: 0 }, '/two': { changes: 5, ahead: 0, behind: 0 } });
             document.dispatchEvent(new CustomEvent('app-git-changes'));
         });
-        await expect(option(page, 'Two').locator('.git-changes')).toHaveText('5');
+        await expect(option(page, 'Two').locator('.git-changes webui-icon')).toHaveAttribute('count', '5');
         await expect(option(page, 'One').locator('.git-changes')).toHaveCount(0);
     });
     test('choosing a project from the list opens it, and stores only its name and path', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: counts });
-        await expect(option(page, 'One').locator('.git-changes')).toHaveText('3');
+        await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
         await dropdown(page).locator('button').click();
         await option(page, 'One').click();
         await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/one');
@@ -62,21 +90,21 @@ test.describe('changed files and commits', () => {
     test('commits behind and ahead of the remote show their own icon and number', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: { '/one': { changes: 2, behind: 4, ahead: 1 }, '/two': { ahead: 3 } } });
         const one = option(page, 'One');
-        await expect(one.locator('.git-behind')).toHaveText('4');
+        await expect(one.locator('.git-behind webui-icon')).toHaveAttribute('count', '4');
         await expect(one.locator('.git-behind')).toHaveAttribute('title', '4 commits behind the remote');
         await expect(one.locator('.git-behind webui-icon[icon="download"]')).toHaveCount(1);
-        await expect(one.locator('.git-ahead')).toHaveText('1');
+        await expect(one.locator('.git-ahead webui-icon')).toHaveAttribute('count', '1');
         await expect(one.locator('.git-ahead')).toHaveAttribute('title', '1 commit ahead of the remote');
         await expect(one.locator('.git-ahead webui-icon[icon="upload"]')).toHaveCount(1);
         // Changed files come first, then behind, then ahead.
         expect(await one.locator('.git-status > span').evaluateAll(els => els.map(el => el.className))).toEqual(['git-changes', 'git-behind', 'git-ahead']);
         const two = option(page, 'Two');
-        await expect(two.locator('.git-ahead')).toHaveText('3');
+        await expect(two.locator('.git-ahead webui-icon')).toHaveAttribute('count', '3');
         await expect(two.locator('.git-changes, .git-behind')).toHaveCount(0);
     });
     test('each kind has its own color, and its number matches its icon', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: { '/one': { changes: 2, behind: 4, ahead: 1 } } });
-        await expect(option(page, 'One').locator('.git-ahead')).toHaveText('1');
+        await expect(option(page, 'One').locator('.git-ahead webui-icon')).toHaveAttribute('count', '1');
         const colors = await option(page, 'One').locator('.git-status > span').evaluateAll(els => els.map(el => {
             const icon = el.querySelector('webui-icon');
             // The icon draws with its theme color, so resolve that color the same way.
@@ -119,7 +147,7 @@ test.describe('changed files and commits', () => {
             window.__backend.handlers.fetch_project_remotes = () => { throw 'Credentials Missing/Invalid'; };
         });
         await page.locator('app-project-dropdown').evaluate(el => el.fetchRemotes());
-        await expect(option(page, 'One').locator('.git-changes')).toHaveText('3');
+        await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
         expect(await page.evaluate(() => window.__alerts)).toEqual([]);
         await expect(page.locator('dialog[open]')).toHaveCount(0);
     });

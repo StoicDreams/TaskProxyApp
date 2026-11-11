@@ -277,3 +277,76 @@ test('terminal updates that arrive before the app has set up its backend are ign
     });
     expect(error).toBeNull();
 });
+
+test.describe('run status', () => {
+    const status = page => page.locator('#term-status');
+    const finish = (page, terminalId, code) => emit(page, 'terminal-finished', { projectId: 'project-id', terminalId, code });
+
+    test('a running script shows Running in blue with a time that keeps counting', async ({ page }) => {
+        await open(page);
+        await ready(page);
+        await start(page, 'a.ps1');
+        await expect(status(page)).toHaveText(/^Running \d\d:\d\d:\d\d\.\d{3}$/);
+        await expect(status(page)).toHaveAttribute('data-state', 'running');
+        expect(await status(page).evaluate(el => el.style.color)).toContain('var(--color-info)');
+        const first = await status(page).textContent();
+        await expect(status(page)).not.toHaveText(first);
+        // The label still starts with Terminal: in its own color.
+        await expect(status(page).locator('..')).toHaveText(/^Terminal: Running /);
+    });
+    test('a script that exits cleanly shows Finished in green, and its time stops', async ({ page }) => {
+        await open(page);
+        await ready(page);
+        await start(page, 'a.ps1');
+        await finish(page, 'a.ps1', 0);
+        await expect(status(page)).toHaveText(/^Finished \d\d:\d\d:\d\d\.\d{3}$/);
+        expect(await status(page).evaluate(el => el.style.color)).toContain('var(--color-success)');
+        const text = await status(page).textContent();
+        await page.waitForTimeout(300);
+        await expect(status(page)).toHaveText(text);
+    });
+    test('a script that exits with an error, or is stopped, shows Failed in red', async ({ page }) => {
+        await open(page);
+        await ready(page);
+        await start(page, 'a.ps1');
+        await finish(page, 'a.ps1', 2);
+        await expect(status(page)).toHaveText(/^Failed /);
+        expect(await status(page).evaluate(el => el.style.color)).toContain('var(--color-danger)');
+        // A script that ends from Ctrl+C with exit code 0 was still stopped.
+        await onCommand(page, 'write_terminal_input', args => {
+            if (args.data === '\x03') setTimeout(() => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: args.terminalId, code: 0 }), 50);
+            return null;
+        });
+        await start(page, 'b.ps1');
+        await expect(status(page)).toHaveText(/^Running /);
+        await page.locator('#btn-kill').click();
+        await expect(status(page)).toHaveText(/^Failed /);
+    });
+    test('switching terminals shows each one\'s own status, and none for one that has not run', async ({ page }) => {
+        await open(page);
+        await ready(page);
+        await start(page, 'a.ps1');
+        await finish(page, 'a.ps1', 0);
+        await expect(status(page)).toHaveText(/^Finished /);
+        await page.evaluate(() => document.querySelector('app-terminals').switchTerminal('live'));
+        await expect(status(page)).toHaveText('');
+        await page.evaluate(() => document.querySelector('app-terminals').switchTerminal('a.ps1'));
+        await expect(status(page)).toHaveText(/^Finished /);
+    });
+    test('the time is shown as hours, minutes, seconds, and milliseconds', async ({ page }) => {
+        await openApp(page);
+        const format = ms => page.evaluate(ms => webui.proxy.terminalHelpers.formatElapsed(ms), ms);
+        expect(await format(0)).toBe('00:00:00.000');
+        expect(await format(85545473)).toBe('23:45:45.473');
+        expect(await format(((1 * 60 + 23) * 60 + 45) * 1000 + 473)).toBe('01:23:45.473');
+        expect(await format(360000000)).toBe('100:00:00.000');
+    });
+    test('a run whose exit code is unknown, such as in its own window, counts as finished', async ({ page }) => {
+        await openApp(page);
+        const state = (term) => page.evaluate(term => webui.proxy.terminalHelpers.runStatus(term, 5000)?.state ?? null, term);
+        expect(await state({ status: 'Ready' })).toBe(null);
+        expect(await state({ status: 'Finished', startedAt: 1000, endedAt: 2000, exitCode: null })).toBe('Finished');
+        expect(await state({ status: 'Finished', startedAt: 1000, endedAt: 2000, exitCode: null, stopped: true })).toBe('Failed');
+        expect(await page.evaluate(() => webui.proxy.terminalHelpers.runStatus({ status: 'Running', startedAt: 1000 }, 5000).elapsed)).toBe(4000);
+    });
+});

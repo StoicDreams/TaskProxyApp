@@ -1,5 +1,9 @@
 "use strict"
 {
+    // The color of each run state in the Terminal label.
+    const statusThemes = { Running: 'info', Finished: 'success', Failed: 'danger' };
+    // How often a running script's time updates, in milliseconds. Often enough for the milliseconds to move.
+    const statusTick = 50;
     webui.define("app-terminals", {
         linkCss: false,
         watchVisibility: false,
@@ -86,7 +90,7 @@
         <app-script-runner id="term-runner" style="min-height: 120px;"></app-script-runner>
     </webui-flex>
     <webui-flex column style="flex: 1 0 40vh; min-height: 40vh;">
-        <label style="font-weight: bold; margin-bottom: 0.25rem;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal:</label>
+        <label style="font-weight: bold; margin-bottom: 0.25rem;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal: <span id="term-status" class="term-status"></span></label>
         <app-terminal-view id="term-console" style="flex-grow: 1;"></app-terminal-view>
     </webui-flex>
 </div>
@@ -132,6 +136,7 @@
                 t._filterToggle = container.querySelector('#term-filter-toggle');
                 t._runner = container.querySelector('#term-runner');
                 t._activeConsole = container.querySelector('#term-console');
+                t._status = container.querySelector('#term-status');
                 t._btnKill = container.querySelector('#btn-kill');
                 const btnKillAll = container.querySelector('#btn-kill-all');
                 const btnClear = container.querySelector('#btn-clear');
@@ -212,6 +217,7 @@
             }
             const current = state.terminals[id];
             t.renderConsole();
+            t.renderStatus();
             t.refreshDropdown();
             t.refreshButtons();
             setTimeout(() => {
@@ -255,6 +261,30 @@
                 this._btnRemoveFinished.style.display = hasFinished ? '' : 'none';
             }
         },
+        /** The active terminal's last run, as in Running 00:23:45.473, ticking while it runs. */
+        renderStatus() {
+            const t = this;
+            const label = t._status;
+            if (!label?.isConnected || !webui.proxy?.terminalHelpers) {
+                clearInterval(t._statusTimer);
+                t._statusTimer = null;
+                return;
+            }
+            const helpers = webui.proxy.terminalHelpers;
+            const state = helpers.getState();
+            const run = helpers.runStatus(state.terminals[state.activeId]);
+            const text = run ? `${run.state} ${helpers.formatElapsed(run.elapsed)}` : '';
+            if (label.textContent !== text) label.textContent = text;
+            label.dataset.state = run ? run.state.toLowerCase() : '';
+            // Theme colors are made for backgrounds, so each is mixed with the label's text color to stay readable.
+            label.style.color = run ? `color-mix(in srgb, var(--color-${statusThemes[run.state]}) 60%, currentColor)` : '';
+            if (run?.state === 'Running') {
+                t._statusTimer ??= setInterval(() => t.renderStatus(), statusTick);
+            } else {
+                clearInterval(t._statusTimer);
+                t._statusTimer = null;
+            }
+        },
         /** Shows the active terminal. Its output is only replayed when it changes, or when `force` is set. */
         renderConsole(force) {
             if (typeof this._activeConsole?.attach !== 'function') return;
@@ -267,6 +297,7 @@
             this.refreshDropdown();
             this.refreshButtons();
             this.renderConsole();
+            this.renderStatus();
         },
         onTerminalCleared(data) {
             if (!data || !webui.proxy?.terminalHelpers) return;

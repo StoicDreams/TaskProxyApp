@@ -102,9 +102,27 @@
         { key: 'behind', icon: 'download', theme: 'danger', title: count => `${plural(count, 'commit', 'commits')} behind the remote` },
         { key: 'ahead', icon: 'upload', theme: 'success', title: count => `${plural(count, 'commit', 'commits')} ahead of the remote` },
     ];
+    // The result of the CI runs, such as GitHub Actions, for the commit a repo last pushed.
+    const ciMarkers = {
+        running: { icon: 'spinner', theme: 'info', title: 'is running for the last push' },
+        success: { icon: 'check', theme: 'success', title: 'passed for the last push' },
+        failure: { icon: 'xmark', theme: 'danger', title: 'failed for the last push' },
+    };
+    function ciStatusHtml(ci) {
+        const marker = ciMarkers[ci?.state];
+        if (!marker) return '';
+        const title = webui.escapeHtml(`${ci.service || 'CI'} ${marker.title}`);
+        return `<span class="git-ci git-ci-${ci.state}" title="${title}" style="display:inline-flex;align-items:center;color:var(--color-${marker.theme});"><webui-icon icon="${marker.icon}" theme="${marker.theme}" aria-hidden="true"></webui-icon></span>`;
+    }
+    /** Each entry's git status, from `status`, with its CI result, from `ci`, added as `ci`. */
+    function withCiStatus(status, ci) {
+        const combined = { ...(status || {}) };
+        Object.entries(ci || {}).forEach(([key, value]) => combined[key] = { ...combined[key], ci: value });
+        return combined;
+    }
     /**
-     * A project or repo name for an html-options dropdown, with an icon and number for its changed files and its
-     * commits behind and ahead of the remote. The name is shown as text.
+     * A project or repo name for an html-options dropdown, with icons for its CI result, changed files, and commits
+     * behind and ahead of the remote. Each count is a badge on its icon. The name is shown as text.
      */
     function gitStatusHtml(name, status) {
         // The list widens to fit a name and its counts on one line. In a narrow picker a long name wraps, and the
@@ -114,10 +132,13 @@
             .filter(marker => status?.[marker.key] > 0)
             .map(marker => {
                 const count = status[marker.key];
-                return `<span class="git-${marker.key}" title="${marker.title(count)}" style="display:inline-flex;align-items:center;gap:0.15em;color:var(--color-${marker.theme});"><webui-icon icon="${marker.icon}" theme="${marker.theme}" aria-hidden="true"></webui-icon>${count}</span>`;
+                // The number shows as a badge over the icon's top right, which takes less room than beside it.
+                return `<span class="git-${marker.key}" title="${marker.title(count)}" style="display:inline-flex;align-items:center;color:var(--color-${marker.theme});"><webui-icon icon="${marker.icon}" theme="${marker.theme}" count="${count}" aria-hidden="true"></webui-icon></span>`;
             });
+        const ci = ciStatusHtml(status?.ci);
+        if (ci) shown.unshift(ci);
         if (shown.length === 0) return label;
-        const markers = `<span class="git-status" style="display:inline-flex;align-items:center;gap:0.45em;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
+        const markers = `<span class="git-status" style="display:inline-flex;align-items:center;gap:0.8em;padding-right:0.3em;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
         return `<span class="git-option" style="display:flex;flex-wrap:wrap;align-items:center;column-gap:1em;flex:1 1 auto;min-width:0;">${label}${markers}</span>`;
     }
     const invokeGit = async (command, args = {}, errHandler = defaultErrHandler) => {
@@ -193,6 +214,7 @@
             /** Changed files and commits ahead and behind, by repo, for the open project. */
             getRepoStatus: (err) => invokeGit('get_git_repo_status', {}, err),
             statusHtml: gitStatusHtml,
+            withCiStatus,
             /** Changed files and commits ahead and behind, by project path, for every saved project. */
             getProjectStatus: (err) => {
                 // The open project's repo choice is sent along, since a new choice may not have been synced yet.
@@ -202,6 +224,17 @@
             },
             // Runs in the background, so it never asks for a token or reports a failure.
             fetchProjectRemotes: () => tauri.core.invoke('fetch_project_remotes').catch(() => undefined),
+            /**
+             * The CI result, such as GitHub Actions, for the commit each project's repo last pushed, by project path.
+             * It asks Git servers over the network, so it runs in the background and never asks for a token.
+             */
+            getProjectCiStatus: () => {
+                let currentRepo = webui.projectData?.path ? webui.getProjectData('selectedGitRepo') : undefined;
+                if (currentRepo && typeof currentRepo === 'object') currentRepo = currentRepo.value;
+                return tauri.core.invoke('get_project_ci_status', typeof currentRepo === 'string' ? { currentRepo } : {}).catch(() => undefined);
+            },
+            /** The CI result for the commit each repo in the open project last pushed, by repo. */
+            getRepoCiStatus: () => tauri.core.invoke('get_git_repo_ci_status').catch(() => undefined),
             getBranches: (repo, err) => invokeGit('get_git_branches', { repo }, err),
             switchBranch: (repo, branch, err) => invokeGit('git_switch_branch', { repo, branch }, err),
             createBranch: (repo, branch, baseBranch, err) => invokeGit('git_create_branch', { repo, branch, baseBranch }, err),
@@ -486,6 +519,8 @@
                 const state = this.getState();
                 const term = state.terminals[id];
                 if (!term || term.status !== 'Running') return;
+                // A stopped script failed, whatever exit code Ctrl+C or the kill leaves it with.
+                term.stopped = true;
                 const forceStop = () => webui.proxy.terminal.kill(id).catch(() => {
                     // The finished event updates the status and starts the next queued script.
                     this._scriptFinished(id);
@@ -527,6 +562,9 @@
                 state.terminals[id].status = 'Running';
                 state.terminals[id].script = displayScript ?? scriptContent;
                 state.terminals[id].exitCode = null;
+                state.terminals[id].stopped = false;
+                state.terminals[id].startedAt = Date.now();
+                state.terminals[id].endedAt = null;
                 // Settles with the exit code when this run ends. Made before starting, since a short script can end first.
                 state.terminals[id].finished = new Promise(resolve => state.terminals[id]._resolveFinished = resolve);
                 if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
@@ -554,6 +592,7 @@
                 if (term) {
                     term.status = 'Finished';
                     term.exitCode = Number.isInteger(code) ? code : null;
+                    term.endedAt = Date.now();
                     term._resolveFinished?.(term.exitCode);
                     term._resolveFinished = null;
                     webui.setData('app-terminal-refresh', Date.now());
@@ -577,6 +616,27 @@
                 if (next) {
                     this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow, next.isPageScript, next.displayScript).catch(err => webui.alert(err, 'danger'));
                 }
+            },
+            /**
+             * How a terminal's last run went: `state` is Running, Finished, or Failed, and `elapsed` is how long it ran,
+             * or has run so far, in milliseconds. Null when it has not run. A run fails when it was stopped or exited
+             * with an error code. One whose exit code is unknown, such as in its own window, counts as finished.
+             */
+            runStatus(term, now = Date.now()) {
+                if (!term?.startedAt) return null;
+                const running = term.status === 'Running';
+                const failed = !running && (term.stopped || (Number.isInteger(term.exitCode) && term.exitCode !== 0));
+                return {
+                    state: running ? 'Running' : failed ? 'Failed' : 'Finished',
+                    elapsed: Math.max(0, (running ? now : term.endedAt ?? now) - term.startedAt),
+                };
+            },
+            /** A duration in milliseconds as hours, minutes, seconds, and milliseconds, as in 00:23:45.473. */
+            formatElapsed(ms) {
+                ms = Math.max(0, Math.floor(ms || 0));
+                const pad = (value, size = 2) => `${value}`.padStart(size, '0');
+                const hours = Math.floor(ms / 3600000);
+                return `${pad(hours)}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
             },
             /** Forget a terminal and its output. Running scripts and the live terminal are kept. */
             removeTerminal(id) {

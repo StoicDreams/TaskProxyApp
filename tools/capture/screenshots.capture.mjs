@@ -93,6 +93,13 @@ test('terminal output', async ({ page: p }) => {
     await openDrawer(p, 'app-terminals');
     await showTerminal(p, '.taskproxy/scripts/test.ps1');
     await p.waitForTimeout(3000);
+    // The run's time would differ on every capture, so it is set to one that suits the output, to keep the image the same.
+    await p.evaluate(id => {
+        const term = webui.proxy.terminalHelpers.getState().terminals[id];
+        term.startedAt = term.endedAt - 4627;
+        document.querySelector('app-terminals').renderStatus();
+    }, '.taskproxy/scripts/test.ps1');
+    await expect(p.locator('#term-status')).toHaveText('Finished 00:00:04.627');
     await hideOverlays(p);
     await shot(p, 'terminal-output', { locator: p.locator('webui-drawer.shared') });
 });

@@ -13,6 +13,8 @@
  *   Missing numbers are 0.
  * - gitStatus: { path: { changes, ahead, behind } } for each project, which get_project_git_status returns.
  *   Missing numbers are 0.
+ * - ciStatus: { path: { state, service, url } } for each project, which get_project_ci_status returns.
+ * - git.ciStatus: { repo: { state, service, url } } for the open project, which get_git_repo_ci_status returns.
  * - projectFiles: what search_project_files returns, after searchDelay milliseconds when set.
  * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
@@ -123,6 +125,8 @@ function setup(state) {
             get_project_git_status: () => Object.fromEntries(Object.entries(state.gitStatus || {})
                 .map(([path, status]) => [path, { changes: 0, ahead: 0, behind: 0, ...status }])),
             fetch_project_remotes: () => 0,
+            get_project_ci_status: () => state.ciStatus || {},
+            get_git_repo_ci_status: () => git.ciStatus || {},
             get_git_change_stats: () => git.lineStats,
             get_git_file_diff: ({ file }) => git.diffs[file] || '',
             get_git_branches: () => ({ branches: git.branches, currentBranch: git.currentBranch }),

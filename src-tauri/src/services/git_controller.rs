@@ -93,7 +93,7 @@ fn get_git_credentials(app_handle: &AppHandle) -> Option<String> {
 }
 
 /// The saved variable values of the project a command names, when that is not the open project.
-async fn other_project_values(
+pub(crate) async fn other_project_values(
     app_handle: &AppHandle,
     state: &State<'_, CurrentProject>,
     project: Option<&str>,
@@ -119,7 +119,7 @@ async fn other_project_values(
 }
 
 /// Finds the token for a command: the named project's own token, or the open project's, then the global one.
-fn credentials_for(
+pub(crate) fn credentials_for(
     app_handle: AppHandle,
     other_project: Option<HashMap<String, Value>>,
 ) -> impl Fn() -> Option<String> {
@@ -958,7 +958,7 @@ fn fetch_project_repos(root: &Path, token: impl Fn() -> Option<String>) -> usize
 }
 
 /// The repo chosen in a project's Git Controller, saved as its path or as the chosen option.
-fn selected_repo(data: &HashMap<String, Value>) -> Option<String> {
+pub(crate) fn selected_repo(data: &HashMap<String, Value>) -> Option<String> {
     match data.get("selectedGitRepo")? {
         Value::String(repo) => Some(repo.clone()),
         Value::Object(option) => option
@@ -1180,7 +1180,7 @@ pub(crate) async fn get_git_file_diff(
     .map_err(|err| format!("{}", err))?
 }
 
-fn find_git_repos(root: &Path) -> Vec<String> {
+pub(crate) fn find_git_repos(root: &Path) -> Vec<String> {
     let mut results = Vec::new();
     find_git_repos_recursive(root, root, &mut results);
     results

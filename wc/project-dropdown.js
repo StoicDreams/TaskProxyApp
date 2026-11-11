@@ -28,6 +28,7 @@
         connected() {
             const t = this;
             t._status = {};
+            t._ci = {};
             t.dataset.subscribe = 'app-projects:setProjects';
             loadProjects();
             t._refresh = () => t.loadStatus();
@@ -65,6 +66,24 @@
                 t._statusAgain = false;
                 t.loadStatus();
             }
+            // Apart from the counts, since it waits on Git servers. The backend keeps finished results and asks
+            // again about unfinished ones at most once a minute, so asking this often is cheap.
+            t.loadCiStatus();
+        },
+        async loadCiStatus() {
+            const t = this;
+            if (t._loadingCi) return;
+            t._loadingCi = true;
+            try {
+                await whenProxyReady();
+                const ci = await webui.proxy.git.getProjectCiStatus();
+                if (ci && JSON.stringify(ci) !== JSON.stringify(t._ci)) {
+                    t._ci = ci;
+                    t.renderOptions();
+                }
+            } finally {
+                t._loadingCi = false;
+            }
         },
         /** Fetches every project's remote quietly, then shows the new ahead and behind counts. */
         async fetchRemotes() {
@@ -82,7 +101,9 @@
         renderOptions() {
             const t = this;
             if (!t._projects) return [];
-            const options = t._projects.map(item => ({ value: item.path, display: item.name, html: webui.proxy.git.statusHtml(item.name, t._status[item.path]) }));
+            // An empty list can arrive before webui.proxy exists, so it is only used for projects to show.
+            const status = t._projects.length ? webui.proxy.git.withCiStatus(t._status, t._ci) : {};
+            const options = t._projects.map(item => ({ value: item.path, display: item.name, html: webui.proxy.git.statusHtml(item.name, status[item.path]) }));
             t._dropdown.setOptions(options);
             return options;
         },

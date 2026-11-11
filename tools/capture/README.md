@@ -4,7 +4,7 @@ Captures the screenshots and videos used in the TaskProxy.com tutorials, by driv
 
 ```bash
 npm run capture                         # Everything
-npm run capture -- screenshots          # Screenshots only
+npm run capture -- screenshots          # Screenshots only, as PowerShell/screenshots.ps1 and Publish.ps1 run them
 npm run capture -- videos -g "commit"   # One video, by name
 ```
 

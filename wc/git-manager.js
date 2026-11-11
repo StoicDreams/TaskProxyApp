@@ -315,6 +315,8 @@
             + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}">🗑️</button>`
             + `</div>`;
     }
+    // How often the Repo dropdown asks again about CI runs that have not finished.
+    const ciRecheck = 60000;
     webui.define("app-git-manager", {
         linkCss: true,
         watchVisibility: false,
@@ -758,7 +760,7 @@
         renderRepoOptions() {
             const t = this;
             if (!t._repoList) return;
-            const status = t._repoStatus || {};
+            const status = webui.proxy.git.withCiStatus(t._repoStatus, t._repoCi);
             t._repos.setOptions(t._repoList.map(repo => {
                 const display = repo === '' ? 'Root' : repo;
                 return { id: repo, value: repo, display, html: webui.proxy.git.statusHtml(display, status[repo]) };
@@ -771,6 +773,27 @@
             if (!status) return;
             t._repoStatus = status;
             t.renderRepoOptions();
+            t.loadRepoCiStatus();
+        },
+        /** The CI result for each repo's last push, which waits on Git servers, so it comes after the counts. */
+        async loadRepoCiStatus() {
+            const t = this;
+            if (t._loadingCi) return;
+            t._loadingCi = true;
+            try {
+                const ci = await webui.proxy.git.getRepoCiStatus();
+                if (ci && JSON.stringify(ci) !== JSON.stringify(t._repoCi)) {
+                    t._repoCi = ci;
+                    t.renderRepoOptions();
+                }
+            } finally {
+                t._loadingCi = false;
+            }
+            // Nothing else reloads the repo list while the page sits open, so check again until runs finish.
+            clearTimeout(t._ciTimer);
+            if (t.isConnected && Object.values(t._repoCi || {}).some(ci => ci.state === 'running')) {
+                t._ciTimer = setTimeout(() => t.loadRepoCiStatus(), ciRecheck);
+            }
         },
         async loadRemoteStatus() {
             let t = this;
@@ -1384,6 +1407,7 @@
             cancelAnimationFrame(t._fitFrame);
             t._fitFrame = 0;
             clearInterval(t._fitTimer);
+            clearTimeout(t._ciTimer);
             t._scroller = null;
         },
         shadowTemplate: `

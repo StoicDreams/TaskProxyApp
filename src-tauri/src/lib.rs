@@ -144,6 +144,8 @@ pub fn run() {
             services::git_controller::get_git_changes,
             services::git_controller::get_project_git_status,
             services::git_controller::get_git_repo_status,
+            services::ci_status::get_project_ci_status,
+            services::ci_status::get_git_repo_ci_status,
             services::git_controller::fetch_project_remotes,
             services::git_controller::get_git_change_stats,
             services::git_controller::get_git_file_diff,

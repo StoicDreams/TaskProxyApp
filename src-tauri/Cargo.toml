@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.111"
+version = "0.1.112"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -59,6 +59,9 @@ chrono = "0.4"
 tauri-plugin-updater = { version = "2.13.3", features = ["rustls-tls"] }
 ignore = "0.4"
 portable-pty = "0.9"
+# Already built for the updater. Used to ask Git servers for CI results.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Prepares Task Proxy for a commit: increments the version, minifies the CSS and JavaScript, and runs the tests that CI runs.
+Prepares Task Proxy for a commit: increments the version, minifies the CSS and JavaScript, runs the tests that CI runs, and updates the website's screenshots.
 
 .DESCRIPTION
 Select this script in Task Proxy's Git Controller to run it before every commit. If any step fails, the commit is cancelled.
@@ -15,7 +15,10 @@ Leave the version as it is.
 Do not regenerate the .min.js and .min.css files.
 
 .PARAMETER SkipTests
-Do not run the tests that the deploy workflow runs. They run last, on the minified files and the new version.
+Do not run the tests that the deploy workflow runs. They run on the minified files and the new version.
+
+.PARAMETER SkipScreenshots
+Do not update the TaskProxy.com screenshots with screenshots.ps1. They are updated last, once the tests pass, and only when this project has that script.
 #>
 [CmdletBinding()]
 param(
@@ -23,7 +26,8 @@ param(
     [string]$Version = 'patch',
     [switch]$SkipIncrementVersion,
     [switch]$SkipMinify,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$SkipScreenshots
 )
 $ErrorActionPreference = 'Stop'
 
@@ -80,6 +84,9 @@ try {
     }
     if (-not $SkipMinify) { Invoke-Step 'Minify CSS and JavaScript' 'Minify.ps1' }
     if (-not $SkipTests) { Invoke-Tests }
+    if (-not $SkipScreenshots -and (Test-Path (Join-Path $PSScriptRoot 'screenshots.ps1'))) {
+        Invoke-Step 'Update the website screenshots' 'screenshots.ps1'
+    }
     Write-Host 'Ready to commit.' -ForegroundColor Green
 }
 finally {

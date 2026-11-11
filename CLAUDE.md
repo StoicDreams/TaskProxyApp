@@ -25,7 +25,8 @@ npx playwright test -g "<name>"  # Run UI tests by name
 npm run capture                  # Regenerate the website's screenshots and videos (tools/capture/README.md)
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
 pwsh ./PowerShell/Minify.ps1                      # Regenerate every .min.js and .min.css with esbuild
-pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, then CI's tests (-SkipMinify, -SkipTests, -Version minor)
+pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, CI's tests, then the website screenshots (-SkipMinify, -SkipTests, -SkipScreenshots, -Version minor)
+pwsh ./PowerShell/screenshots.ps1                 # Update the TaskProxy.com screenshots in the website checkout beside this repo (-OutputPath)
 ```
 
 Rust tests are `#[cfg(test)]` modules in `src-tauri/src`. They need `dist/` to exist, because `generate_context!` embeds it, so run `trunk build` first on a fresh checkout. Git logic is tested against real temporary repositories, so keep it in plain functions that take a `Repository`, with the `#[tauri::command]` as a thin wrapper.
@@ -73,7 +74,7 @@ To add a backend command:
 3. Add a wrapper on the `Tauri` class in `app.js`. Tauri maps camelCase JS args to snake_case Rust params.
 4. Regenerate `app.min.js`.
 
-Wrappers usually take an optional `errHandler` (default: `webui.alert`) and resolve to `undefined` on failure, so callers test the result rather than using `try/catch`. Git commands go through `invokeGit`, which matches the error text `Credentials Missing/Invalid` to prompt for a PAT and retry. Terminal output arrives through the `terminal-data` and `terminal-finished` events.
+Wrappers usually take an optional `errHandler` (default: `webui.alert`) and resolve to `undefined` on failure, so callers test the result rather than using `try/catch`. CI results for the dropdowns' icons come from `services/ci_status.rs`, which asks each Git server's API about the commit a branch last pushed; only GitHub Actions is supported so far, and adding a server is one `CiServer` variant. Git commands go through `invokeGit`, which matches the error text `Credentials Missing/Invalid` to prompt for a PAT and retry. Terminal output arrives through the `terminal-data` and `terminal-finished` events.
 
 ### Frontend: lazy-loaded components
 
