@@ -1,5 +1,5 @@
-//! The result of the CI runs for each repo's last pushed commit, such as GitHub Actions, shown as an icon
-//! beside the repo in the project and repo dropdowns.
+//! The result of the CI runs for each repo's last pushed commit, from GitHub Actions or GitLab CI/CD, shown as
+//! an icon beside the repo in the project and repo dropdowns.
 //!
 //! Finding the pushed commit, caching, and the icon are shared. Only asking the server is not, since every
 //! Git server has its own API: adding one means a `CiServer` variant, a match in `CiServer::from_remote_url`,
@@ -34,22 +34,36 @@ pub(crate) struct CiStatus {
 /// A server that reports CI results for commits, found from a remote URL.
 #[derive(Clone, Debug, PartialEq)]
 enum CiServer {
-    GitHub { owner: String, repo: String },
+    GitHub {
+        owner: String,
+        repo: String,
+    },
+    /// A project on gitlab.com, or on a self-hosted server whose name starts with `gitlab.`.
+    /// `path` is the full project path, which can include subgroups, as in group/subgroup/project.
+    GitLab {
+        host: String,
+        path: String,
+    },
 }
 
 impl CiServer {
     fn from_remote_url(url: &str) -> Option<Self> {
         let (host, path) = host_and_path(url)?;
-        let mut parts = path.trim_matches('/').split('/');
-        let owner = parts.next().filter(|part| !part.is_empty())?;
-        let repo = parts.next()?.trim_end_matches(".git");
-        if repo.is_empty() || parts.next().is_some() {
+        let host = host.to_ascii_lowercase();
+        let path = path.trim_matches('/');
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() < 2 || parts.iter().any(|part| part.is_empty()) {
             return None;
         }
-        match host.to_ascii_lowercase().as_str() {
-            "github.com" | "www.github.com" => Some(CiServer::GitHub {
-                owner: owner.to_string(),
-                repo: repo.to_string(),
+        match host.as_str() {
+            "github.com" | "www.github.com" if parts.len() == 2 => Some(CiServer::GitHub {
+                owner: parts[0].to_string(),
+                repo: parts[1].to_string(),
+            }),
+            _ if is_gitlab_host(&host) => Some(CiServer::GitLab {
+                host,
+                path: parts.join("/"),
             }),
             _ => None,
         }
@@ -58,6 +72,7 @@ impl CiServer {
     fn key(&self) -> String {
         match self {
             CiServer::GitHub { owner, repo } => format!("github:{}/{}", owner, repo),
+            CiServer::GitLab { host, path } => format!("gitlab:{}/{}", host, path),
         }
     }
 
@@ -69,11 +84,32 @@ impl CiServer {
                     "https://api.github.com/repos/{}/{}/actions/runs?head_sha={}&per_page=100",
                     owner, repo, sha
                 );
-                let body = get_json(&url, token).await?;
+                let headers = [
+                    ("Accept", "application/vnd.github+json"),
+                    ("X-GitHub-Api-Version", "2022-11-28"),
+                ];
+                let body = get_json(&url, &headers, token).await?;
                 summarize_github_runs(&body)
+            }
+            CiServer::GitLab { host, path } => {
+                // Project paths only hold letters, digits, '-', '_' and '.', so only the slashes need encoding.
+                let url = format!(
+                    "https://{}/api/v4/projects/{}/pipelines?sha={}&per_page=100",
+                    host,
+                    path.replace('/', "%2F"),
+                    sha
+                );
+                let body = get_json(&url, &[("Accept", "application/json")], token).await?;
+                summarize_gitlab_pipelines(&body)
             }
         }
     }
+}
+
+/// gitlab.com, or a self-hosted server named like gitlab.example.com. Other self-hosted names cannot be told
+/// apart from any other Git server by their URL.
+fn is_gitlab_host(host: &str) -> bool {
+    host == "gitlab.com" || host == "www.gitlab.com" || host.starts_with("gitlab.")
 }
 
 /// The host and the path after it, from an https or ssh remote URL, leaving out any user or token.
@@ -124,6 +160,58 @@ fn summarize_github_runs(body: &Value) -> Option<CiStatus> {
         .map(|run| status(CiState::Success, run))
 }
 
+/// GitLab pipelines for one commit, combined the same way as GitHub's runs. Only the newest pipeline for each
+/// ref counts, since a pipeline that is run again replaces the old one, as on GitLab's own commit page.
+/// Pipelines GitLab Duo runs for itself, on refs under refs/workloads/, are not about the push and are left out.
+fn summarize_gitlab_pipelines(body: &Value) -> Option<CiStatus> {
+    let mut pipelines: Vec<&Value> = body.as_array()?.iter().collect();
+    let id = |pipeline: &Value| pipeline.get("id").and_then(Value::as_u64).unwrap_or(0);
+    let field = |pipeline: &Value, name: &str| {
+        pipeline
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    pipelines.sort_by_key(|pipeline| std::cmp::Reverse(id(pipeline)));
+    let mut refs = Vec::new();
+    pipelines.retain(|pipeline| {
+        let name = field(pipeline, "ref");
+        if name.starts_with("refs/workloads/") || refs.contains(&name) {
+            return false;
+        }
+        refs.push(name);
+        true
+    });
+    let status = |state: CiState, pipeline: &Value| CiStatus {
+        state,
+        service: String::from("GitLab CI/CD"),
+        url: field(pipeline, "web_url"),
+    };
+    let find = |states: &[&str]| {
+        pipelines
+            .iter()
+            .find(|pipeline| states.contains(&field(pipeline, "status").as_str()))
+            .copied()
+    };
+    // canceled, skipped, and manual (waiting for someone to start a job) neither pass nor fail.
+    let running = [
+        "created",
+        "waiting_for_resource",
+        "preparing",
+        "pending",
+        "running",
+        "scheduled",
+    ];
+    if let Some(pipeline) = find(&running) {
+        return Some(status(CiState::Running, pipeline));
+    }
+    if let Some(pipeline) = find(&["failed"]) {
+        return Some(status(CiState::Failure, pipeline));
+    }
+    find(&["success"]).map(|pipeline| status(CiState::Success, pipeline))
+}
+
 static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
     // The updater sets this up the same way, and whichever runs first installs it.
     if rustls::crypto::CryptoProvider::get_default().is_none() {
@@ -138,13 +226,13 @@ static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
 
 /// Reads a JSON response. A token the server refuses is dropped and the request made again, since the
 /// token may be for another server and a public repo needs none.
-async fn get_json(url: &str, token: Option<String>) -> Option<Value> {
+async fn get_json(url: &str, headers: &[(&str, &str)], token: Option<String>) -> Option<Value> {
     let client = CLIENT.as_ref()?;
     let request = |token: Option<&str>| {
-        let mut request = client
-            .get(url)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28");
+        let mut request = client.get(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
@@ -339,10 +427,45 @@ mod tests {
         }
     }
 
+    fn gitlab(host: &str, path: &str) -> Option<CiServer> {
+        Some(CiServer::GitLab {
+            host: host.into(),
+            path: path.into(),
+        })
+    }
+
+    #[test]
+    fn gitlab_remotes_are_found_with_subgroups_and_self_hosted_servers() {
+        for (url, expected) in [
+            (
+                "https://gitlab.com/group/project.git",
+                gitlab("gitlab.com", "group/project"),
+            ),
+            (
+                "git@gitlab.com:group/sub/project.git",
+                gitlab("gitlab.com", "group/sub/project"),
+            ),
+            (
+                "https://oauth2:token@GitLab.com/group/sub/deeper/project",
+                gitlab("gitlab.com", "group/sub/deeper/project"),
+            ),
+            (
+                "ssh://git@gitlab.example.com:2222/team/app.git",
+                gitlab("gitlab.example.com", "team/app"),
+            ),
+        ] {
+            assert_eq!(CiServer::from_remote_url(url), expected, "{}", url);
+        }
+    }
+
     #[test]
     fn other_servers_and_odd_paths_have_no_ci_server() {
         for url in [
-            "https://gitlab.com/group/project.git",
+            "https://bitbucket.org/team/project.git",
+            "https://git.example.com/team/project.git",
+            "https://mygitlab.example.com/team/project.git",
+            "https://gitlab.com/group",
+            "https://gitlab.com/group//project",
             "https://github.com/StoicDreams",
             "https://github.com/a/b/c",
             "/home/me/upstream",
@@ -394,6 +517,48 @@ mod tests {
         assert_eq!(state(&[("completed", "cancelled")]), None);
         assert_eq!(
             summarize_github_runs(&json!({ "message": "Not Found" })),
+            None
+        );
+    }
+
+    fn gitlab_state(list: &[(u64, &str, &str)]) -> Option<(CiState, String)> {
+        let pipelines: Vec<Value> = list
+            .iter()
+            .map(|(id, reference, status)| {
+                json!({ "id": id, "ref": reference, "status": status, "web_url": format!("pipeline/{}", id) })
+            })
+            .collect();
+        summarize_gitlab_pipelines(&json!(pipelines)).map(|status| (status.state, status.url))
+    }
+
+    #[test]
+    fn gitlab_pipelines_combine_into_one_result() {
+        assert_eq!(gitlab_state(&[]), None);
+        assert_eq!(
+            gitlab_state(&[(1, "main", "success"), (2, "dev", "pending")]),
+            Some((CiState::Running, "pipeline/2".into()))
+        );
+        assert_eq!(
+            gitlab_state(&[(1, "main", "success"), (2, "dev", "failed")]),
+            Some((CiState::Failure, "pipeline/2".into()))
+        );
+        // A newer pipeline on the same ref replaces the failed one, whatever order they come in.
+        assert_eq!(
+            gitlab_state(&[(5, "main", "success"), (3, "main", "failed")]),
+            Some((CiState::Success, "pipeline/5".into()))
+        );
+        assert_eq!(
+            gitlab_state(&[(3, "main", "success"), (5, "main", "failed")]),
+            Some((CiState::Failure, "pipeline/5".into()))
+        );
+        assert_eq!(
+            gitlab_state(&[(1, "main", "success"), (2, "refs/workloads/0f5e", "failed")]),
+            Some((CiState::Success, "pipeline/1".into()))
+        );
+        assert_eq!(gitlab_state(&[(1, "main", "canceled")]), None);
+        assert_eq!(gitlab_state(&[(1, "main", "manual")]), None);
+        assert_eq!(
+            summarize_gitlab_pipelines(&json!({ "message": "404 Project Not Found" })),
             None
         );
     }
@@ -472,5 +637,25 @@ mod network_tests {
         let status = server.fetch(&sha, None).await;
         println!("{} @ {}: {:?}", server.key(), sha, status);
         assert!(status.is_some(), "GitHub returned no runs for {}", sha);
+    }
+
+    /// Asks gitlab.com about the newest commit on a public project's default branch.
+    /// Run with: cargo test -p taskproxy -- --ignored gitlab_answers
+    #[tokio::test]
+    #[ignore = "needs network access"]
+    async fn gitlab_answers_for_a_public_projects_commit() {
+        let server = CiServer::from_remote_url("https://gitlab.com/gitlab-org/gitlab-runner.git")
+            .expect("a GitLab project");
+        let commit = get_json(
+            "https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-runner/repository/commits/main",
+            &[],
+            None,
+        )
+        .await
+        .expect("gitlab.com answers");
+        let sha = commit["id"].as_str().expect("a commit id");
+        let status = server.fetch(sha, None).await;
+        println!("{} @ {}: {:?}", server.key(), sha, status);
+        assert!(status.is_some(), "GitLab returned no pipelines for {}", sha);
     }
 }

@@ -74,7 +74,7 @@ To add a backend command:
 3. Add a wrapper on the `Tauri` class in `app.js`. Tauri maps camelCase JS args to snake_case Rust params.
 4. Regenerate `app.min.js`.
 
-Wrappers usually take an optional `errHandler` (default: `webui.alert`) and resolve to `undefined` on failure, so callers test the result rather than using `try/catch`. CI results for the dropdowns' icons come from `services/ci_status.rs`, which asks each Git server's API about the commit a branch last pushed; only GitHub Actions is supported so far, and adding a server is one `CiServer` variant. Git commands go through `invokeGit`, which matches the error text `Credentials Missing/Invalid` to prompt for a PAT and retry. Terminal output arrives through the `terminal-data` and `terminal-finished` events.
+Wrappers usually take an optional `errHandler` (default: `webui.alert`) and resolve to `undefined` on failure, so callers test the result rather than using `try/catch`. CI results for the dropdowns' icons come from `services/ci_status.rs`, which asks each Git server's API about the commit a branch last pushed; GitHub Actions and GitLab CI/CD (gitlab.com, or self-hosted servers named `gitlab.*`) are supported, and adding a server is one `CiServer` variant. Git commands go through `invokeGit`, which matches the error text `Credentials Missing/Invalid` to prompt for a PAT and retry. Terminal output arrives through the `terminal-data` and `terminal-finished` events.
 
 ### Frontend: lazy-loaded components
 
