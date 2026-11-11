@@ -104,7 +104,14 @@ pub(crate) async fn set_securitykey(
         .map_err(|err| format!("{}", err))??;
     if needs_reload {
         // Memory holds blank defaults while disk holds real data. Restart without saving.
-        app_handle.restart();
+        // If no new copy starts, exit anyway, since autosaves from this copy would replace the real data.
+        if crate::services::updates::restart_app(&app_handle)
+            .await
+            .is_err()
+        {
+            app_handle.exit(0);
+        }
+        return Ok(String::from("Security Key Saved! Restarting..."));
     }
     _ = save_projects_if_any(&app_handle, &state).await;
     Ok(String::from("Security Key Saved!"))
