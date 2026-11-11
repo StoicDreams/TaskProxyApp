@@ -619,6 +619,21 @@ test.describe('file list', () => {
         await openBranches(page);
         await expect.poll(async () => (await layout()).overflow).toBeGreaterThan(0);
     });
+    test('the panes keep their size when something else holds the page taller than them', async ({ page }) => {
+        await page.setViewportSize({ width: 1400, height: 800 });
+        await openList(page);
+        const panesHeight = () => manager(page).evaluate(el => Math.round(el.shadowRoot.querySelector('.commit-panes').getBoundingClientRect().height));
+        await expect.poll(panesHeight).toBeGreaterThan(500);
+        const fitted = await panesHeight();
+        // A hidden tab that stays tall keeps the tabs from shrinking with the panes.
+        await manager(page).evaluate(el => {
+            const hidden = el.shadowRoot.querySelectorAll('webui-tabs > [slot="content"]')[1];
+            hidden.style.cssText = 'height:1500px !important;min-height:1500px !important;';
+        });
+        // Every fit is a chance to shrink further, so give it several.
+        await page.waitForTimeout(2000);
+        expect(Math.abs(await panesHeight() - fitted)).toBeLessThanOrEqual(2);
+    });
     test('hundreds of files are listed', async ({ page }) => {
         const many = Array.from({ length: 600 }, (_, i) => `M  src/folder${i % 20}/file${i}.cs`);
         await openList(page, { changes: many });

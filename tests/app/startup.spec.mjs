@@ -34,6 +34,28 @@ test('a startup failure is reported once instead of retrying forever', async ({ 
     await page.waitForTimeout(500);
     expect(await attempts()).toBe(1);
 });
+test('the app starts even when its loading dialog cannot open', async ({ page }) => {
+    // Web UI versions whose webui.dialog threw until its dialog element was ready, which a busy machine could reach first.
+    await page.route(/\/webui\/dialogs(\.min)?\.js$/, async route => {
+        const response = await route.fetch();
+        const body = `${await response.text()}
+{
+    const ready = webui.dialog;
+    let failed = false;
+    webui.dialog = Object.assign(function (data) {
+        if (!failed) {
+            failed = true;
+            throw new TypeError('webuiDialog._handler is not a function');
+        }
+        return ready(data);
+    }, ready);
+}`;
+        await route.fulfill({ response, body });
+    });
+    await openApp(page);
+    expect(await page.evaluate(() => webui.dialog.toString())).toContain('webuiDialog._handler is not a function');
+    expect(await page.evaluate(() => typeof webui.proxy.projects)).toBe('object');
+});
 test('a project that fails to load can be selected again', async ({ page }) => {
     await openApp(page, { project: null });
     await onCommand(page, 'get_project_data', () => { throw 'Disk failure'; });

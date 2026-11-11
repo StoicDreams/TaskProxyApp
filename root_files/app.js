@@ -903,7 +903,12 @@
             return;
         }
         try {
-            await showLoading('Loading App!');
+            // The loading dialog is only there to look at, so the app still starts if it cannot open.
+            try {
+                await showLoading('Loading App!');
+            } catch (ex) {
+                console.warn('The loading dialog could not open', ex);
+            }
             await action();
         } catch (ex) {
             console.error('Task Proxy failed to start', ex);
