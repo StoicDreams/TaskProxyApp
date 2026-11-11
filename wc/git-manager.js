@@ -1205,7 +1205,15 @@
             });
             t._fileFilter.addEventListener('input', () => t.applyFileFilter());
             // Anything above the panes that grows or shrinks moves them, such as the alert or the status lines.
-            t._resizeObserver = new ResizeObserver(() => t.fitPanes());
+            // Sized in the next frame, since resizing what is observed from inside the callback makes the browser
+            // report a ResizeObserver loop.
+            t._resizeObserver = new ResizeObserver(() => {
+                if (t._fitFrame) return;
+                t._fitFrame = requestAnimationFrame(() => {
+                    t._fitFrame = 0;
+                    t.fitPanes();
+                });
+            });
             t._resizeObserver.observe(t);
             t._resizeObserver.observe(t._panes);
             [t._alert, t._remoteStatusContainer, t._repos.parentElement, t.template.querySelector('webui-tabs')].forEach(el => {
@@ -1355,6 +1363,8 @@
             const t = this;
             t._resizeObserver?.disconnect();
             t._resizeObserver = null;
+            cancelAnimationFrame(t._fitFrame);
+            t._fitFrame = 0;
             clearInterval(t._fitTimer);
             t._scroller = null;
         },

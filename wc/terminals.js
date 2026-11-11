@@ -262,12 +262,14 @@
             this._activeConsole.attach(state.activeId, !!force);
         },
         onTerminalRefresh() {
+            // Saved data can reach this before app.js has set up the proxy, when there is nothing to refresh yet.
+            if (!webui.proxy?.terminalHelpers) return;
             this.refreshDropdown();
             this.refreshButtons();
             this.renderConsole();
         },
         onTerminalCleared(data) {
-            if (!data) return;
+            if (!data || !webui.proxy?.terminalHelpers) return;
             const state = webui.proxy.terminalHelpers.getState();
             if (state.activeId === data.terminalId) {
                 this.renderConsole(true);

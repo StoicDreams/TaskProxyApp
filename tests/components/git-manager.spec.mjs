@@ -605,6 +605,20 @@ test.describe('file list', () => {
         await expect(manager(page).locator('webui-button[label="Commit"]')).toBeInViewport();
         await expect(manager(page).locator('webui-content-compare')).toBeInViewport();
     });
+    test('a long branch list on its hidden tab does not make the page scroll', async ({ page }) => {
+        await page.setViewportSize({ width: 1400, height: 800 });
+        const branches = Array.from({ length: 40 }, (_, i) => ({ name: `feature/${i}`, isCurrent: i === 0, updatedDate: '2026-01-01' }));
+        await openList(page, { branches });
+        const layout = () => manager(page).evaluate(el => {
+            const scroller = el.parentElement.shadowRoot?.querySelector('main') || document.querySelector('webui-app').shadowRoot.querySelector('main');
+            return { overflow: scroller.scrollHeight - scroller.clientHeight, panes: Math.round(el.shadowRoot.querySelector('.commit-panes').getBoundingClientRect().height) };
+        });
+        await expect.poll(async () => (await layout()).overflow).toBeLessThanOrEqual(0);
+        // The panes still fill the page, rather than shrinking to make room for the hidden list.
+        expect((await layout()).panes).toBeGreaterThan(500);
+        await openBranches(page);
+        await expect.poll(async () => (await layout()).overflow).toBeGreaterThan(0);
+    });
     test('hundreds of files are listed', async ({ page }) => {
         const many = Array.from({ length: 600 }, (_, i) => `M  src/folder${i % 20}/file${i}.cs`);
         await openList(page, { changes: many });

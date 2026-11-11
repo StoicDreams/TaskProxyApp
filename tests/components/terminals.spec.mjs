@@ -259,3 +259,21 @@ test.describe('page scripts', () => {
         await expect(page.locator('#btn-remove-finished')).toBeHidden();
     });
 });
+test('terminal updates that arrive before the app has set up its backend are ignored', async ({ page }) => {
+    await openApp(page);
+    const error = await page.evaluate(() => {
+        const el = document.querySelector('app-terminals');
+        const proxy = webui.proxy;
+        webui.proxy = undefined;
+        try {
+            el.onTerminalRefresh();
+            el.onTerminalCleared({ terminalId: 'x', tick: 1 });
+            return null;
+        } catch (err) {
+            return `${err}`;
+        } finally {
+            webui.proxy = proxy;
+        }
+    });
+    expect(error).toBeNull();
+});
