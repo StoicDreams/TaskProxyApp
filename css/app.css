@@ -66,3 +66,180 @@ header h1.editable-title:empty::before {
     outline: 2px solid var(--color-focus, currentColor);
     outline-offset: 2px;
 }
+
+/* Plugin screens, drawn by app-plugin-page from the data a plugin returns. */
+.plugin-ui {
+    display: block;
+}
+
+.plugin-ui.plugin-busy {
+    cursor: progress;
+    opacity: 0.8;
+}
+
+.plugin-muted {
+    opacity: 0.75;
+}
+
+.plugin-empty {
+    font-style: italic;
+    opacity: 0.75;
+}
+
+.plugin-heading {
+    margin: 0;
+}
+
+.plugin-badge {
+    display: inline-block;
+    padding: 0.1em 0.6em;
+    border-radius: 1em;
+    font-size: 0.85em;
+    font-weight: bold;
+    background-color: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.plugin-badge[data-theme="info"] {
+    background-color: var(--color-info);
+    color: var(--color-info-offset);
+}
+
+.plugin-badge[data-theme="success"] {
+    background-color: var(--color-success);
+    color: var(--color-success-offset);
+}
+
+.plugin-badge[data-theme="warning"] {
+    background-color: var(--color-warning);
+    color: var(--color-warning-offset);
+}
+
+.plugin-badge[data-theme="danger"] {
+    background-color: var(--color-danger);
+    color: var(--color-danger-offset);
+}
+
+.plugin-badge[data-theme="primary"] {
+    background-color: var(--color-primary);
+    color: var(--color-primary-offset);
+}
+
+.plugin-link {
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.plugin-properties {
+    display: grid;
+    grid-template-columns: minmax(8em, max-content) 1fr;
+    gap: 0.5em 1em;
+    margin: 0;
+}
+
+.plugin-properties > dt {
+    font-weight: bold;
+}
+
+.plugin-properties > dd {
+    margin: 0;
+    min-width: 0;
+}
+
+.plugin-markdown > :first-child {
+    margin-top: 0;
+}
+
+.plugin-markdown > :last-child {
+    margin-bottom: 0;
+}
+
+.plugin-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.plugin-table th,
+.plugin-table td {
+    padding: 0.4em 0.6em;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.plugin-table tr.plugin-clickable {
+    cursor: pointer;
+}
+
+.plugin-table tr.plugin-clickable:hover {
+    background-color: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.plugin-section {
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 0.5em;
+    padding: 0.5em 1em;
+}
+
+.plugin-section > summary {
+    cursor: pointer;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25em 1em;
+    align-items: baseline;
+}
+
+.plugin-section[open] > summary {
+    margin-bottom: 0.75em;
+}
+
+.plugin-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+
+.plugin-form-inline {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+
+.plugin-form-inline > :first-child {
+    flex: 1 1 20em;
+}
+
+.plugin-checkbox {
+    display: flex;
+    gap: 0.5em;
+    align-items: center;
+    cursor: pointer;
+}
+
+.plugin-choices {
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 0.5em;
+}
+
+.plugin-card {
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 0.5em;
+    padding: 1em;
+}
+
+.plugin-card h3 {
+    margin: 0;
+}
+
+.plugin-card.plugin-highlight {
+    border-color: var(--color-info);
+}
+
+.plugin-permissions {
+    margin: 0.25em 0 0.75em;
+}
+
+.plugin-branch-card {
+    border-left: 4px solid var(--color-info);
+    padding: 0.25em 0.75em;
+}

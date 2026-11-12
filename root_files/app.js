@@ -254,6 +254,36 @@
             restoreAll: (repo, err) => invokeGit('git_restore_all', { repo }, err),
             deleteFile: (repo, file, err) => invokeGit('git_delete_file', { repo, file }, err),
         }
+        /**
+         * Installed WebAssembly plugins, such as Jira. Plugins describe their screens as data, which app-plugin-page
+         * draws, so no plugin code runs in this window. A plugin only reaches what its plugin.json declares.
+         */
+        plugins = {
+            list: (err) => tauri.core.invoke('plugin_list').catch(err ?? defaultErrHandler),
+            /** The plugins Stoic Dreams publishes. Quiet on failure, since the catalog is optional to the page. */
+            catalog: (err) => tauri.core.invoke('plugin_catalog').catch(err ?? (() => undefined)),
+            /** Installs or updates a catalog plugin, after the backend checks its signatures. */
+            installCatalog: (id, err) => tauri.core.invoke('plugin_install_catalog', { id }).catch(err ?? defaultErrHandler),
+            /** Asks the user for a folder holding plugin.json and plugin.wasm, as a plugin's build writes them. */
+            pickFolder: () => tauri.dialog.open({ directory: true, multiple: false, title: 'Choose a plugin folder' }).catch(() => undefined),
+            /** The manifest in a plugin folder, read without installing, so its permissions can be shown first. */
+            inspectFolder: (folder, err) => tauri.core.invoke('plugin_inspect_folder', { folder }).catch(err ?? defaultErrHandler),
+            installFolder: (folder, err) => tauri.core.invoke('plugin_install_folder', { folder }).catch(err ?? defaultErrHandler),
+            remove: (id, err) => tauri.core.invoke('plugin_remove', { id }).then(() => true).catch(err ?? defaultErrHandler),
+            setEnabled: (id, enabled, err) => tauri.core.invoke('plugin_set_enabled', { id, enabled }).then(() => true).catch(err ?? defaultErrHandler),
+            /** The plugin's declared variables, for its settings form. Secret values are never sent here. */
+            settings: (id, err) => tauri.core.invoke('plugin_settings', { id }).catch(err ?? defaultErrHandler),
+            /** Saves settings. A key left out keeps its value, and an empty value removes it. */
+            saveSettings: (id, values, err) => tauri.core.invoke('plugin_save_settings', { id, values }).then(() => true).catch(err ?? defaultErrHandler),
+            render: (id, page, params, err) => tauri.core.invoke('plugin_render', { id, page, params }).catch(err ?? defaultErrHandler),
+            /** request is { page, pageParams, action, params, form }. */
+            action: (id, request, err) => tauri.core.invoke('plugin_action', { id, request }).catch(err ?? defaultErrHandler),
+            /** A card from each plugin that has something to say about the selected repo's branch. */
+            branchInfo: () => tauri.core.invoke('plugin_branch_info').catch(() => undefined),
+            hostAction: (id, action, err) => tauri.core.invoke('plugin_host_action', { id, action }).catch(err ?? defaultErrHandler),
+            /** Rebuilds the Plugins part of the nav from the enabled plugins' pages. */
+            refreshNav: refreshPluginNav,
+        }
         projects = {
             isLoaded: false,
             waiting: [],
@@ -732,6 +762,7 @@
         if (keysDeleted) {
             webui.proxy.saveAppData();
         }
+        refreshPluginNav();
         webui.projectData = { navigation: [], data: {} };
         webui.projectData.data ??= {};
         webui.projectData.navigation ??= [];
@@ -952,6 +983,29 @@
                 queueId = '';
             }, syncQueueTimeout);
         }
+    }
+    /** A nav folder for each enabled plugin, with its pages, then a link to manage plugins. */
+    function pluginNav(plugins) {
+        const escape = text => webui.escapeForHTML(`${text ?? ''}`);
+        const routes = (plugins || [])
+            .filter(plugin => plugin.enabled && plugin.manifest)
+            .map(({ manifest }) => ({
+                name: escape(manifest.name),
+                icon: manifest.icon || 'puzzle-piece',
+                children: (manifest.pages || []).filter(page => !page.hidden).map(page => ({
+                    name: escape(page.name),
+                    icon: page.icon || manifest.icon || 'puzzle-piece',
+                    url: `/plugin/${manifest.id}/${page.id}`
+                }))
+            }))
+            .filter(route => route.children.length);
+        routes.push({ name: 'Plugins', icon: 'puzzle-piece', url: '/plugins' });
+        return routes;
+    }
+    async function refreshPluginNav() {
+        const plugins = await webui.proxy.plugins.list(() => undefined);
+        webui.setData('session-plugin-nav', pluginNav(plugins));
+        return plugins;
     }
     async function syncAppData() {
         await tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));

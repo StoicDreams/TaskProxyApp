@@ -332,6 +332,8 @@
             t._previewPane = t.template.querySelector('.preview');
             t._message = t.template.querySelector('webui-input-message[label="Commit Message"]');
             t._alert = t.template.querySelector('webui-alert');
+            t._pluginCards = t.template.querySelector('#plugin-branch-cards');
+            t._pluginCards.addEventListener('plugin-refresh', () => t.loadBranchCards());
             t._btnRefresh = t.template.querySelector('webui-button[label="Refresh"]');
             t._btnRevertAll = t.template.querySelector('#btn-revert-all');
             t._btnStash = t.template.querySelector('#btn-stash');
@@ -679,6 +681,20 @@
                 t._currentBranch = '';
             }
             t.renderBranchesTable();
+            t.loadBranchCards();
+        },
+        /** Cards from plugins about the current branch, such as the Jira issue it is for. */
+        async loadBranchCards() {
+            const t = this;
+            const load = t._cardLoad = (t._cardLoad || 0) + 1;
+            const cards = await webui.proxy.plugins.branchInfo();
+            if (load !== t._cardLoad) return;
+            t._pluginCards.replaceChildren();
+            (cards || []).filter(item => item.card).forEach(item => {
+                const view = webui.create('app-plugin-page', { class: 'plugin-branch-card' });
+                t._pluginCards.appendChild(view);
+                whenReady(view).then(() => view.showNode(item.card, item.id));
+            });
         },
         renderBranchesTable() {
             let t = this;
@@ -1652,6 +1668,7 @@ button.revert {
         <webui-button theme="success" label="Sync"></webui-button>
     </webui-flex>
 </webui-flex>
+<webui-flex id="plugin-branch-cards" column gap="0.5rem"></webui-flex>
 <webui-alert></webui-alert>
 <webui-tabs theme="secondary" index="0" transition-timing="200">
     <webui-button slot="tabs">Commit</webui-button>

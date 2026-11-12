@@ -17,5 +17,6 @@ npm run capture -- videos -g "commit"   # One video, by name
 - `demo.mjs`: the demo project, its pages, scripts, git changes, and sample terminal output.
 - `helpers.mjs`: `shot` for screenshots, `record` for videos, and the cursor, caption, and simulated script output used in videos.
 - `screenshots.capture.mjs` and `videos.capture.mjs`: one test per screenshot or video, named after what it shows.
+- `plugin-screenshots.capture.mjs`: the plugins' pages for their website pages, saved as `img/plugins/<plugin>/*.webp`. The Jira screens in `fixtures/jira/` are the plugin's own output for made-up data; refresh them with `cargo run -p taskproxy-jira --example demo -- ../TaskProxyApp/tools/capture/fixtures/jira` in TaskProxyPlugins.
 
 Videos are recorded from Chrome's screencast rather than Playwright's built-in video, which is much blurrier, then encoded with ffmpeg. Playwright does not draw the mouse, so `prepare` adds a pointer and caption overlay to the page.

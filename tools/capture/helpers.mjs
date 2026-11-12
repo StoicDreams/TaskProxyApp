@@ -156,9 +156,13 @@ function ffmpeg(args) {
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { stdio: 'inherit' });
 }
 
-/** Saves a screenshot as WebP. Pass `locator` to capture one element, or `clip` for an area. */
-export async function shot(page, name, { locator, clip, fullPage } = {}) {
-    mkdirSync(imageDir, { recursive: true });
+/**
+ * Saves a screenshot as WebP. Pass `locator` to capture one element, or `clip` for an area.
+ * `dir` is the folder under img, such as plugins/jira, and defaults to tutorials.
+ */
+export async function shot(page, name, { locator, clip, fullPage, dir } = {}) {
+    const folder = dir ? join(OUT, 'img', dir) : imageDir;
+    mkdirSync(folder, { recursive: true });
     const work = mkdtempSync(join(tmpdir(), 'tp-shot-'));
     const png = join(work, `${name}.png`);
     // Tooltips from the last hover would cover what the screenshot is meant to show.
@@ -169,7 +173,7 @@ export async function shot(page, name, { locator, clip, fullPage } = {}) {
     await page.waitForTimeout(350);
     if (locator) await locator.screenshot({ path: png, animations: 'disabled' });
     else await page.screenshot({ path: png, clip, fullPage, animations: 'disabled' });
-    ffmpeg(['-i', png, '-c:v', 'libwebp', '-quality', '90', '-compression_level', '6', join(imageDir, `${name}.webp`)]);
+    ffmpeg(['-i', png, '-c:v', 'libwebp', '-quality', '90', '-compression_level', '6', join(folder, `${name}.webp`)]);
     rmSync(work, { recursive: true, force: true });
 }
 

@@ -1,0 +1,325 @@
+{
+  "children": [
+    {
+      "fields": [
+        {
+          "help": "Jira Query Language, as in Jira's advanced search.",
+          "kind": "textarea",
+          "label": "JQL",
+          "name": "jql",
+          "value": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+        }
+      ],
+      "submit": {
+        "icon": "magnifying-glass",
+        "id": "issues.search",
+        "label": "Search"
+      },
+      "type": "form"
+    },
+    {
+      "children": [
+        {
+          "action": {
+            "id": "issues.search",
+            "label": "My open issues",
+            "params": {
+              "jql": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+            }
+          },
+          "text": "My open issues",
+          "type": "link"
+        },
+        {
+          "action": {
+            "id": "issues.search",
+            "label": "Sprint 14",
+            "params": {
+              "jql": "sprint in openSprints() AND project = ATL"
+            }
+          },
+          "text": "Sprint 14",
+          "type": "link"
+        },
+        {
+          "action": {
+            "confirm": "Delete the saved search 'Sprint 14'?",
+            "id": "issues.deleteFilter",
+            "label": "Delete Sprint 14",
+            "params": {
+              "index": 0
+            }
+          },
+          "text": "✕",
+          "type": "link"
+        },
+        {
+          "action": {
+            "id": "issues.search",
+            "label": "Bugs I reported",
+            "params": {
+              "jql": "reporter = currentUser() AND type = Bug"
+            }
+          },
+          "text": "Bugs I reported",
+          "type": "link"
+        },
+        {
+          "action": {
+            "confirm": "Delete the saved search 'Bugs I reported'?",
+            "id": "issues.deleteFilter",
+            "label": "Delete Bugs I reported",
+            "params": {
+              "index": 1
+            }
+          },
+          "text": "✕",
+          "type": "link"
+        }
+      ],
+      "type": "row"
+    },
+    {
+      "fields": [
+        {
+          "kind": "text",
+          "label": "Save this search as",
+          "name": "name",
+          "placeholder": "Sprint bugs",
+          "value": null
+        }
+      ],
+      "submit": {
+        "id": "issues.saveFilter",
+        "label": "Save search",
+        "params": {
+          "jql": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+        }
+      },
+      "type": "form"
+    },
+    {
+      "columns": [
+        "Key",
+        "Summary",
+        "Status",
+        "Priority",
+        "Sprint",
+        "Points",
+        "Updated"
+      ],
+      "rows": [
+        {
+          "action": {
+            "id": "open",
+            "label": "Open ATL-142",
+            "params": {
+              "key": "ATL-142"
+            }
+          },
+          "cells": [
+            {
+              "strong": true,
+              "text": "ATL-142",
+              "type": "text"
+            },
+            {
+              "text": "Show CI status on the dashboard",
+              "type": "text"
+            },
+            {
+              "text": "In Progress",
+              "theme": "info",
+              "type": "badge"
+            },
+            {
+              "text": "High",
+              "type": "text"
+            },
+            {
+              "text": "Atlas Sprint 14",
+              "type": "text"
+            },
+            {
+              "text": "5",
+              "type": "text"
+            },
+            {
+              "muted": true,
+              "text": "2026-11-11 16:42",
+              "type": "text"
+            }
+          ]
+        },
+        {
+          "action": {
+            "id": "open",
+            "label": "Open ATL-139",
+            "params": {
+              "key": "ATL-139"
+            }
+          },
+          "cells": [
+            {
+              "strong": true,
+              "text": "ATL-139",
+              "type": "text"
+            },
+            {
+              "text": "Cache release notes between sessions",
+              "type": "text"
+            },
+            {
+              "text": "In Review",
+              "theme": "info",
+              "type": "badge"
+            },
+            {
+              "text": "Medium",
+              "type": "text"
+            },
+            {
+              "text": "Atlas Sprint 14",
+              "type": "text"
+            },
+            {
+              "text": "3",
+              "type": "text"
+            },
+            {
+              "muted": true,
+              "text": "2026-11-11 16:42",
+              "type": "text"
+            }
+          ]
+        },
+        {
+          "action": {
+            "id": "open",
+            "label": "Open ATL-151",
+            "params": {
+              "key": "ATL-151"
+            }
+          },
+          "cells": [
+            {
+              "strong": true,
+              "text": "ATL-151",
+              "type": "text"
+            },
+            {
+              "text": "Retry failed webhook deliveries",
+              "type": "text"
+            },
+            {
+              "text": "To Do",
+              "type": "badge"
+            },
+            {
+              "text": "High",
+              "type": "text"
+            },
+            {
+              "text": "Atlas Sprint 14",
+              "type": "text"
+            },
+            {
+              "text": "8",
+              "type": "text"
+            },
+            {
+              "muted": true,
+              "text": "2026-11-11 16:42",
+              "type": "text"
+            }
+          ]
+        },
+        {
+          "action": {
+            "id": "open",
+            "label": "Open ATL-156",
+            "params": {
+              "key": "ATL-156"
+            }
+          },
+          "cells": [
+            {
+              "strong": true,
+              "text": "ATL-156",
+              "type": "text"
+            },
+            {
+              "text": "Add keyboard shortcut for search",
+              "type": "text"
+            },
+            {
+              "text": "To Do",
+              "type": "badge"
+            },
+            {
+              "text": "Low",
+              "type": "text"
+            },
+            {
+              "text": "Atlas Sprint 14",
+              "type": "text"
+            },
+            {
+              "text": "2",
+              "type": "text"
+            },
+            {
+              "muted": true,
+              "text": "2026-11-11 16:42",
+              "type": "text"
+            }
+          ]
+        },
+        {
+          "action": {
+            "id": "open",
+            "label": "Open ATL-133",
+            "params": {
+              "key": "ATL-133"
+            }
+          },
+          "cells": [
+            {
+              "strong": true,
+              "text": "ATL-133",
+              "type": "text"
+            },
+            {
+              "text": "Fix timezone in deploy summaries",
+              "type": "text"
+            },
+            {
+              "text": "Done",
+              "theme": "success",
+              "type": "badge"
+            },
+            {
+              "text": "Medium",
+              "type": "text"
+            },
+            {
+              "text": "Atlas Sprint 14",
+              "type": "text"
+            },
+            {
+              "text": "3",
+              "type": "text"
+            },
+            {
+              "muted": true,
+              "text": "2026-11-11 16:42",
+              "type": "text"
+            }
+          ]
+        }
+      ],
+      "type": "table"
+    }
+  ],
+  "type": "stack"
+}

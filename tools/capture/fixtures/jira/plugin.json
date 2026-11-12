@@ -1,0 +1,38 @@
+{
+    "id": "jira",
+    "name": "Jira",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Work with Jira Cloud without leaving Task Proxy: your issues, each issue with its parents through Views you design, new issues, and a branch for each issue.",
+    "category": "issue-tracking",
+    "icon": "ticket",
+    "permissions": {
+        "hosts": ["*.atlassian.net"],
+        "variables": [
+            {
+                "key": "jira_site",
+                "label": "Jira site",
+                "help": "Your Jira address, such as https://your-team.atlassian.net"
+            },
+            {
+                "key": "jira_email",
+                "label": "Email",
+                "help": "The email you sign in to Jira with"
+            },
+            {
+                "key": "jira_api_token",
+                "label": "API token",
+                "secret": true,
+                "help": "Create one at https://id.atlassian.com/manage-profile/security/api-tokens"
+            }
+        ],
+        "git": ["currentBranch", "createBranch"]
+    },
+    "pages": [
+        { "id": "issues", "name": "My Issues", "icon": "list" },
+        { "id": "create", "name": "Create Issue", "icon": "plus" },
+        { "id": "views", "name": "Views", "icon": "layers" },
+        { "id": "issue", "name": "Issue", "icon": "ticket", "hidden": true }
+    ],
+    "contributes": ["gitBranchInfo"]
+}

@@ -1,0 +1,19 @@
+{
+    "id": "test",
+    "name": "Test Plugin",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Exercises every host call, for Task Proxy's own tests.",
+    "category": "testing",
+    "icon": "flask",
+    "permissions": {
+        "hosts": ["*.example.com"],
+        "variables": [
+            { "key": "test_site", "label": "Site" },
+            { "key": "test_token", "label": "Token", "secret": true }
+        ],
+        "git": ["currentBranch", "createBranch"]
+    },
+    "pages": [{ "id": "home", "name": "Test Home", "icon": "flask" }],
+    "contributes": ["gitBranchInfo"]
+}

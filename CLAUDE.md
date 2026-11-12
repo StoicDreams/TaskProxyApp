@@ -23,6 +23,7 @@ npm run test:min                 # UI tests against the .min.js files, as CI run
 npm run test:stress -- <spec>    # Run specs 10 times each under heavy parallel load, to find timing races
 npx playwright test -g "<name>"  # Run UI tests by name
 npm run capture                  # Regenerate the website's screenshots and videos (tools/capture/README.md)
+npm run capture -- plugin-screenshots   # Only the plugin screenshots, into img/plugins/
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
 pwsh ./PowerShell/Minify.ps1                      # Regenerate every .min.js and .min.css with esbuild
 pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, CI's tests, then the website screenshots (-SkipMinify, -SkipTests, -SkipScreenshots, -Version minor)
@@ -116,6 +117,15 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 ### Git
 
 `git_controller.rs` uses `git2` (libgit2) rather than the git CLI, authenticating over HTTPS with a PAT stored as the `git_pat` or `github_pat` variable (project scope first, then global). Checkouts that move between commits use `checkout_commit_safely`, which refuses to overwrite uncommitted work; only explicit revert and force-pull actions use `force()`. File paths passed to libgit2 are patterns, so use `escape_pathspec` or `disable_pathspec_match`. Validate paths from the UI with `safe_relative_path`.
+
+### Plugins
+
+Plugins such as Jira are WebAssembly in the separate TaskProxyPlugins repo (`../TaskProxyPlugins`), run by `src-tauri/src/plugins/` with Extism, and drawn by `wc/plugin-page.js`. `Docs/Plugins.md` covers the permission model, the catalog, and signing.
+
+- **A plugin reaches nothing directly.** Every host call goes through `CallContext::handle` in `runtime.rs`, which checks it against the manifest. Add a host call there and in the SDK's `host.rs` together, and test the refusal with the test plugin.
+- **Plugin text is untrusted.** `plugin-page.js` builds with `textContent`, escapes anything a Web UI component puts in `innerHTML` (such as `label`), and sanitizes markdown.
+- **The test plugin's `.wasm` and signatures are committed** in `src-tauri/tests/fixtures/plugins/`. Rebuild them with `pwsh ./scripts/build.ps1 -UpdateAppFixtures` in TaskProxyPlugins, which also replaces the throwaway test key.
+- **Website screenshots of plugins** come from `tools/capture/plugin-screenshots.capture.mjs`, drawing screens the Jira plugin's demo wrote to `tools/capture/fixtures/jira/`.
 
 ### Dogfooding
 

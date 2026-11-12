@@ -10,6 +10,7 @@ pub mod background;
 pub mod common;
 pub mod datatypes;
 pub mod errors;
+pub mod plugins;
 pub mod prelude;
 pub mod services;
 
@@ -133,6 +134,19 @@ pub fn run() {
     // Set commands accessible from JavaScript
     builder
         .invoke_handler(tauri::generate_handler![
+            plugins::commands::plugin_action,
+            plugins::commands::plugin_branch_info,
+            plugins::commands::plugin_catalog,
+            plugins::commands::plugin_host_action,
+            plugins::commands::plugin_inspect_folder,
+            plugins::commands::plugin_install_catalog,
+            plugins::commands::plugin_install_folder,
+            plugins::commands::plugin_list,
+            plugins::commands::plugin_remove,
+            plugins::commands::plugin_render,
+            plugins::commands::plugin_save_settings,
+            plugins::commands::plugin_settings,
+            plugins::commands::plugin_set_enabled,
             appdata::delete_securitykey,
             appdata::get_app_data,
             appdata::has_securitykey,

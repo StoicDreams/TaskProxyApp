@@ -135,8 +135,23 @@
     }
     let topBar = setupBar(false);
     let bottomBar = setupBar(true);
+    /**
+     * Bound values as saved when the page loaded, by key, before any field could change them. A dropdown that gets
+     * its choices later writes its first choice to its data when they arrive, which syncBoundElements undoes.
+     */
+    let savedBoundValues = {};
+    function rememberBoundValues(md) {
+        savedBoundValues = {};
+        for (const match of md.matchAll(/data-(?:bind|trigger)="([^"]*)"/g)) {
+            attributeKeys(match[1]).forEach(key => {
+                const value = webui.getData(key);
+                if (!isBlank(value) && typeof value !== 'object') savedBoundValues[key] = value;
+            });
+        }
+    }
     function setMarkdown(md) {
         if (!comp) return;
+        rememberBoundValues(md);
         let mdTrimmed = md.trim();
         let webuiDataRegex = /^<webui-data[\s\S]*?<\/webui-data>/i;
         let match = mdTrimmed.match(webuiDataRegex);
@@ -320,6 +335,18 @@
                         needsRetry = true;
                     }
                     return;
+                }
+                // When its choices arrive, a dropdown shows its first choice and writes that to the data, so the
+                // value saved before the page loaded is put back, if it is still a choice.
+                const saved = savedBoundValues[rawKey];
+                if (hasChoices && saved !== undefined && !isBlank(shown)) {
+                    delete savedBoundValues[rawKey];
+                    if (`${current}` !== `${saved}` && typeof el.setValue === 'function') {
+                        el.setValue(saved);
+                        // Only when the saved value is still one of the choices.
+                        if (`${shownValue(el)}` === `${saved}`) webui.setData(rawKey, saved);
+                        return;
+                    }
                 }
                 if (!hasChoices || typeof current === 'object' || isBlank(shown) || `${shown}` === `${current}`) return;
                 if (typeof el.setValue === 'function') el.setValue(current);
@@ -618,6 +645,16 @@
             });
         }
     }
+    /** Titles a plugin's page with the plugin's name and the page's name from its manifest. */
+    async function showPluginTitle(pluginId, pageId) {
+        await whenProxyReady();
+        const plugins = await webui.proxy.plugins.list(() => undefined);
+        const manifest = (plugins || []).find(plugin => plugin.id === pluginId)?.manifest;
+        if (!manifest || !location.pathname.startsWith(`/plugin/${pluginId}/${pageId}`)) return;
+        const page = (manifest.pages || []).find(page => page.id === pageId);
+        webui.setData('page-title', webui.escapeForHTML(manifest.name));
+        webui.setData('page-subtitle', webui.escapeForHTML(page?.name || ''));
+    }
     webui.define("app-page-handler", {
         preload: 'app:markdown-segment app:files dropdown input-text input-message code page-help',
         constructor() {
@@ -626,6 +663,14 @@
         },
         connected() {
             const t = this;
+            // A plugin's page, as /plugin/<plugin id>/<page id>, is drawn from the plugin rather than a project file.
+            const pluginRoute = location.pathname.match(/^\/plugin\/([a-z][a-z0-9-]*)\/([a-z][a-z0-9-]*)\/?$/);
+            if (pluginRoute) {
+                t._pluginPage = true;
+                t.replaceChildren(webui.create('app-plugin-page', { plugin: pluginRoute[1], page: pluginRoute[2] }));
+                showPluginTitle(pluginRoute[1], pluginRoute[2]);
+                return;
+            }
             webui.watchAppDataChanges(onAppDataChanged);
             t._shared = webui.querySelector('.shared');
             sharedDrawerObserver = new MutationObserver((mutations) => {
@@ -674,6 +719,7 @@
         },
         disconnected() {
             const t = this;
+            if (t._pluginPage) return;
             webui.unwatchAppDataChanges(onAppDataChanged);
             if (sharedDrawerObserver) {
                 sharedDrawerObserver.disconnect();

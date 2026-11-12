@@ -34,6 +34,14 @@ NOTE: Deleting your security key only removes the key from your OS' key store. Y
 
 <app-security-key-setter></app-security-key-setter>
 
+## Plugins
+
+<webui-page-segment>
+
+Plugins add integrations such as Jira. <webui-link href="/plugins" icon="puzzle-piece">Manage plugins</webui-link>
+
+</webui-page-segment>
+
 ## Application Updates
 
 <webui-page-segment>

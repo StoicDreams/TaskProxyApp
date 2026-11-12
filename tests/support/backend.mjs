@@ -20,6 +20,14 @@
  * - hasKey: whether a security key exists. Defaults to true.
  * - newInstall: leave out the saved settings an existing install has.
  * - interactive: whether scripts start in a terminal that takes input. Defaults to true.
+ * - catalog: what plugin_catalog returns, or leave it out for a catalog that cannot be reached.
+ *   catalogManifests: { id: manifest } for what plugin_install_catalog installs.
+ * - plugins: what plugin_list returns, as [{ id, version, enabled, signed, manifest }].
+ * - pluginPages: { 'plugin/page': node } for plugin_render. A missing page fails, as an unknown page does.
+ * - pluginActions: { 'plugin/action': result } for plugin_action. A missing action fails.
+ * - pluginSettings: { plugin: [{ key, label, help, secret, isSet, value }] } for plugin_settings.
+ * - pickedFolder: the folder the folder picker returns, or null for none. pluginFolder: { manifest } it holds.
+ * - branchCards: what plugin_branch_info returns, as [{ id, name, card }].
  *
  * Other projects in `projects` start with empty data. Saved and synced project data is kept by path,
  * as the backend does, so switching projects and back returns what was saved.
@@ -54,6 +62,8 @@ function setup(state) {
         savedProjects[path] ??= { id: `id-${path}`, path, currentPage: '/', docs: [], navigation: [], variables: [], data: {} };
         return JSON.parse(JSON.stringify(savedProjects[path]));
     };
+    let plugins = JSON.parse(JSON.stringify(state.plugins || []));
+    const pluginSettings = JSON.parse(JSON.stringify(state.pluginSettings || {}));
     const listeners = {};
     const backend = {
         calls: [],
@@ -146,6 +156,55 @@ function setup(state) {
             git_restore_file: () => 'Successfully reverted',
             git_restore_all: () => 'All changes have been successfully reverted.',
             git_delete_file: () => 'Successfully deleted',
+            plugin_list: () => JSON.parse(JSON.stringify(plugins)),
+            plugin_catalog: () => {
+                if (state.catalog === undefined) throw 'Could not reach the plugin catalog';
+                return state.catalog;
+            },
+            plugin_install_catalog: ({ id }) => {
+                const entry = state.catalog.find(item => item.id === id);
+                const manifest = (state.catalogManifests || {})[id];
+                const info = { id, version: entry.version, enabled: true, signed: true, manifest };
+                plugins = plugins.filter(plugin => plugin.id !== id).concat(info);
+                return info;
+            },
+            plugin_inspect_folder: () => {
+                if (!state.pluginFolder) throw 'The folder has no plugin.json.';
+                return state.pluginFolder.manifest;
+            },
+            plugin_install_folder: () => {
+                const manifest = state.pluginFolder.manifest;
+                const info = { id: manifest.id, version: manifest.version, enabled: true, signed: false, manifest };
+                plugins = plugins.filter(plugin => plugin.id !== manifest.id).concat(info);
+                return info;
+            },
+            plugin_remove: ({ id }) => { plugins = plugins.filter(plugin => plugin.id !== id); return null; },
+            plugin_set_enabled: ({ id, enabled }) => {
+                plugins.forEach(plugin => { if (plugin.id === id) plugin.enabled = enabled; });
+                return null;
+            },
+            plugin_settings: ({ id }) => JSON.parse(JSON.stringify(pluginSettings[id] || [])),
+            // As the backend does: a key left out keeps its value, and an empty value removes it.
+            plugin_save_settings: ({ id, values }) => {
+                (pluginSettings[id] || []).forEach(setting => {
+                    if (!(setting.key in values)) return;
+                    setting.isSet = values[setting.key] !== '';
+                    if (!setting.secret) setting.value = values[setting.key] || null;
+                });
+                return null;
+            },
+            plugin_render: ({ id, page }) => {
+                const node = (state.pluginPages || {})[`${id}/${page}`];
+                if (node === undefined) throw `${id} has no page named ${page}.`;
+                return node;
+            },
+            plugin_action: ({ id, request }) => {
+                const result = (state.pluginActions || {})[`${id}/${request.action}`];
+                if (result === undefined) throw `${id} does not know the action ${request.action}.`;
+                return result;
+            },
+            plugin_branch_info: () => state.branchCards || [],
+            plugin_host_action: ({ action }) => action.type === 'git.createBranch' ? `Branch '${action.name}' created.` : '',
         },
     };
     window.__backend = backend;
@@ -160,5 +219,6 @@ function setup(state) {
         },
         event: { listen: async (name, listener) => { (listeners[name] ??= []).push(listener); } },
         opener: { openUrl: async () => { } },
+        dialog: { open: async () => state.pickedFolder ?? null },
     };
 }

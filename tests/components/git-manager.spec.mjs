@@ -934,3 +934,39 @@ Write-Host 'done'
         expect(await calls(page, 'git_commit')).toEqual([]);
     });
 });
+
+test.describe('plugin branch cards', () => {
+    const card = {
+        id: 'jira', name: 'Jira',
+        card: { type: 'stack', children: [
+            { type: 'row', children: [
+                { type: 'badge', text: 'In Progress', theme: 'info' },
+                { type: 'link', text: 'PJ-3', action: { id: 'open', label: 'Open PJ-3', params: { key: 'PJ-3' } } },
+                { type: 'text', text: 'Fix login' },
+            ] },
+            { type: 'text', text: 'Assigned to Sam Lee', muted: true },
+        ] },
+    };
+
+    test("a plugin's card about the current branch shows, and its link opens the plugin page", async ({ page }) => {
+        await open(page, {}, {
+            branchCards: [card, { id: 'other', name: 'Other', error: 'offline' }],
+            plugins: [{ id: 'jira', version: '0.1.0', enabled: true, signed: true, manifest: { id: 'jira', name: 'Jira', version: '0.1.0', apiVersion: 1, pages: [{ id: 'issue', name: 'Issue', hidden: true }] } }],
+            pluginActions: { 'jira/open': { navigate: { page: 'issue', params: { key: 'PJ-3' } } } },
+            pluginPages: { 'jira/issue': { type: 'text', text: 'Issue page' } },
+        });
+        const cards = manager(page).locator('#plugin-branch-cards app-plugin-page');
+        await expect(cards).toHaveCount(1);
+        await expect(cards).toContainText('In Progress');
+        await expect(cards).toContainText('Assigned to Sam Lee');
+        await cards.getByText('PJ-3').click();
+        await expect(page).toHaveURL(/\/plugin\/jira\/issue\?key=PJ-3$/);
+        await expect(page.locator('app-plugin-page')).toHaveText('Issue page');
+    });
+
+    test('with no plugin cards, nothing extra shows', async ({ page }) => {
+        await open(page);
+        await expect.poll(async () => (await calls(page, 'plugin_branch_info')).length).toBeGreaterThan(0);
+        await expect(manager(page).locator('#plugin-branch-cards app-plugin-page')).toHaveCount(0);
+    });
+});

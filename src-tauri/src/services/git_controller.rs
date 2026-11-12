@@ -1297,7 +1297,7 @@ pub(crate) async fn git_create_branch(
     result.map_err(|err| format!("{}", err))?
 }
 
-fn create_branch(
+pub(crate) fn create_branch(
     repository: &Repository,
     branch: &str,
     base_branch: &str,
