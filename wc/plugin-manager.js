@@ -1,5 +1,5 @@
 /*
- * The Plugins page: installed plugins, what each may reach, their settings, and installing one from a folder.
+ * The plugin manager, in the Plugins drawer: installed plugins, what each may reach, their settings, and installing one from a folder.
  * Settings are saved encrypted for that plugin alone, so project pages and scripts cannot read them, and secret
  * values never come back to this window.
  */
@@ -19,6 +19,18 @@
         });
         if (text !== undefined) node.textContent = `${text}`;
         return node;
+    }
+
+    /**
+     * Opens and closes its section on click. The right drawer stops the default action of clicks inside it,
+     * which is what opens a details element.
+     */
+    function toggles(summary, details) {
+        summary.addEventListener('click', ev => {
+            ev.preventDefault();
+            details.open = !details.open;
+        });
+        return summary;
     }
 
     function button(label, theme, icon) {
@@ -106,7 +118,7 @@
             }
             plugins.forEach(plugin => list.appendChild(t.renderPlugin(plugin)));
             t.replaceChildren(el('h3', {}, 'Installed'), list, t.renderCatalog(catalog, plugins), top);
-            const wanted = new URLSearchParams(location.search).get('plugin');
+            const wanted = t.getAttribute('plugin');
             const card = wanted && t.querySelector(`[data-plugin="${CSS.escape(wanted)}"]`);
             if (card) {
                 card.classList.add('plugin-highlight');
@@ -120,7 +132,7 @@
             const box = el('webui-flex', { column: true, gap: 'var(--padding)', class: 'plugin-catalog' });
             box.appendChild(el('h3', {}, 'Available'));
             if (!catalog) {
-                box.appendChild(el('p', { class: 'plugin-empty' }, 'The plugin catalog could not be reached. Check your connection and open this page again.'));
+                box.appendChild(el('p', { class: 'plugin-empty' }, 'The plugin catalog could not be reached. Check your connection and open Plugins again.'));
                 return box;
             }
             if (!catalog.length) {
@@ -191,7 +203,7 @@
             card.appendChild(actions);
             if (manifest && (manifest.permissions?.variables || []).length) {
                 const details = el('details', { class: 'plugin-section' });
-                const summary = el('summary');
+                const summary = toggles(el('summary'), details);
                 summary.appendChild(el('strong', {}, 'Settings'));
                 details.appendChild(summary);
                 const body = el('webui-flex', { column: true, gap: 'var(--padding)', class: 'plugin-section-body' });

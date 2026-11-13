@@ -164,9 +164,7 @@ test('a renamed file uses its new name', async ({ page }) => {
     await expect(manager(page).locator('.files button.file[title="new.txt"]')).toHaveCount(1);
 });
 test('a binary file does not interrupt with a popup', async ({ page }) => {
-    await openApp(page, { project: { name: 'Repo', path: '/repo' } });
-    await onCommand(page, 'get_project_file', () => { throw 'Failed to load file: stream did not contain valid UTF-8'; });
-    await onCommand(page, 'get_project_file_base64', () => 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+    await openApp(page, { project: { name: 'Repo', path: '/repo' }, binaryFiles: { 'logo.png': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' } });
     await page.evaluate(() => {
         window.__alerts = [];
         const original = webui.alert;
@@ -672,7 +670,8 @@ test.describe('files that are not text', () => {
         await expect(preview(page).locator('img')).toHaveAttribute('alt', 'logo.png');
         await expect.poll(() => preview(page).locator('img').evaluate(img => img.naturalWidth)).toBe(1);
         await expect(manager(page).locator('webui-content-compare')).toBeHidden();
-        expect((await calls(page, 'get_project_file_base64'))[0]).toEqual({ filePath: 'logo.png' });
+        expect((await calls(page, 'get_project_file_size'))[0]).toEqual({ filePath: 'logo.png' });
+        await expect(preview(page).locator('img')).toHaveAttribute('src', 'http://files.localhost/token/logo.png');
     });
     test('a modified file that cannot be read as text shows in the preview, without a warning', async ({ page }) => {
         // No line counts, so only reading the file shows it is not text.
@@ -689,6 +688,28 @@ test.describe('files that are not text', () => {
         await expect(preview(page)).toBeHidden();
         await expect(manager(page).locator('webui-content-compare')).toBeVisible();
         await expect(preview(page).locator('img')).toHaveCount(0);
+    });
+    test('a video is streamed to the preview, without reading or diffing it as text', async ({ page }) => {
+        // A tracked video with no line counts yet, as when the Git Controller has just opened.
+        await open(page, { changes: ['M  media/demo clip.mp4', 'M  a.txt'] }, { binaryFiles: { 'media/demo clip.mp4': 'AAAAIGZ0eXBpc29t' } });
+        await select(page, 'media/demo clip.mp4');
+        // These bytes are not a real video, so the player gives up, but only after loading it from the backend's file server.
+        await expect.poll(() => page.__fileRequests.map(request => request.path)).toContain('media/demo clip.mp4');
+        await expect(preview(page)).toContainText('video/mp4 - 12 Bytes');
+        expect(await calls(page, 'get_project_file')).not.toContainEqual({ filePath: 'media/demo clip.mp4' });
+        expect(await calls(page, 'get_git_file_diff')).not.toContainEqual(expect.objectContaining({ file: 'media/demo clip.mp4' }));
+        expect(await calls(page, 'get_project_file_size')).toContainEqual({ filePath: 'media/demo clip.mp4' });
+    });
+    test('a file too large to read as text is previewed instead, without a warning', async ({ page }) => {
+        await open(page, { changes: ['M  huge.txt', 'M  a.txt'] }, { files: { 'huge.txt': 'line one' } });
+        await onCommand(page, 'get_project_file', ({ filePath }) => {
+            if (filePath === 'huge.txt') throw 'Get Project File: File is too large to show as text (20 MB or more)';
+            return 'x';
+        });
+        await select(page, 'huge.txt');
+        await expect(preview(page)).toBeVisible();
+        await expect(preview(page)).toContainText('line one');
+        await expect(manager(page).locator('webui-alert[show]')).toHaveCount(0);
     });
     test('the preview has no download link', async ({ page }) => {
         await openWithImage(page, '??', [{ path: 'logo.png', additions: 0, deletions: 0, binary: true }]);
@@ -959,6 +980,9 @@ test.describe('plugin branch cards', () => {
         await expect(cards).toHaveCount(1);
         await expect(cards).toContainText('In Progress');
         await expect(cards).toContainText('Assigned to Sam Lee');
+        // The Git Controller has its own shadow DOM, which the page's plugin styles must still reach.
+        await expect(cards.locator('.plugin-badge')).toHaveCSS('background-color', /rgb/);
+        expect(await cards.locator('.plugin-badge').evaluate(el => getComputedStyle(el).borderRadius)).not.toBe('0px');
         await cards.getByText('PJ-3').click();
         await expect(page).toHaveURL(/\/plugin\/jira\/issue\?key=PJ-3$/);
         await expect(page.locator('app-plugin-page')).toHaveText('Issue page');

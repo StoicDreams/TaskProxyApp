@@ -9,8 +9,9 @@ const executablePath = process.env.PW_CHROMIUM_PATH || systemChromium;
 export default defineConfig({
     testDir: '.',
     testMatch: '**/*.capture.mjs',
-    // One at a time, so recordings are not starved of CPU and come out smooth.
-    workers: 1,
+    // A few at a time keeps a publish quick while leaving each recording enough CPU to come out smooth.
+    // Set CAPTURE_WORKERS to change it, such as 1 on a slow machine.
+    workers: parseInt(process.env.CAPTURE_WORKERS) || 3,
     retries: 1,
     timeout: 120000,
     reporter: [['list']],

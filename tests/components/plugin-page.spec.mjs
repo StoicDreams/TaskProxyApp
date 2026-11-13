@@ -150,7 +150,8 @@ test('host actions run in Task Proxy, not the plugin', async ({ page }) => {
     expect(await calls(page, 'plugin_host_action')).toEqual([{ id: 'test', action: { type: 'git.createBranch', name: 'P-1-fix' } }]);
     expect(await calls(page, 'plugin_action')).toEqual([]);
     await view.locator('webui-button', { hasText: 'Settings' }).click();
-    await expect(page).toHaveURL(/\/plugins\?plugin=test$/);
+    // The Plugins drawer opens on this plugin.
+    await expect(page.locator('webui-drawer.shared app-plugin-manager [data-plugin="test"]')).toHaveClass(/plugin-highlight/);
 });
 
 test('sections remember whether they were opened or closed', async ({ page }) => {
@@ -187,5 +188,6 @@ test("enabled plugins' pages are in the nav, except hidden ones", async ({ page 
     await expect(nav).not.toContainText('Off Plugin');
     await expect(nav.locator('[url="/plugin/test/home"]')).toHaveCount(1);
     await expect(nav.locator('[url="/plugin/test/item"]')).toHaveCount(0);
-    await expect(nav.locator('[url="/plugins"]')).toHaveCount(1);
+    // Plugins are managed from a header drawer, not a nav link.
+    await expect(nav.locator('[url="/plugins"]')).toHaveCount(0);
 });

@@ -19,7 +19,7 @@ Plugins add integrations, such as Jira, as WebAssembly that users install. Their
 - **Where:** plugins install per user in the app data folder, as `plugins/<id>/<version>/{plugin.json, plugin.wasm}`, with `plugins/plugins.json` listing which are installed and turned on (`registry.rs`). Opening a project never installs one.
 - **Catalog:** `https://cdn.myfi.ws/apps/task-proxy/plugins/catalog.json` lists published plugins (`catalog.rs`). Both files are signed with the app's update key, checked against the updater's public key in `tauri.conf.json`, and the signed manifest must ask for exactly the permissions the catalog shows.
 - **From a folder:** for plugins a user builds, unsigned, after a warning.
-- **Settings:** a plugin's declared variables are entered on the Plugins page and saved encrypted in `plugin-<id>-settings.enc`, apart from Task Proxy's variables, so project pages and scripts cannot read them. Secret values never return to the window.
+- **Settings:** a plugin's declared variables are entered in the Plugins drawer and saved encrypted in `plugin-<id>-settings.enc`, apart from Task Proxy's variables, so project pages and scripts cannot read them. Secret values never return to the window.
 - **Storage:** what a plugin saves is in `plugin-<id>.enc`. Removing a plugin deletes both files.
 
 ## In the UI
@@ -27,7 +27,7 @@ Plugins add integrations, such as Jira, as WebAssembly that users install. Their
 - **Routes:** `/plugin/<id>/<page>?params`. `app-page-handler` hands these to `app-plugin-page`.
 - **Nav:** enabled plugins' pages show in a second nav (`session-plugin-nav`), built by `refreshPluginNav` in `app.js` and never saved to `Navigation.json`. Pages marked `hidden` are left out.
 - **Sections:** whether each section is open is kept in `app-plugin-sections`.
-- **Plugins page:** `/plugins` (`d/plugins.md`, `wc/plugin-manager.js`), linked from Settings.
+- **Plugins drawer:** the puzzle piece button beside Icons & Emojis (`wc/plugins-drawer.js`) opens the shared right drawer with `app-plugin-manager`. A plugin's `openSettings` host action opens it on that plugin's settings.
 
 ## Changing the plugin API
 

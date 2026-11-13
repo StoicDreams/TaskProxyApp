@@ -6,6 +6,7 @@
  * - projects: the saved project list.
  * - files: { 'relative/path': 'contents' }, which get_project_file reads and save_project_file writes.
  * - binaryFiles: { 'relative/path': 'base64' }, files that are not text, which get_project_file cannot read.
+ *   files and binaryFiles are also served at the file server addresses the file preview loads (see openApp).
  * - data, variables, navigation, docs, currentPage: fields of the open project.
  * - appData, appVariables: saved global values and their definitions.
  * - scripts: what get_scripts returns.
@@ -103,9 +104,11 @@ function setup(state) {
                 if (filePath in files) return files[filePath];
                 throw 'Get Project File: File not found';
             },
-            get_project_file_base64: ({ filePath }) => {
-                if (filePath in binaryFiles) return binaryFiles[filePath];
-                if (filePath in files) return btoa(String.fromCharCode(...new TextEncoder().encode(files[filePath])));
+            // openApp serves this address from files and binaryFiles, as the backend's file server does.
+            get_file_server_base: () => 'http://files.localhost/token',
+            get_project_file_size: ({ filePath }) => {
+                if (filePath in binaryFiles) return atob(binaryFiles[filePath]).length;
+                if (filePath in files) return new TextEncoder().encode(files[filePath]).length;
                 throw 'Get Project File: File not found';
             },
             save_project_file: ({ filePath, contents }) => {

@@ -116,6 +116,10 @@ pub fn run() {
 
     // App setup. Tauri keeps only the last setup hook, so all setup belongs here.
     builder = builder.setup(|app| {
+        // Streams project files to the window for previews, so large files such as videos are never sent whole.
+        if let Err(err) = crate::services::file_server::start(app.handle().clone()) {
+            eprintln!("The file preview server could not start: {}", err);
+        }
         // Opt-in, because attaching the inspector during startup can hang the page in WebKitGTK.
         // Devtools can still be opened at any time from the page's context menu.
         #[cfg(debug_assertions)]
@@ -186,7 +190,8 @@ pub fn run() {
             services::projects::add_projects_multi,
             services::projects::get_project_data,
             services::projects::get_project_file,
-            services::projects::get_project_file_base64,
+            services::projects::get_project_file_size,
+            services::file_server::get_file_server_base,
             services::projects::get_projects,
             services::projects::load_projects,
             services::projects::rename_project,

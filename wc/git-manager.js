@@ -228,6 +228,8 @@
     const includeStates = { include: '1', exclude: '0', ignore: '2' };
     const includeTitle = 'Include: commit this file. Exclude: leave it out of this commit. Ignore: always leave it out.';
     const changeClasses = { Modify: 'modify', Add: 'add', Delete: 'delete', Conflict: 'conflict' };
+    /** Video and audio, which are never text, so they go straight to the preview. */
+    const mediaFile = /\.(mp4|m4v|mov|webm|mkv|avi|wmv|mpe?g|ogv|3gp|3g2|mp3|m4a|wav|flac|aac|ogg|oga|opus|weba|aiff?)$/i;
     /**
      * Waits for a Web UI element's definition. Elements in a template that has not joined the page yet
      * do not upgrade when the definition arrives, so upgrade them directly.
@@ -856,6 +858,17 @@
             await whenProxyReady();
             let data = { change: changeDetail.change, isCompare: false };
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
+            // Files that are not text are previewed as they are. Reading or diffing them as text first would load all
+            // of a large file, such as a video, into memory for nothing.
+            const knownBinary = !!t._lineStats?.get(changeDetail.fileName)?.binary || mediaFile.test(changeDetail.fileName);
+            if (knownBinary) {
+                if (changeDetail.change === 'Delete') {
+                    t._fileName.innerHTML = changeDetail.display;
+                    return;
+                }
+                await t.loadFilePreview(changeDetail, fullFilePath, request);
+                return;
+            }
             data.fileDiff = changeDetail.change !== 'Add' ? await webui.proxy.git.getFileDiff(changeDetail.repo, changeDetail.fileName, showError) : '';
             if (t._diffRequest !== request) return;
             data.isCompare = data.fileDiff !== undefined && changeDetail.change !== 'Add' && changeDetail.change !== 'Delete';
@@ -880,16 +893,13 @@
                     data.fileContent = '';
                 }
             } else {
-                // Images and other files that are not text are shown as they are, rather than compared line by line.
-                let isBinary = !!t._lineStats?.get(changeDetail.fileName)?.binary;
-                if (!isBinary) {
-                    let readError = null;
-                    data.fileContent = await webui.proxy.getProjectFile(fullFilePath, err => { readError = `${err}`; });
-                    if (t._diffRequest !== request) return;
-                    // Git can call a file text that is not valid UTF-8, and only reading it shows that.
-                    isBinary = data.fileContent === undefined && /UTF-8/i.test(readError || '');
-                    if (readError && !isBinary) showError(readError);
-                }
+                let readError = null;
+                data.fileContent = await webui.proxy.getProjectFile(fullFilePath, err => { readError = `${err}`; });
+                if (t._diffRequest !== request) return;
+                // Git can call a file text that is not valid UTF-8, and only reading it shows that. A file too large
+                // to read as text is previewed too, which loads only what it shows.
+                const isBinary = data.fileContent === undefined && /UTF-8|too large/i.test(readError || '');
+                if (readError && !isBinary) showError(readError);
                 if (isBinary) {
                     await t.loadFilePreview(changeDetail, fullFilePath, request);
                     return;
@@ -911,19 +921,23 @@
             t._previewPane.classList.toggle('showing-file', show);
             if (!show) t._filePreview.clear?.();
         },
+        /** Previews a file from its address, so the window only loads what it shows, a piece at a time for video. */
         async loadFilePreview(changeDetail, fullFilePath, request) {
             const t = this;
-            const base64 = await webui.proxy.getProjectFileBase64(fullFilePath, msg => t.setAlert(msg, 'warning'));
+            const showError = msg => t.setAlert(msg, 'warning');
+            const [size, url] = await Promise.all([
+                webui.proxy.getProjectFileSize(fullFilePath, showError),
+                webui.proxy.projectFileUrl(fullFilePath, showError),
+            ]);
             if (t._diffRequest !== request) return;
             t._fileName.innerHTML = changeDetail.display;
-            if (base64 === undefined) return;
+            if (size === undefined || url === undefined) return;
             await customElements.whenDefined('webui-file-preview');
             if (t._diffRequest !== request) return;
             if (typeof t._filePreview.setFile !== 'function') customElements.upgrade(t._filePreview);
-            const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
             t.showFilePreview(true);
             // The name's extension tells the preview what kind of file it is.
-            t._filePreview.setFile({ name: changeDetail.fileName.split('/').pop(), content: bytes });
+            t._filePreview.setFile({ name: changeDetail.fileName.split('/').pop(), url, size });
         },
         /** `excluded` lists files to keep out of the commit, which a refresh would otherwise include again. */
         async loadRepoChanges(excluded) {

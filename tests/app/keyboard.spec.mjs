@@ -4,7 +4,7 @@ import { test, expect, openApp, openPage, calls } from '../support/app.mjs';
 
 test('the header tools are named buttons that open their drawers with Enter', async ({ page }) => {
     await openApp(page);
-    for (const name of ['Icons & Emojis', 'Manage Variables', 'Terminals', 'Save Project & App Data']) {
+    for (const name of ['Plugins', 'Icons & Emojis', 'Manage Variables', 'Terminals', 'Save Project & App Data']) {
         await expect(page.getByRole('button', { name, exact: true })).toHaveCount(1);
     }
     await page.getByRole('button', { name: 'Manage Variables', exact: true }).focus();

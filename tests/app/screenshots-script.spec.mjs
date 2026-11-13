@@ -43,11 +43,11 @@ test.describe('screenshots.ps1', () => {
         return { ...pwsh(project.parent, join(project.dir, 'PowerShell', 'screenshots.ps1'), args, { SPEC_LOG: log }), ran: lines(log) };
     };
 
-    test('captures only the screenshots, into the TaskProxy website beside this repo', () => {
+    test('captures every image and video, into the TaskProxy website beside this repo', () => {
         const project = tempProject({ 'PowerShell/.keep': '', '../../Websites/TaskProxy/webapp/root_files/.keep': '' });
         const result = run(project);
         expect(result.code, result.output).toBe(0);
-        expect(result.ran).toEqual([`capture screenshots out=${join(project.parent, 'Websites', 'TaskProxy', 'webapp', 'root_files')}`]);
+        expect(result.ran).toEqual([`capture  out=${join(project.parent, 'Websites', 'TaskProxy', 'webapp', 'root_files')}`]);
         expect(result.output).toContain('Commit them');
     });
     test('without the website checkout it fails and says where it looked, before capturing anything', () => {
@@ -61,13 +61,13 @@ test.describe('screenshots.ps1', () => {
         const project = tempProject({ 'PowerShell/.keep': '' });
         const result = run(project, ['-OutputPath', join(project.parent, 'media')]);
         expect(result.code, result.output).toBe(0);
-        expect(result.ran).toEqual([`capture screenshots out=${join(project.parent, 'media')}`]);
+        expect(result.ran).toEqual([`capture  out=${join(project.parent, 'media')}`]);
     });
     test('a capture that fails makes the script fail', () => {
         const project = tempProject({ 'PowerShell/.keep': '' });
         const result = run(project, ['-OutputPath', join(project.parent, 'media')], 1);
         expect(result.code).not.toBe(0);
-        expect(result.output).toContain('Capturing the screenshots failed');
+        expect(result.output).toContain('Capturing the images and videos failed');
     });
 });
 
@@ -90,10 +90,12 @@ if ($env:PUBLISH_FAIL -eq '${name}') { exit 3 }
         expect(result.ran).toEqual(['IncrementVersion', 'Minify', 'screenshots']);
         expect(result.output).toContain('Ready to commit.');
     });
-    test('-SkipScreenshots leaves them out', () => {
-        const result = publish(['-SkipScreenshots']);
-        expect(result.code, result.output).toBe(0);
-        expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
+    test('-SkipScreenshots, or -SkipMedia, leaves them out', () => {
+        for (const flag of ['-SkipScreenshots', '-SkipMedia']) {
+            const result = publish([flag]);
+            expect(result.code, result.output).toBe(0);
+            expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
+        }
     });
     test('a failed step before them means no screenshots are taken', () => {
         const result = publish([], { PUBLISH_FAIL: 'Minify' });
@@ -103,7 +105,7 @@ if ($env:PUBLISH_FAIL -eq '${name}') { exit 3 }
     test('failed screenshots make Publish fail', () => {
         const result = publish([], { PUBLISH_FAIL: 'screenshots' });
         expect(result.code).not.toBe(0);
-        expect(result.output).toContain('Update the website screenshots failed');
+        expect(result.output).toContain('Update the website images and videos failed');
         expect(result.output).not.toContain('Ready to commit.');
     });
     test('a project without screenshots.ps1 publishes as before', () => {

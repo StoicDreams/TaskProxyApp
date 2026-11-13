@@ -53,6 +53,32 @@
         return `/plugin/${encodeURIComponent(plugin)}/${encodeURIComponent(page)}${search ? `?${search}` : ''}`;
     }
 
+    let pluginStyles = null;
+    /**
+     * The page's plugin rules from app.css, as a stylesheet a shadow root can adopt. A plugin card drawn inside a
+     * component with its own shadow DOM, such as the Git Controller, would otherwise get none of them.
+     */
+    function pluginStyleSheet() {
+        if (pluginStyles) return pluginStyles;
+        const rules = [];
+        for (const sheet of document.styleSheets) {
+            let list;
+            try { list = sheet.cssRules; } catch (_) { continue; }
+            for (const rule of list || []) {
+                if (rule.cssText.includes('.plugin-')) rules.push(rule.cssText);
+            }
+        }
+        pluginStyles = new CSSStyleSheet();
+        pluginStyles.replaceSync(rules.join('\n'));
+        return pluginStyles;
+    }
+    function adoptPluginStyles(el) {
+        const root = el.getRootNode();
+        if (!(root instanceof ShadowRoot)) return;
+        const sheet = pluginStyleSheet();
+        if (!root.adoptedStyleSheets.includes(sheet)) root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+    }
+
     webui.define("app-plugin-page", {
         constructor() {
             const t = this;
@@ -67,6 +93,7 @@
         connected() {
             const t = this;
             t.classList.add('plugin-ui');
+            adoptPluginStyles(t);
             t._queueLoad();
         },
         disconnected() {
@@ -198,6 +225,11 @@
                 case 'section': {
                     const details = el('details', { class: 'plugin-section' });
                     const summary = el('summary');
+                    // Toggled here, since a drawer stops the default action that opens a details element.
+                    summary.addEventListener('click', ev => {
+                        ev.preventDefault();
+                        details.open = !details.open;
+                    });
                     summary.appendChild(el('strong', {}, node.title));
                     if (node.subtitle) summary.appendChild(el('span', { class: 'plugin-muted' }, node.subtitle));
                     details.appendChild(summary);
@@ -364,7 +396,7 @@
             const t = this;
             switch (host.type) {
                 case 'openSettings':
-                    webui.navigateTo(`/plugins?plugin=${encodeURIComponent(t.plugin)}`);
+                    document.querySelector('app-plugins-drawer')?.open(t.plugin);
                     return;
                 case 'copy':
                     await navigator.clipboard.writeText(`${host.text ?? ''}`);

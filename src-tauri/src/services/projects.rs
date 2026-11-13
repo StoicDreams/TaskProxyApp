@@ -258,53 +258,55 @@ pub(crate) async fn get_project_file(
     result.map_err(|err| format!("{}", err))?
 }
 
+/// A project file's size in bytes, for the file preview, which streams the file itself from services/file_server.rs.
 #[tauri::command]
-pub(crate) async fn get_project_file_base64(
+pub(crate) async fn get_project_file_size(
     state: State<'_, CurrentProject>,
     file_path: String,
-) -> Result<String, String> {
+) -> Result<u64, String> {
     let root = current_project_path(&state, GET_FILE_CONTEXT)?;
-    let result = task::spawn_blocking(move || read_project_file_base64(&root, &file_path)).await;
+    let result = task::spawn_blocking(move || {
+        let file = project_file_path(&root, &file_path)
+            .map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))?;
+        fs::metadata(file)
+            .map(|metadata| metadata.len())
+            .map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))
+    })
+    .await;
     result.map_err(|err| format!("{}", err))?
 }
 
 const GET_FILE_CONTEXT: &str = "Get Project File";
-/// The largest file sent to the window for a preview, since all of it is sent at once as base64.
-const PREVIEW_MAX_BYTES: u64 = 50 * 1024 * 1024;
+/// The largest file read as text. Larger files, such as videos, would be read whole into memory first.
+pub(crate) const TEXT_MAX_BYTES: u64 = 20 * 1024 * 1024;
 const SAVE_FILE_CONTEXT: &str = "Save Project File Failed";
 
-/// The frontend treats this exact error as a page that has not been created yet.
-fn read_project_file(root: &Path, file_path: &str) -> Result<String, String> {
-    let relative =
-        safe_relative_path(file_path).map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))?;
-    let file = root.join(relative);
+/// An existing file inside the project, from a path relative to its root.
+pub(crate) fn project_file_path(root: &Path, file_path: &str) -> Result<PathBuf, String> {
+    let file = root.join(safe_relative_path(file_path)?);
     if !file.is_file() {
-        return Err(format!("{}: File not found", GET_FILE_CONTEXT));
+        return Err(String::from("File not found"));
     }
-    ensure_inside_root(root, &file).map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))?;
-    fs::read_to_string(file).map_err(|err| format!("Failed to load file: {}", err))
+    ensure_inside_root(root, &file)?;
+    Ok(file)
 }
 
-/// Reads any file, including images and other files that are not text, as base64 for a preview.
-fn read_project_file_base64(root: &Path, file_path: &str) -> Result<String, String> {
-    let error = |err: String| format!("{}: {}", GET_FILE_CONTEXT, err);
-    let relative = safe_relative_path(file_path).map_err(error)?;
-    let file = root.join(relative);
-    if !file.is_file() {
-        return Err(error(String::from("File not found")));
-    }
-    ensure_inside_root(root, &file).map_err(error)?;
+/// The frontend treats "File not found" as a page that has not been created yet, and "too large" or a UTF-8 error
+/// as a file to preview rather than show as text.
+fn read_project_file(root: &Path, file_path: &str) -> Result<String, String> {
+    let file = project_file_path(root, file_path)
+        .map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))?;
     let size = fs::metadata(&file)
-        .map_err(|err| error(err.to_string()))?
-        .len();
-    if size > PREVIEW_MAX_BYTES {
-        return Err(error(format!(
-            "File is too large to preview ({} MB or more)",
-            PREVIEW_MAX_BYTES / 1024 / 1024
-        )));
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    if size > TEXT_MAX_BYTES {
+        return Err(format!(
+            "{}: File is too large to show as text ({} MB or more)",
+            GET_FILE_CONTEXT,
+            TEXT_MAX_BYTES / 1024 / 1024
+        ));
     }
-    let bytes = fs::read(file).map_err(|err| error(err.to_string()))?;
-    Ok(general_purpose::STANDARD.encode(bytes))
+    fs::read_to_string(file).map_err(|err| format!("Failed to load file: {}", err))
 }
 
 fn write_project_file(root: &Path, file_path: &str, contents: &str) -> Result<(), String> {
@@ -975,19 +977,17 @@ mod tests {
     }
 
     #[test]
-    fn files_that_are_not_text_are_read_as_base64() {
+    fn files_too_large_for_text_are_refused_before_reading() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("image.png"), b"\x89PNG\xFF\x00").unwrap();
+        let file = fs::File::create(dir.path().join("movie.mp4")).unwrap();
+        file.set_len(TEXT_MAX_BYTES + 1).unwrap();
+        let err = read_project_file(dir.path(), "movie.mp4").unwrap_err();
+        assert!(err.contains("too large to show as text"), "{}", err);
+        assert!(project_file_path(dir.path(), "../outside.mp4").is_err());
         assert_eq!(
-            read_project_file_base64(dir.path(), "image.png").unwrap(),
-            general_purpose::STANDARD.encode(b"\x89PNG\xFF\x00")
+            project_file_path(dir.path(), "missing.mp4").unwrap_err(),
+            "File not found"
         );
-        assert!(
-            read_project_file_base64(dir.path(), "missing.png")
-                .unwrap_err()
-                .ends_with("File not found")
-        );
-        assert!(read_project_file_base64(dir.path(), "../outside.png").is_err());
     }
 
     #[test]

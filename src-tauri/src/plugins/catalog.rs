@@ -214,7 +214,8 @@ mod tests {
     fn the_permissions_shown_must_be_the_signed_ones() {
         let mut fewer = entry();
         fewer.permissions.hosts.clear();
-        let err = verify_package(&fewer, TEST_MANIFEST.as_bytes(), TEST_WASM, TEST_KEY).unwrap_err();
+        let err =
+            verify_package(&fewer, TEST_MANIFEST.as_bytes(), TEST_WASM, TEST_KEY).unwrap_err();
         assert!(err.contains("other permissions"), "{}", err);
     }
 

@@ -138,7 +138,7 @@
         const ci = ciStatusHtml(status?.ci);
         if (ci) shown.unshift(ci);
         if (shown.length === 0) return label;
-        const markers = `<span class="git-status" style="display:inline-flex;align-items:center;gap:0.8em;padding-right:0.3em;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
+        const markers = `<span class="git-status" style="display:inline-flex;align-items:center;gap:0;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
         return `<span class="git-option" style="display:flex;flex-wrap:wrap;align-items:center;column-gap:1em;flex:1 1 auto;min-width:0;">${label}${markers}</span>`;
     }
     const invokeGit = async (command, args = {}, errHandler = defaultErrHandler) => {
@@ -368,11 +368,21 @@
             let cleanPath = (filePath || '').replace(/\\/g, '/');
             return tauri.core.invoke('get_project_file', { filePath: cleanPath }).catch(errHandler);
         }
-        /** A file's bytes as base64, for previewing images and other files that are not text. */
-        getProjectFileBase64(filePath, errHandler) {
+        /** A file's size in bytes, for the file preview. */
+        getProjectFileSize(filePath, errHandler) {
             errHandler ??= defaultErrHandler;
             let cleanPath = (filePath || '').replace(/\\/g, '/');
-            return tauri.core.invoke('get_project_file_base64', { filePath: cleanPath }).catch(errHandler);
+            return tauri.core.invoke('get_project_file_size', { filePath: cleanPath }).catch(errHandler);
+        }
+        /**
+         * An address the window can load a project file from, for previews. The backend streams it, so a video
+         * loads a piece at a time instead of being sent whole (see services/file_server.rs).
+         */
+        async projectFileUrl(filePath, errHandler) {
+            errHandler ??= defaultErrHandler;
+            cache.fileServerBase ??= await tauri.core.invoke('get_file_server_base').catch(err => { errHandler(err); return undefined; });
+            if (!cache.fileServerBase) return undefined;
+            return `${cache.fileServerBase}/${encodeURIComponent((filePath || '').replace(/\\/g, '/'))}`;
         }
         searchProjectFiles(filter, display, errHandler) {
             errHandler ??= defaultErrHandler;
@@ -984,10 +994,10 @@
             }, syncQueueTimeout);
         }
     }
-    /** A nav folder for each enabled plugin, with its pages, then a link to manage plugins. */
+    /** A nav folder for each enabled plugin, with its pages. Plugins are managed from the header drawer. */
     function pluginNav(plugins) {
         const escape = text => webui.escapeForHTML(`${text ?? ''}`);
-        const routes = (plugins || [])
+        return (plugins || [])
             .filter(plugin => plugin.enabled && plugin.manifest)
             .map(({ manifest }) => ({
                 name: escape(manifest.name),
@@ -999,8 +1009,6 @@
                 }))
             }))
             .filter(route => route.children.length);
-        routes.push({ name: 'Plugins', icon: 'puzzle-piece', url: '/plugins' });
-        return routes;
     }
     async function refreshPluginNav() {
         const plugins = await webui.proxy.plugins.list(() => undefined);

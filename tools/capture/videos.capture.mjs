@@ -76,7 +76,9 @@ test('run a page script against another environment', async ({ page }) => {
             el.dispatchEvent(new Event('change', { bubbles: true }));
         });
         await caption(page, 'Switching to staging changes every value at once', 2600);
-        await clickOn(page, page.locator('app-var-manager'), { after: 1200 });
+        // Its own close button, since its header button opens it again, and it covers the page.
+        await clickOn(page, page.locator('webui-drawer.shared .drawer-close'), { after: 1200 });
+        await expect(page.locator('webui-drawer.shared')).not.toHaveClass(/open/);
         await caption(page, 'Run the script from the page');
         await clickOn(page, page.locator('webui-icon.run-script-btn').nth(1), { after: 1000 });
         await caption(page, 'Task Proxy shows what will run, with secrets masked, before it runs', 2400);

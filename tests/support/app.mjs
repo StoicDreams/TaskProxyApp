@@ -95,6 +95,7 @@ export const PROJECT = { name: 'Repo', path: '/repo' };
  */
 export async function openApp(page, state = {}, path = '/') {
     await installBackend(page, state);
+    await serveProjectFiles(page, state);
     // Opening a project reloads its page by going to _reloading and back. Record that it happened.
     await page.addInitScript(() => {
         const pushState = history.pushState;
@@ -156,6 +157,32 @@ export async function mount(page, html) {
         await Promise.all(tags.map(tag => customElements.whenDefined(tag)));
     }, { html, tags });
     return page.locator('#test-root');
+}
+
+/**
+ * Answers the addresses the file preview loads, as the backend's file_server.rs does, from the state's files and
+ * binaryFiles. Records each request's path and range in `page.__fileRequests`.
+ */
+function serveProjectFiles(page, state) {
+    page.__fileRequests = [];
+    return page.route('http://files.localhost/token/**', route => {
+        const request = route.request();
+        const path = decodeURIComponent(new URL(request.url()).pathname.replace('/token/', ''));
+        const range = request.headers().range;
+        page.__fileRequests.push({ path, range });
+        const binary = state.binaryFiles?.[path];
+        const text = state.files?.[path];
+        if (binary === undefined && text === undefined) return route.fulfill({ status: 404, body: 'File not found' });
+        const body = binary !== undefined ? Buffer.from(binary, 'base64') : Buffer.from(text);
+        const headers = { 'access-control-allow-origin': '*', 'accept-ranges': 'bytes' };
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range || '');
+        if (match) {
+            const start = match[1] ? parseInt(match[1]) : Math.max(0, body.length - parseInt(match[2]));
+            const end = match[1] && match[2] ? Math.min(parseInt(match[2]), body.length - 1) : body.length - 1;
+            return route.fulfill({ status: 206, body: body.subarray(start, end + 1), headers: { ...headers, 'content-range': `bytes ${start}-${end}/${body.length}` } });
+        }
+        return route.fulfill({ status: 200, body, headers });
+    });
 }
 
 /** A button in the open dialog. */

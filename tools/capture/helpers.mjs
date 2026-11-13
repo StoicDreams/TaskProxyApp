@@ -179,10 +179,12 @@ export async function shot(page, name, { locator, clip, fullPage, dir } = {}) {
 
 /**
  * Records the page from Chrome's screencast, which is far sharper than Playwright's built-in video,
- * and encodes it as H.264 MP4 with a WebP poster.
+ * and encodes it as H.264 MP4 with a WebP poster of its last frame. `dir` is the folder under OUT, which defaults
+ * to video.
  */
-export async function record(page, name, action, { width = 1280 } = {}) {
-    mkdirSync(videoDir, { recursive: true });
+export async function record(page, name, action, { width = 1280, dir } = {}) {
+    const folder = dir ? join(OUT, dir) : videoDir;
+    mkdirSync(folder, { recursive: true });
     const work = mkdtempSync(join(tmpdir(), 'tp-video-'));
     const cdp = await page.context().newCDPSession(page);
     const frames = [];
@@ -212,13 +214,30 @@ export async function record(page, name, action, { width = 1280 } = {}) {
     list.push(`file '${join(work, `f${String(frames.length - 1).padStart(5, '0')}.jpg`)}'`);
     const listFile = join(work, 'frames.txt');
     writeFileSync(listFile, list.join('\n'));
-    const mp4 = join(videoDir, `${name}.mp4`);
+    const mp4 = join(folder, `${name}.mp4`);
     ffmpeg(['-f', 'concat', '-safe', '0', '-i', listFile, '-vf', `fps=30,scale=${width}:-2:flags=lanczos,format=yuv420p`,
         '-c:v', 'libx264', '-preset', 'slow', '-crf', '24', '-movflags', '+faststart', '-an', mp4]);
     // The poster is the last frame, which shows the result of the steps.
-    ffmpeg(['-sseof', '-0.3', '-i', mp4, '-frames:v', '1', '-c:v', 'libwebp', '-quality', '85', join(videoDir, `${name}.webp`)]);
+    ffmpeg(['-sseof', '-0.3', '-i', mp4, '-frames:v', '1', '-c:v', 'libwebp', '-quality', '85', join(folder, `${name}.webp`)]);
     rmSync(work, { recursive: true, force: true });
     return mp4;
+}
+
+/**
+ * Records a short loop for a website, in place of a screenshot, showing an action from start to finish. It holds
+ * the first and last frames a moment, so the loop's restart is easy to follow, and its last frame is the poster.
+ * Saved as video/loops/<name>.mp4, or under `dir`.
+ */
+export async function loop(page, name, action, { dir = 'video/loops', width = 1280 } = {}) {
+    await page.evaluate(() => {
+        window.tooltipsEnabled = false;
+        document.querySelectorAll('.tooltip').forEach(el => { el.className = 'tooltip closed'; });
+    });
+    return record(page, name, async () => {
+        await page.waitForTimeout(700);
+        await action();
+        await page.waitForTimeout(1600);
+    }, { dir, width });
 }
 
 export function ensureDir(file) {

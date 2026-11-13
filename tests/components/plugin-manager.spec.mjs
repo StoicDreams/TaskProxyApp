@@ -17,11 +17,11 @@ const settings = {
     ],
 };
 
-async function openManager(page, state = {}, path = '/plugins') {
-    await openApp(page, { plugins: installed, pluginSettings: settings, currentPage: path, ...state }, path);
-    // The page before the project reload can still be leaving, with its own manager.
-    await expect(page.locator('app-plugin-manager')).toHaveCount(1);
-    const manager = page.locator('app-plugin-manager');
+/** Opens the Plugins drawer, on one plugin's settings when given its id. */
+async function openManager(page, state = {}, pluginId) {
+    await openApp(page, { plugins: installed, pluginSettings: settings, ...state });
+    await page.evaluate(id => document.querySelector('app-plugins-drawer').open(id), pluginId);
+    const manager = page.locator('webui-drawer.shared app-plugin-manager');
     await expect(manager.locator('webui-button', { hasText: 'Install from folder' })).toBeVisible();
     return manager;
 }
@@ -107,7 +107,7 @@ test('a plugin can be turned off and removed', async ({ page }) => {
 });
 
 test("a plugin's settings link opens its settings", async ({ page }) => {
-    const manager = await openManager(page, {}, '/plugins?plugin=jira');
+    const manager = await openManager(page, {}, 'jira');
     const card = manager.locator('[data-plugin="jira"]');
     await expect(card).toHaveClass(/plugin-highlight/);
     await expect(card.locator('webui-input-text[name="jira_site"]')).toBeVisible();

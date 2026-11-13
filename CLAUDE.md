@@ -22,12 +22,12 @@ npm test                         # UI tests against the source files (npm instal
 npm run test:min                 # UI tests against the .min.js files, as CI runs them
 npm run test:stress -- <spec>    # Run specs 10 times each under heavy parallel load, to find timing races
 npx playwright test -g "<name>"  # Run UI tests by name
-npm run capture                  # Regenerate the website's screenshots and videos (tools/capture/README.md)
-npm run capture -- plugin-screenshots   # Only the plugin screenshots, into img/plugins/
+npm run capture                  # Regenerate the website's loops and videos (tools/capture/README.md)
+npm run capture -- loops -g "<name>"    # One website loop
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
 pwsh ./PowerShell/Minify.ps1                      # Regenerate every .min.js and .min.css with esbuild
-pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, CI's tests, then the website screenshots (-SkipMinify, -SkipTests, -SkipScreenshots, -Version minor)
-pwsh ./PowerShell/screenshots.ps1                 # Update the TaskProxy.com screenshots in the website checkout beside this repo (-OutputPath)
+pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, CI's tests, then re-record the website's media (-SkipMinify, -SkipTests, -SkipScreenshots or -SkipMedia, -Version minor)
+pwsh ./PowerShell/screenshots.ps1                 # Re-record every TaskProxy.com loop and video in the website checkout beside this repo (-OutputPath)
 ```
 
 Rust tests are `#[cfg(test)]` modules in `src-tauri/src`. They need `dist/` to exist, because `generate_context!` embeds it, so run `trunk build` first on a fresh checkout. Git logic is tested against real temporary repositories, so keep it in plain functions that take a `Repository`, with the `#[tauri::command]` as a thin wrapper.
@@ -51,6 +51,10 @@ UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.m
 - **"Script error." with no file or line usually comes from a CDN component.** WebKit hides the details of these errors. Reproducing the action in Chromium shows the real message and stack.
 - **Dev and installed builds share a data folder.** They use the same `.enc` files and WebKit profile, so a bug that needs existing data may not reproduce on a fresh profile, and autosaves from both can overwrite each other.
 - **The main window label is `taskproxy`, not `main`.** This matters for `get_webview_window` and for `windows` in `src-tauri/capabilities/`.
+
+## Website media
+
+TaskProxy.com's media is recorded from this app by `tools/capture/` and regenerated on every publish, unless Publish runs with `-SkipScreenshots`. An image that promotes the app or documents an action is a short loop (`loops.capture.mjs`, shown with `<webui-loop-video>`), not a screenshot. When a UI change affects what a loop shows, update its steps in `loops.capture.mjs` too. Every Stoic Dreams website should automate its media the same way.
 
 ## Commit messages
 
@@ -83,7 +87,8 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 - Static routes are markdown files in `d/` (`/git-controller` is `d/git-controller.md`, `/` is `d/root.md`), and they embed components as HTML.
 - Unknown routes fall through to `<app-page-handler>` via `app-not-found-html` in `index.html`. It treats the path as a UUID and loads `.taskproxy/pages/<uuid>.md`. These user pages are split into `app-markdown-segment` editors, and fenced PowerShell blocks get injected variables and a run button.
 - Anything built from project files (pages, docs) can come from an untrusted repo, so it goes through `sanitizeProjectHtml` in `app.js` before reaching the DOM. Tauri's CSP in `tauri.conf.json` is the second layer, and it does not apply under `cargo tauri dev`, so check new external hosts or inline behavior in a release build.
-- Drawer components (`app-terminals`, `app-var-manager`, `app-icon-drawer`) rebuild the shared right drawer each time they open.
+- Drawer components (`app-terminals`, `app-var-manager`, `app-icon-drawer`, `app-plugins-drawer`) rebuild the shared right drawer each time they open.
+- **File previews stream from a local HTTP server** (`services/file_server.rs`) on 127.0.0.1, behind a random token, for files in the open project only. Never send file contents through a command as base64: a video froze and crashed the app that way. WebKitGTK will not play media from a custom URI scheme, which is why it is HTTP. Files over 20 MB are never read as text.
 - `root_files/worker.js` runs CPU work off the main thread through `webui.proxy.worker.send(name, data)`; git diff parsing lives there.
 
 ### Data scopes and persistence
@@ -125,7 +130,7 @@ Plugins such as Jira are WebAssembly in the separate TaskProxyPlugins repo (`../
 - **A plugin reaches nothing directly.** Every host call goes through `CallContext::handle` in `runtime.rs`, which checks it against the manifest. Add a host call there and in the SDK's `host.rs` together, and test the refusal with the test plugin.
 - **Plugin text is untrusted.** `plugin-page.js` builds with `textContent`, escapes anything a Web UI component puts in `innerHTML` (such as `label`), and sanitizes markdown.
 - **The test plugin's `.wasm` and signatures are committed** in `src-tauri/tests/fixtures/plugins/`. Rebuild them with `pwsh ./scripts/build.ps1 -UpdateAppFixtures` in TaskProxyPlugins, which also replaces the throwaway test key.
-- **Website screenshots of plugins** come from `tools/capture/plugin-screenshots.capture.mjs`, drawing screens the Jira plugin's demo wrote to `tools/capture/fixtures/jira/`.
+- **Website loops of plugins** come from the plugins section of `tools/capture/loops.capture.mjs`, drawing screens the Jira plugin's demo wrote to `tools/capture/fixtures/jira/`.
 
 ### Dogfooding
 

@@ -38,7 +38,7 @@ NOTE: Deleting your security key only removes the key from your OS' key store. Y
 
 <webui-page-segment>
 
-Plugins add integrations such as Jira. <webui-link href="/plugins" icon="puzzle-piece">Manage plugins</webui-link>
+Plugins add integrations such as Jira. Manage them from the puzzle piece button at the top, beside Icons & Emojis.
 
 </webui-page-segment>
 
