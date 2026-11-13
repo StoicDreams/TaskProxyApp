@@ -1,18 +1,185 @@
 {
   "children": [
     {
-      "fields": [
+      "buttons": [
         {
-          "help": "Jira Query Language, as in Jira's advanced search.",
-          "kind": "textarea",
-          "label": "JQL",
-          "name": "jql",
-          "value": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+          "action": {
+            "host": {
+              "key": "list-filters",
+              "type": "toggle"
+            },
+            "id": "",
+            "label": "Filters"
+          },
+          "theme": "secondary",
+          "type": "button"
+        },
+        {
+          "action": {
+            "host": {
+              "key": "list-jql",
+              "type": "toggle"
+            },
+            "id": "",
+            "label": "JQL"
+          },
+          "theme": "secondary",
+          "type": "button"
         }
       ],
+      "children": [
+        {
+          "children": [
+            {
+              "fields": [
+                {
+                  "kind": "multiselect",
+                  "label": "Project",
+                  "name": "f.project",
+                  "options": [
+                    {
+                      "label": "Atlas (ATL)",
+                      "value": "ATL"
+                    },
+                    {
+                      "label": "Operations (OPS)",
+                      "value": "OPS"
+                    }
+                  ],
+                  "value": []
+                },
+                {
+                  "kind": "multiselect",
+                  "label": "Type",
+                  "name": "f.type",
+                  "options": [
+                    {
+                      "label": "Bug",
+                      "value": "Bug"
+                    },
+                    {
+                      "label": "Epic",
+                      "value": "Epic"
+                    },
+                    {
+                      "label": "Story",
+                      "value": "Story"
+                    },
+                    {
+                      "label": "Task",
+                      "value": "Task"
+                    }
+                  ],
+                  "value": []
+                },
+                {
+                  "kind": "multiselect",
+                  "label": "Status",
+                  "name": "f.status",
+                  "options": [
+                    {
+                      "label": "Done",
+                      "value": "Done"
+                    },
+                    {
+                      "label": "In Progress",
+                      "value": "In Progress"
+                    },
+                    {
+                      "label": "In Review",
+                      "value": "In Review"
+                    },
+                    {
+                      "label": "To Do",
+                      "value": "To Do"
+                    }
+                  ],
+                  "value": []
+                },
+                {
+                  "kind": "multiselect",
+                  "label": "Priority",
+                  "name": "f.priority",
+                  "options": [
+                    {
+                      "label": "Highest",
+                      "value": "Highest"
+                    },
+                    {
+                      "label": "High",
+                      "value": "High"
+                    },
+                    {
+                      "label": "Medium",
+                      "value": "Medium"
+                    },
+                    {
+                      "label": "Low",
+                      "value": "Low"
+                    }
+                  ],
+                  "value": []
+                },
+                {
+                  "kind": "multiselect",
+                  "label": "Sprint",
+                  "name": "f.sprint",
+                  "options": [
+                    {
+                      "label": "Open sprints",
+                      "value": "open"
+                    },
+                    {
+                      "label": "Future sprints",
+                      "value": "future"
+                    },
+                    {
+                      "label": "No sprint",
+                      "value": "none"
+                    },
+                    {
+                      "label": "Atlas Sprint 14 (active)",
+                      "value": "14"
+                    },
+                    {
+                      "label": "Atlas Sprint 15",
+                      "value": "15"
+                    }
+                  ],
+                  "value": []
+                }
+              ],
+              "type": "inputs"
+            }
+          ],
+          "key": "list-filters",
+          "open": false,
+          "type": "panel"
+        },
+        {
+          "children": [
+            {
+              "fields": [
+                {
+                  "help": "Jira Query Language, as in Jira's advanced search. The filters are added to it.",
+                  "kind": "textarea",
+                  "label": "JQL",
+                  "name": "jql",
+                  "value": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+                }
+              ],
+              "type": "inputs"
+            }
+          ],
+          "key": "list-jql",
+          "open": false,
+          "type": "panel"
+        }
+      ],
+      "fields": [],
       "submit": {
         "icon": "magnifying-glass",
-        "id": "issues.search",
+        "id": "list.search",
         "label": "Search"
       },
       "type": "form"
@@ -21,21 +188,30 @@
       "children": [
         {
           "action": {
-            "id": "issues.search",
-            "label": "My open issues",
-            "params": {
-              "jql": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
-            }
+            "host": {
+              "key": "list-columns",
+              "type": "toggle"
+            },
+            "id": "",
+            "label": "Columns"
+          },
+          "theme": "secondary",
+          "type": "button"
+        },
+        {
+          "action": {
+            "id": "list.reset",
+            "label": "Clear the search"
           },
           "text": "My open issues",
           "type": "link"
         },
         {
           "action": {
-            "id": "issues.search",
+            "id": "list.apply",
             "label": "Sprint 14",
             "params": {
-              "jql": "sprint in openSprints() AND project = ATL"
+              "index": 0
             }
           },
           "text": "Sprint 14",
@@ -44,7 +220,7 @@
         {
           "action": {
             "confirm": "Delete the saved search 'Sprint 14'?",
-            "id": "issues.deleteFilter",
+            "id": "list.delete",
             "label": "Delete Sprint 14",
             "params": {
               "index": 0
@@ -55,10 +231,10 @@
         },
         {
           "action": {
-            "id": "issues.search",
+            "id": "list.apply",
             "label": "Bugs I reported",
             "params": {
-              "jql": "reporter = currentUser() AND type = Bug"
+              "index": 1
             }
           },
           "text": "Bugs I reported",
@@ -67,7 +243,7 @@
         {
           "action": {
             "confirm": "Delete the saved search 'Bugs I reported'?",
-            "id": "issues.deleteFilter",
+            "id": "list.delete",
             "label": "Delete Bugs I reported",
             "params": {
               "index": 1
@@ -80,6 +256,561 @@
       "type": "row"
     },
     {
+      "children": [
+        {
+          "muted": true,
+          "text": "Choose the columns for each issue, its parent, and its grandparent. They are saved for you.",
+          "type": "text"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "text": "Summary",
+                  "type": "text"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move right",
+                    "params": {
+                      "by": 1,
+                      "index": 0,
+                      "layer": 0
+                    }
+                  },
+                  "text": "→",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.remove",
+                    "label": "Remove",
+                    "params": {
+                      "index": 0,
+                      "layer": 0
+                    }
+                  },
+                  "text": "✕",
+                  "type": "link"
+                }
+              ],
+              "type": "row"
+            },
+            {
+              "children": [
+                {
+                  "text": "Status",
+                  "type": "text"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move left",
+                    "params": {
+                      "by": -1,
+                      "index": 1,
+                      "layer": 0
+                    }
+                  },
+                  "text": "←",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move right",
+                    "params": {
+                      "by": 1,
+                      "index": 1,
+                      "layer": 0
+                    }
+                  },
+                  "text": "→",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.remove",
+                    "label": "Remove",
+                    "params": {
+                      "index": 1,
+                      "layer": 0
+                    }
+                  },
+                  "text": "✕",
+                  "type": "link"
+                }
+              ],
+              "type": "row"
+            },
+            {
+              "children": [
+                {
+                  "text": "Priority",
+                  "type": "text"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move left",
+                    "params": {
+                      "by": -1,
+                      "index": 2,
+                      "layer": 0
+                    }
+                  },
+                  "text": "←",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move right",
+                    "params": {
+                      "by": 1,
+                      "index": 2,
+                      "layer": 0
+                    }
+                  },
+                  "text": "→",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.remove",
+                    "label": "Remove",
+                    "params": {
+                      "index": 2,
+                      "layer": 0
+                    }
+                  },
+                  "text": "✕",
+                  "type": "link"
+                }
+              ],
+              "type": "row"
+            },
+            {
+              "children": [
+                {
+                  "text": "Sprint",
+                  "type": "text"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move left",
+                    "params": {
+                      "by": -1,
+                      "index": 3,
+                      "layer": 0
+                    }
+                  },
+                  "text": "←",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move right",
+                    "params": {
+                      "by": 1,
+                      "index": 3,
+                      "layer": 0
+                    }
+                  },
+                  "text": "→",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.remove",
+                    "label": "Remove",
+                    "params": {
+                      "index": 3,
+                      "layer": 0
+                    }
+                  },
+                  "text": "✕",
+                  "type": "link"
+                }
+              ],
+              "type": "row"
+            },
+            {
+              "children": [
+                {
+                  "text": "Story points",
+                  "type": "text"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move left",
+                    "params": {
+                      "by": -1,
+                      "index": 4,
+                      "layer": 0
+                    }
+                  },
+                  "text": "←",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move right",
+                    "params": {
+                      "by": 1,
+                      "index": 4,
+                      "layer": 0
+                    }
+                  },
+                  "text": "→",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.remove",
+                    "label": "Remove",
+                    "params": {
+                      "index": 4,
+                      "layer": 0
+                    }
+                  },
+                  "text": "✕",
+                  "type": "link"
+                }
+              ],
+              "type": "row"
+            },
+            {
+              "children": [
+                {
+                  "text": "Comment",
+                  "type": "text"
+                },
+                {
+                  "action": {
+                    "id": "columns.move",
+                    "label": "Move left",
+                    "params": {
+                      "by": -1,
+                      "index": 5,
+                      "layer": 0
+                    }
+                  },
+                  "text": "←",
+                  "type": "link"
+                },
+                {
+                  "action": {
+                    "id": "columns.remove",
+                    "label": "Remove",
+                    "params": {
+                      "index": 5,
+                      "layer": 0
+                    }
+                  },
+                  "text": "✕",
+                  "type": "link"
+                }
+              ],
+              "type": "row"
+            },
+            {
+              "fields": [
+                {
+                  "kind": "select",
+                  "label": "Add a column",
+                  "name": "field",
+                  "options": [
+                    {
+                      "label": "Issue Type",
+                      "value": "issuetype"
+                    },
+                    {
+                      "label": "Assignee",
+                      "value": "assignee"
+                    },
+                    {
+                      "label": "Reporter",
+                      "value": "reporter"
+                    },
+                    {
+                      "label": "Description",
+                      "value": "description"
+                    },
+                    {
+                      "label": "Labels",
+                      "value": "labels"
+                    },
+                    {
+                      "label": "Due date",
+                      "value": "duedate"
+                    },
+                    {
+                      "label": "Created",
+                      "value": "created"
+                    },
+                    {
+                      "label": "Updated",
+                      "value": "updated"
+                    },
+                    {
+                      "label": "Parent",
+                      "value": "parent"
+                    },
+                    {
+                      "label": "Acceptance criteria",
+                      "value": "customfield_10050"
+                    }
+                  ],
+                  "value": null
+                }
+              ],
+              "submit": {
+                "id": "columns.add",
+                "label": "Add",
+                "params": {
+                  "layer": 0
+                }
+              },
+              "type": "form"
+            }
+          ],
+          "key": "columns-0",
+          "open": true,
+          "title": "Issue",
+          "type": "section"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "text": "Summary",
+                  "type": "text"
+                },
+                {
+                  "action": {
+                    "id": "columns.remove",
+                    "label": "Remove",
+                    "params": {
+                      "index": 0,
+                      "layer": 1
+                    }
+                  },
+                  "text": "✕",
+                  "type": "link"
+                }
+              ],
+              "type": "row"
+            },
+            {
+              "fields": [
+                {
+                  "kind": "select",
+                  "label": "Add a column",
+                  "name": "field",
+                  "options": [
+                    {
+                      "label": "Status",
+                      "value": "status"
+                    },
+                    {
+                      "label": "Issue Type",
+                      "value": "issuetype"
+                    },
+                    {
+                      "label": "Priority",
+                      "value": "priority"
+                    },
+                    {
+                      "label": "Assignee",
+                      "value": "assignee"
+                    },
+                    {
+                      "label": "Reporter",
+                      "value": "reporter"
+                    },
+                    {
+                      "label": "Description",
+                      "value": "description"
+                    },
+                    {
+                      "label": "Comment",
+                      "value": "comment"
+                    },
+                    {
+                      "label": "Labels",
+                      "value": "labels"
+                    },
+                    {
+                      "label": "Due date",
+                      "value": "duedate"
+                    },
+                    {
+                      "label": "Created",
+                      "value": "created"
+                    },
+                    {
+                      "label": "Updated",
+                      "value": "updated"
+                    },
+                    {
+                      "label": "Parent",
+                      "value": "parent"
+                    },
+                    {
+                      "label": "Story points",
+                      "value": "storyPoints"
+                    },
+                    {
+                      "label": "Sprint",
+                      "value": "sprint"
+                    },
+                    {
+                      "label": "Acceptance criteria",
+                      "value": "customfield_10050"
+                    }
+                  ],
+                  "value": null
+                }
+              ],
+              "submit": {
+                "id": "columns.add",
+                "label": "Add",
+                "params": {
+                  "layer": 1
+                }
+              },
+              "type": "form"
+            }
+          ],
+          "key": "columns-1",
+          "open": false,
+          "title": "Parent",
+          "type": "section"
+        },
+        {
+          "children": [
+            {
+              "muted": true,
+              "text": "No columns.",
+              "type": "text"
+            },
+            {
+              "fields": [
+                {
+                  "kind": "select",
+                  "label": "Add a column",
+                  "name": "field",
+                  "options": [
+                    {
+                      "label": "Summary",
+                      "value": "summary"
+                    },
+                    {
+                      "label": "Status",
+                      "value": "status"
+                    },
+                    {
+                      "label": "Issue Type",
+                      "value": "issuetype"
+                    },
+                    {
+                      "label": "Priority",
+                      "value": "priority"
+                    },
+                    {
+                      "label": "Assignee",
+                      "value": "assignee"
+                    },
+                    {
+                      "label": "Reporter",
+                      "value": "reporter"
+                    },
+                    {
+                      "label": "Description",
+                      "value": "description"
+                    },
+                    {
+                      "label": "Comment",
+                      "value": "comment"
+                    },
+                    {
+                      "label": "Labels",
+                      "value": "labels"
+                    },
+                    {
+                      "label": "Due date",
+                      "value": "duedate"
+                    },
+                    {
+                      "label": "Created",
+                      "value": "created"
+                    },
+                    {
+                      "label": "Updated",
+                      "value": "updated"
+                    },
+                    {
+                      "label": "Parent",
+                      "value": "parent"
+                    },
+                    {
+                      "label": "Story points",
+                      "value": "storyPoints"
+                    },
+                    {
+                      "label": "Sprint",
+                      "value": "sprint"
+                    },
+                    {
+                      "label": "Acceptance criteria",
+                      "value": "customfield_10050"
+                    }
+                  ],
+                  "value": null
+                }
+              ],
+              "submit": {
+                "id": "columns.add",
+                "label": "Add",
+                "params": {
+                  "layer": 2
+                }
+              },
+              "type": "form"
+            }
+          ],
+          "key": "columns-2",
+          "open": false,
+          "title": "Grandparent",
+          "type": "section"
+        },
+        {
+          "children": [
+            {
+              "action": {
+                "confirm": "Go back to the columns Task Proxy starts with?",
+                "id": "columns.reset",
+                "label": "Reset columns"
+              },
+              "type": "button"
+            }
+          ],
+          "type": "toolbar"
+        }
+      ],
+      "key": "list-columns",
+      "open": false,
+      "type": "panel"
+    },
+    {
       "fields": [
         {
           "kind": "text",
@@ -90,230 +821,755 @@
         }
       ],
       "submit": {
-        "id": "issues.saveFilter",
-        "label": "Save search",
-        "params": {
-          "jql": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
-        }
+        "id": "list.save",
+        "label": "Save search"
       },
       "type": "form"
     },
     {
       "columns": [
         "Key",
-        "Summary",
-        "Status",
-        "Priority",
-        "Sprint",
-        "Points",
-        "Updated"
+        {
+          "action": {
+            "id": "list.sort",
+            "label": "Sort by Summary",
+            "params": {
+              "field": "summary"
+            }
+          },
+          "label": "Summary"
+        },
+        {
+          "action": {
+            "id": "list.sort",
+            "label": "Sort by Status",
+            "params": {
+              "field": "status"
+            }
+          },
+          "label": "Status"
+        },
+        {
+          "action": {
+            "id": "list.sort",
+            "label": "Sort by Priority",
+            "params": {
+              "field": "priority"
+            }
+          },
+          "label": "Priority"
+        },
+        {
+          "action": {
+            "id": "list.sort",
+            "label": "Sort by Sprint",
+            "params": {
+              "field": "sprint"
+            }
+          },
+          "label": "Sprint"
+        },
+        {
+          "action": {
+            "id": "list.sort",
+            "label": "Sort by Story points",
+            "params": {
+              "field": "storyPoints"
+            }
+          },
+          "label": "Story points"
+        },
+        "Comment",
+        "Parent summary"
       ],
       "rows": [
         {
-          "action": {
-            "id": "open",
-            "label": "Open ATL-142",
-            "params": {
-              "key": "ATL-142"
-            }
-          },
           "cells": [
             {
-              "strong": true,
+              "action": {
+                "id": "open",
+                "label": "Open ATL-142",
+                "params": {
+                  "key": "ATL-142"
+                }
+              },
               "text": "ATL-142",
-              "type": "text"
+              "type": "link"
             },
             {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-142"
+                }
+              },
+              "max": 30,
               "text": "Show CI status on the dashboard",
-              "type": "text"
+              "tip": 100,
+              "type": "clip"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-142"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-142"
+                }
+              },
               "text": "In Progress",
               "theme": "info",
-              "type": "badge"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-142"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-142"
+                }
+              },
               "text": "High",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-142"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-142"
+                }
+              },
               "text": "Atlas Sprint 14",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-142"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-142"
+                }
+              },
               "text": "5",
-              "type": "text"
+              "type": "select"
             },
             {
-              "muted": true,
-              "text": "2026-11-11 16:42",
-              "type": "text"
+              "action": {
+                "id": "cell.comments",
+                "label": "Comments on ATL-142",
+                "params": {
+                  "key": "ATL-142"
+                }
+              },
+              "always": true,
+              "max": 30,
+              "text": "Sam Lee: Icons are in. Working on refreshing when a run finishes.",
+              "tip": 100,
+              "type": "clip"
+            },
+            {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-120"
+                }
+              },
+              "max": 30,
+              "text": "Release visibility for teams",
+              "tip": 100,
+              "type": "clip"
             }
           ]
         },
         {
-          "action": {
-            "id": "open",
-            "label": "Open ATL-139",
-            "params": {
-              "key": "ATL-139"
-            }
-          },
           "cells": [
             {
-              "strong": true,
+              "action": {
+                "id": "open",
+                "label": "Open ATL-139",
+                "params": {
+                  "key": "ATL-139"
+                }
+              },
               "text": "ATL-139",
-              "type": "text"
+              "type": "link"
             },
             {
-              "text": "Cache release notes between sessions",
-              "type": "text"
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-139"
+                }
+              },
+              "max": 30,
+              "text": "Cache release notes between sessions so the changelog opens instantly",
+              "tip": 100,
+              "type": "clip"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-139"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-139"
+                }
+              },
               "text": "In Review",
               "theme": "info",
-              "type": "badge"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-139"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-139"
+                }
+              },
               "text": "Medium",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-139"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-139"
+                }
+              },
               "text": "Atlas Sprint 14",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-139"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-139"
+                }
+              },
               "text": "3",
-              "type": "text"
+              "type": "select"
             },
             {
-              "muted": true,
-              "text": "2026-11-11 16:42",
-              "type": "text"
+              "action": {
+                "id": "cell.comments",
+                "label": "Comments on ATL-139",
+                "params": {
+                  "key": "ATL-139"
+                }
+              },
+              "always": true,
+              "max": 30,
+              "text": "Priya Shah: Looks good. One question about cache expiry in the review.",
+              "tip": 100,
+              "type": "clip"
+            },
+            {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-120"
+                }
+              },
+              "max": 30,
+              "text": "Release visibility for teams",
+              "tip": 100,
+              "type": "clip"
             }
           ]
         },
         {
-          "action": {
-            "id": "open",
-            "label": "Open ATL-151",
-            "params": {
-              "key": "ATL-151"
-            }
-          },
           "cells": [
             {
-              "strong": true,
+              "action": {
+                "id": "open",
+                "label": "Open ATL-151",
+                "params": {
+                  "key": "ATL-151"
+                }
+              },
               "text": "ATL-151",
-              "type": "text"
+              "type": "link"
             },
             {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-151"
+                }
+              },
+              "max": 30,
               "text": "Retry failed webhook deliveries",
-              "type": "text"
+              "tip": 100,
+              "type": "clip"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-151"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-151"
+                }
+              },
               "text": "To Do",
-              "type": "badge"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-151"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-151"
+                }
+              },
               "text": "High",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-151"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-151"
+                }
+              },
               "text": "Atlas Sprint 14",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-151"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-151"
+                }
+              },
               "text": "8",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.comments",
+                "label": "Comments on ATL-151",
+                "params": {
+                  "key": "ATL-151"
+                }
+              },
+              "always": true,
+              "max": 30,
               "muted": true,
-              "text": "2026-11-11 16:42",
-              "type": "text"
+              "text": "No comments",
+              "tip": 100,
+              "type": "clip"
+            },
+            {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-125"
+                }
+              },
+              "max": 30,
+              "text": "Reliable integrations",
+              "tip": 100,
+              "type": "clip"
             }
           ]
         },
         {
-          "action": {
-            "id": "open",
-            "label": "Open ATL-156",
-            "params": {
-              "key": "ATL-156"
-            }
-          },
           "cells": [
             {
-              "strong": true,
+              "action": {
+                "id": "open",
+                "label": "Open ATL-156",
+                "params": {
+                  "key": "ATL-156"
+                }
+              },
               "text": "ATL-156",
-              "type": "text"
+              "type": "link"
             },
             {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-156"
+                }
+              },
+              "max": 30,
               "text": "Add keyboard shortcut for search",
-              "type": "text"
+              "tip": 100,
+              "type": "clip"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-156"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-156"
+                }
+              },
               "text": "To Do",
-              "type": "badge"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-156"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-156"
+                }
+              },
               "text": "Low",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-156"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-156"
+                }
+              },
               "text": "Atlas Sprint 14",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-156"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-156"
+                }
+              },
               "text": "2",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.comments",
+                "label": "Comments on ATL-156",
+                "params": {
+                  "key": "ATL-156"
+                }
+              },
+              "always": true,
+              "max": 30,
               "muted": true,
-              "text": "2026-11-11 16:42",
-              "type": "text"
+              "text": "No comments",
+              "tip": 100,
+              "type": "clip"
+            },
+            {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-125"
+                }
+              },
+              "max": 30,
+              "text": "Reliable integrations",
+              "tip": 100,
+              "type": "clip"
             }
           ]
         },
         {
-          "action": {
-            "id": "open",
-            "label": "Open ATL-133",
-            "params": {
-              "key": "ATL-133"
-            }
-          },
           "cells": [
             {
-              "strong": true,
+              "action": {
+                "id": "open",
+                "label": "Open ATL-133",
+                "params": {
+                  "key": "ATL-133"
+                }
+              },
               "text": "ATL-133",
-              "type": "text"
+              "type": "link"
             },
             {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-133"
+                }
+              },
+              "max": 30,
               "text": "Fix timezone in deploy summaries",
-              "type": "text"
+              "tip": 100,
+              "type": "clip"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-133"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Status",
+                "params": {
+                  "field": "status",
+                  "key": "ATL-133"
+                }
+              },
               "text": "Done",
               "theme": "success",
-              "type": "badge"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-133"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Priority",
+                "params": {
+                  "field": "priority",
+                  "key": "ATL-133"
+                }
+              },
               "text": "Medium",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-133"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Sprint",
+                "params": {
+                  "field": "customfield_10020",
+                  "key": "ATL-133"
+                }
+              },
               "text": "Atlas Sprint 14",
-              "type": "text"
+              "type": "select"
             },
             {
+              "action": {
+                "id": "cell.set",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-133"
+                }
+              },
+              "options": {
+                "id": "cell.options",
+                "label": "Change Story points",
+                "params": {
+                  "field": "customfield_10016",
+                  "key": "ATL-133"
+                }
+              },
               "text": "3",
-              "type": "text"
+              "type": "select"
             },
             {
-              "muted": true,
-              "text": "2026-11-11 16:42",
-              "type": "text"
+              "action": {
+                "id": "cell.comments",
+                "label": "Comments on ATL-133",
+                "params": {
+                  "key": "ATL-133"
+                }
+              },
+              "always": true,
+              "max": 30,
+              "text": "Morgan Diaz: Verified on staging with a UTC+10 account.",
+              "tip": 100,
+              "type": "clip"
+            },
+            {
+              "action": {
+                "id": "cell.open",
+                "label": "Show Summary",
+                "params": {
+                  "field": "summary",
+                  "key": "ATL-120"
+                }
+              },
+              "max": 30,
+              "text": "Release visibility for teams",
+              "tip": 100,
+              "type": "clip"
             }
           ]
         }

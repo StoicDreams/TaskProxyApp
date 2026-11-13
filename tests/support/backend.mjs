@@ -26,9 +26,12 @@
  * - plugins: what plugin_list returns, as [{ id, version, enabled, signed, manifest }].
  * - pluginPages: { 'plugin/page': node } for plugin_render. A missing page fails, as an unknown page does.
  * - pluginActions: { 'plugin/action': result } for plugin_action. A missing action fails.
- * - pluginSettings: { plugin: [{ key, label, help, secret, isSet, value }] } for plugin_settings.
+ * - pluginSettings: { plugin: view } for plugin_settings, where view is { hasProject, signIn, settings, signIns }, or
+ *   just the open project's settings, [{ key, label, help, secret, isSet, value }], with a sign-in when any is set.
+ *   plugin_list's `configured` and `signIns` come from the plugin entry, so tests say how a plugin is set up.
  * - pickedFolder: the folder the folder picker returns, or null for none. pluginFolder: { manifest } it holds.
  * - branchCards: what plugin_branch_info returns, as [{ id, name, card }].
+ * - pluginNotifications: what plugin_notifications returns, as [{ id, name, items }].
  *
  * Other projects in `projects` start with empty data. Saved and synced project data is kept by path,
  * as the backend does, so switching projects and back returns what was saved.
@@ -64,7 +67,11 @@ function setup(state) {
         return JSON.parse(JSON.stringify(savedProjects[path]));
     };
     let plugins = JSON.parse(JSON.stringify(state.plugins || []));
-    const pluginSettings = JSON.parse(JSON.stringify(state.pluginSettings || {}));
+    const pluginSettings = Object.fromEntries(Object.entries(JSON.parse(JSON.stringify(state.pluginSettings || {}))).map(([id, view]) => {
+        if (!Array.isArray(view)) return [id, view];
+        const used = view.some(setting => setting.isSet);
+        return [id, { hasProject: true, signIn: used ? 'sign-in-1' : null, settings: view, signIns: used ? [{ id: 'sign-in-1', label: 'Saved sign-in', projects: 1 }] : [] }];
+    }));
     const listeners = {};
     const backend = {
         calls: [],
@@ -186,13 +193,31 @@ function setup(state) {
                 plugins.forEach(plugin => { if (plugin.id === id) plugin.enabled = enabled; });
                 return null;
             },
-            plugin_settings: ({ id }) => JSON.parse(JSON.stringify(pluginSettings[id] || [])),
-            // As the backend does: a key left out keeps its value, and an empty value removes it.
+            plugin_settings: ({ id }) => JSON.parse(JSON.stringify(pluginSettings[id] || { hasProject: true, signIn: null, settings: [], signIns: [] })),
+            // As the backend does: a key left out keeps its value, an empty value removes it, and a project with
+            // no sign-in gets a new one.
             plugin_save_settings: ({ id, values }) => {
-                (pluginSettings[id] || []).forEach(setting => {
+                const view = pluginSettings[id] ??= { hasProject: true, signIn: null, settings: [], signIns: [] };
+                if (!view.hasProject) throw 'Open a project to set it up for it.';
+                view.settings.forEach(setting => {
                     if (!(setting.key in values)) return;
                     setting.isSet = values[setting.key] !== '';
                     if (!setting.secret) setting.value = values[setting.key] || null;
+                });
+                if (!view.signIn) {
+                    view.signIn = `sign-in-${view.signIns.length + 1}`;
+                    view.signIns.push({ id: view.signIn, label: 'New sign-in', projects: 1 });
+                }
+                return null;
+            },
+            plugin_use_sign_in: ({ id, signIn }) => {
+                const view = pluginSettings[id];
+                if (!view) throw 'Not installed';
+                if (signIn && !view.signIns.some(choice => choice.id === signIn)) throw 'That sign-in no longer exists.';
+                view.signIn = signIn || null;
+                view.settings.forEach(setting => {
+                    setting.isSet = !!signIn;
+                    if (!setting.secret) setting.value = signIn ? `${setting.key} of ${signIn}` : null;
                 });
                 return null;
             },
@@ -207,6 +232,8 @@ function setup(state) {
                 return result;
             },
             plugin_branch_info: () => state.branchCards || [],
+            plugin_notifications: () => state.pluginNotifications || [],
+            plugin_notification_read: () => null,
             plugin_host_action: ({ action }) => action.type === 'git.createBranch' ? `Branch '${action.name}' created.` : '',
         },
     };

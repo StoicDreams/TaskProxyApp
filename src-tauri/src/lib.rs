@@ -140,6 +140,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             plugins::commands::plugin_action,
             plugins::commands::plugin_branch_info,
+            plugins::commands::plugin_notifications,
+            plugins::commands::plugin_notification_read,
             plugins::commands::plugin_catalog,
             plugins::commands::plugin_host_action,
             plugins::commands::plugin_inspect_folder,
@@ -149,6 +151,7 @@ pub fn run() {
             plugins::commands::plugin_remove,
             plugins::commands::plugin_render,
             plugins::commands::plugin_save_settings,
+            plugins::commands::plugin_use_sign_in,
             plugins::commands::plugin_settings,
             plugins::commands::plugin_set_enabled,
             appdata::delete_securitykey,

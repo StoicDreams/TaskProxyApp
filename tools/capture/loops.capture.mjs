@@ -261,8 +261,9 @@ test.describe('plugins', () => {
     /** Opens a Jira page, whose screens come from the plugin's demo, chosen by page and params. */
     const openJira = async (page, path, extra = {}) => {
         const screens = {
-            issues: fixture('issues'), issue: fixture('issue'), views: fixture('views'), editor: fixture('view-editor'),
-            added: fixture('view-editor-added'), create: fixture('create'),
+            issues: fixture('issues'), all: fixture('all'), issue: fixture('issue'), views: fixture('views'), editor: fixture('view-editor'),
+            added: fixture('view-editor-added'), create: fixture('create'), statusOptions: fixture('status-options'),
+            comments: fixture('comments'), mentions: fixture('mentions'),
         };
         await open(page, path, { plugins, ...extra });
         await page.evaluate(screens => {
@@ -275,7 +276,11 @@ test.describe('plugins', () => {
                 const go = (page, params = {}) => ({ navigate: { page, params } });
                 switch (request.action) {
                     case 'open': return go('issue', { key: request.params.key });
-                    case 'issues.search': return go('issues', { jql: request.params.jql });
+                    case 'list.search':
+                    case 'list.sort': return go(request.page, {});
+                    case 'cell.options': return screens.statusOptions;
+                    case 'cell.comments': return screens.comments;
+                    case 'users.suggest': return screens.mentions;
                     case 'views.edit': return go('views', { edit: '1' });
                     case 'draft.add': return { ui: screens.added };
                     default: return {};
@@ -291,17 +296,62 @@ test.describe('plugins', () => {
     test('my issues', async ({ page }) => {
         await openJira(page, '/plugin/jira/issues');
         await loop(page, 'my-issues', async () => {
-            await clickOn(page, view(page).locator('.plugin-link', { hasText: 'Sprint 14' }), { after: 1500 });
-            await moveTo(page, view(page).locator('tr.plugin-clickable').first());
+            const filters = view(page).locator('.plugin-form-actions webui-button', { hasText: 'Filters' });
+            await clickOn(page, filters, { after: 1400 });
+            await moveTo(page, view(page).locator('.plugin-panel[data-panel="list-filters"] .plugin-choices').nth(2));
+            await page.waitForTimeout(600);
+            await clickOn(page, filters, { after: 600 });
+            await moveTo(page, view(page).locator('th.plugin-sortable', { hasText: 'Priority' }));
             await page.waitForTimeout(500);
-            await moveTo(page, view(page).locator('tr.plugin-clickable').nth(2));
+            await moveTo(page, view(page).locator('tbody tr').nth(2).locator('.plugin-clip').first());
+            await page.waitForTimeout(700);
+        }, { dir });
+    });
+
+    test('change an issue in place', async ({ page }) => {
+        await openJira(page, '/plugin/jira/issues');
+        await loop(page, 'change-in-place', async () => {
+            await clickOn(page, view(page).locator('tbody tr').first().locator('.plugin-select').first(), { after: 900 });
+            await moveTo(page, page.locator('.plugin-menu [role="option"]').first());
+            await page.waitForTimeout(400);
+            await moveTo(page, page.locator('.plugin-menu [role="option"]').nth(1));
+            await page.waitForTimeout(500);
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(400);
+        }, { dir });
+    });
+
+    test('comments with mentions', async ({ page }) => {
+        await openJira(page, '/plugin/jira/issues');
+        await loop(page, 'comments', async () => {
+            await clickOn(page, view(page).locator('tbody tr').first().locator('.plugin-clip-open').last(), { after: 1000 });
+            const dialog = page.locator('dialog.plugin-dialog');
+            await expect(dialog).toContainText('Design is in the Release Visibility doc');
+            const box = dialog.locator('textarea[name="body"]');
+            await typeInto(page, box, 'Ready for review @pr');
+            await expect(page.locator('.plugin-menu [role="option"]').first()).toBeVisible();
+            await page.waitForTimeout(700);
+            await page.keyboard.press('Enter');
+            await typeInto(page, box, 'can you take a look?');
+            await page.waitForTimeout(900);
+            await clickOn(page, dialog.locator('.plugin-dialog-close'), { after: 500 });
+        }, { dir });
+    });
+
+    test('all issues', async ({ page }) => {
+        await openJira(page, '/plugin/jira/all');
+        await loop(page, 'all-issues', async () => {
+            await clickOn(page, view(page).locator('.plugin-form-actions webui-button', { hasText: 'Filters' }), { after: 1200 });
+            await moveTo(page, view(page).locator('.plugin-panel[data-panel="list-filters"] .plugin-choices').first());
+            await page.waitForTimeout(800);
+            await clickOn(page, view(page).locator('.plugin-form-actions webui-button', { hasText: 'Filters' }), { after: 600 });
         }, { dir });
     });
 
     test('an issue with its parents', async ({ page }) => {
         await openJira(page, '/plugin/jira/issues');
         await loop(page, 'issue', async () => {
-            await clickOn(page, view(page).locator('tr.plugin-clickable').first(), { after: 1600 });
+            await clickOn(page, view(page).locator('tbody tr').first().locator('.plugin-link', { hasText: 'ATL-142' }), { after: 1600 });
             await expect(view(page)).toContainText('ATL-142 Show CI status on the dashboard');
             await moveTo(page, view(page).locator('details.plugin-section summary').first());
         }, { dir });

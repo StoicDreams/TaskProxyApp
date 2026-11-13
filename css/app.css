@@ -175,6 +175,192 @@ header h1.editable-title:empty::before {
     background-color: color-mix(in srgb, currentColor 8%, transparent);
 }
 
+.plugin-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.plugin-table th.plugin-sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.plugin-table th.plugin-sortable:hover {
+    text-decoration: underline;
+}
+
+.plugin-clip,
+.plugin-table td > .plugin-link {
+    white-space: nowrap;
+}
+
+.plugin-clip-open {
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+}
+
+.plugin-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.1em 0.5em;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-radius: 1em;
+    font: inherit;
+    font-size: 0.9em;
+    white-space: nowrap;
+    color: inherit;
+    background-color: color-mix(in srgb, currentColor 6%, transparent);
+    cursor: pointer;
+}
+
+.plugin-select:hover,
+.plugin-select[aria-expanded="true"] {
+    border-color: currentColor;
+}
+
+.plugin-select[data-theme="info"] {
+    background-color: var(--color-info);
+    color: var(--color-info-offset);
+}
+
+.plugin-select[data-theme="success"] {
+    background-color: var(--color-success);
+    color: var(--color-success-offset);
+}
+
+.plugin-select-arrow {
+    font-size: 0.8em;
+    opacity: 0.7;
+}
+
+.plugin-menu {
+    position: fixed;
+    z-index: 2000;
+    overflow: auto;
+    padding: 0.25em 0;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-radius: 0.5em;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
+    background-color: var(--color-background, Canvas);
+    color: var(--color-background-offset, CanvasText);
+}
+
+.plugin-menu-filter {
+    display: block;
+    width: calc(100% - 1em);
+    margin: 0.25em 0.5em 0.4em;
+    box-sizing: border-box;
+    font: inherit;
+}
+
+.plugin-menu-item {
+    padding: 0.3em 0.8em;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.plugin-menu-item[hidden] {
+    display: none;
+}
+
+.plugin-menu-item[aria-selected="true"] {
+    font-weight: bold;
+}
+
+.plugin-menu-item:hover,
+.plugin-menu-item.active {
+    background-color: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.plugin-panel[hidden] {
+    display: none;
+}
+
+.plugin-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5em;
+    align-items: flex-start;
+}
+
+.plugin-inputs > .plugin-choices {
+    flex: 1 1 14em;
+}
+
+.plugin-inputs > webui-input-message {
+    flex: 1 1 100%;
+}
+
+.plugin-toggle.plugin-toggle-on {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+}
+
+.plugin-mention-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+}
+
+.plugin-mention-field > textarea,
+.plugin-mention-field > input {
+    font: inherit;
+    padding: 0.4em 0.5em;
+    border-radius: 0.4em;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    background-color: color-mix(in srgb, currentColor 4%, transparent);
+    color: inherit;
+    resize: vertical;
+}
+
+.plugin-notification {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15em;
+}
+
+.plugin-dialog {
+    width: min(48rem, 92vw);
+    max-height: 85vh;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-radius: 0.75em;
+    background-color: var(--color-background, Canvas);
+    color: var(--color-background-offset, CanvasText);
+}
+
+.plugin-dialog::backdrop {
+    background-color: rgb(0 0 0 / 0.45);
+}
+
+.plugin-dialog-header {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1em;
+    padding: 0.75em 1em;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    background-color: inherit;
+}
+
+.plugin-dialog-close {
+    font: inherit;
+    font-size: 1.1em;
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+}
+
+.plugin-dialog-body {
+    padding: 1em;
+}
+
 .plugin-section {
     border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     border-radius: 0.5em;

@@ -1,0 +1,89 @@
+{
+  "dialog": {
+    "title": "ATL-142 · Comments",
+    "ui": {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "strong": true,
+                      "text": "Priya Shah",
+                      "type": "text"
+                    },
+                    {
+                      "muted": true,
+                      "text": "2026-11-10 09:12",
+                      "type": "text"
+                    }
+                  ],
+                  "type": "row"
+                },
+                {
+                  "text": "Design is in the Release Visibility doc. The icon should match the repo list.",
+                  "type": "markdown"
+                }
+              ],
+              "type": "stack"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "strong": true,
+                      "text": "Sam Lee",
+                      "type": "text"
+                    },
+                    {
+                      "muted": true,
+                      "text": "2026-11-11 15:30",
+                      "type": "text"
+                    }
+                  ],
+                  "type": "row"
+                },
+                {
+                  "text": "Icons are in. Working on refreshing when a run finishes.",
+                  "type": "markdown"
+                }
+              ],
+              "type": "stack"
+            }
+          ],
+          "type": "stack"
+        },
+        {
+          "fields": [
+            {
+              "kind": "textarea",
+              "label": "Add a comment",
+              "name": "body",
+              "placeholder": "Markdown: **bold**, *italic*, `code`, lists, and links. Type @ to mention someone.",
+              "suggest": {
+                "id": "users.suggest",
+                "label": "Mention someone",
+                "params": {
+                  "key": "ATL-142"
+                }
+              },
+              "value": null
+            }
+          ],
+          "submit": {
+            "id": "cell.comment",
+            "label": "Comment",
+            "params": {
+              "key": "ATL-142"
+            }
+          },
+          "type": "form"
+        }
+      ],
+      "type": "stack"
+    }
+  }
+}

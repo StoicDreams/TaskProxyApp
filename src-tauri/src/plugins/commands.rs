@@ -2,6 +2,7 @@
 use super::manifest::PluginManifest;
 use super::registry::{InstalledPlugin, Registry};
 use super::runtime::{self, CallContext, NetworkHttp, PluginStore};
+use super::settings::PluginSettings;
 use crate::prelude::*;
 use crate::services::git_controller::{find_git_repos, selected_repo};
 use extism::CompiledPlugin;
@@ -18,6 +19,10 @@ pub(crate) struct PluginInfo {
     /// `None` when the installed files cannot be read, with `error` saying why.
     pub manifest: Option<PluginManifest>,
     pub error: Option<String>,
+    /// Whether the open project has every setting the plugin declares, so its pages can work.
+    pub configured: bool,
+    /// How many sign-ins the user has entered for it, in any project.
+    pub sign_ins: usize,
 }
 
 /// Each installed plugin compiled once, by id and version.
@@ -46,17 +51,40 @@ fn settings_file(id: &str) -> String {
     format!("plugin-{}-settings.enc", id)
 }
 
-async fn read_settings(app: &AppHandle, id: &str) -> Result<HashMap<String, String>, String> {
+/// The open project's id, which plugin settings are kept by.
+fn current_project(app: &AppHandle) -> Option<String> {
+    get_state_data::<ProjectData>(app)
+        .ok()
+        .map(|data| data.id)
+        .filter(|id| !id.is_empty())
+}
+
+async fn read_settings(app: &AppHandle, id: &str) -> Result<PluginSettings, String> {
     let bytes = get_data_from_local_storage(app, &settings_file(id)).await?;
-    if bytes.is_empty() {
-        return Ok(HashMap::new());
-    }
-    serde_json::from_slice(&bytes).map_err(|err| {
+    let project = current_project(app);
+    let settings = PluginSettings::read(&bytes, project.as_deref()).map_err(|err| {
         format!(
             "The settings for the plugin {} could not be read: {}",
             id, err
         )
-    })
+    })?;
+    // Settings from before projects had their own are saved in the new form at once, so they stay with the
+    // project that was open when they were first read.
+    if !bytes.is_empty() && !String::from_utf8_lossy(&bytes).contains("\"signIns\"") {
+        write_settings(app, id, &settings).await?;
+    }
+    Ok(settings)
+}
+
+async fn write_settings(
+    app: &AppHandle,
+    id: &str,
+    settings: &PluginSettings,
+) -> Result<(), String> {
+    let json = serde_json::to_string(settings).map_err(|err| err.to_string())?;
+    save_json_to_local_storage("plugin settings", app, json, &settings_file(id))
+        .await
+        .map(|_| ())
 }
 
 /// One declared variable, for the settings form. Secret values are never sent to the window.
@@ -80,6 +108,51 @@ fn info(registry: &Registry, installed: InstalledPlugin) -> PluginInfo {
         signed: installed.signed,
         error: manifest.as_ref().err().cloned(),
         manifest: manifest.ok(),
+        configured: false,
+        sign_ins: 0,
+    }
+}
+
+/// A sign-in to choose from, named by its values that are not secret, such as a site and an email.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SignInChoice {
+    pub id: String,
+    pub label: String,
+    /// How many projects use it.
+    pub projects: usize,
+}
+
+/// A plugin's settings for the open project, and the sign-ins it could use instead.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginSettingsView {
+    /// Whether a project is open, since settings belong to one.
+    pub has_project: bool,
+    /// The sign-in the open project uses, if any.
+    pub sign_in: Option<String>,
+    /// The settings of that sign-in, or empty ones for a new sign-in.
+    pub settings: Vec<PluginSetting>,
+    pub sign_ins: Vec<SignInChoice>,
+}
+
+fn sign_in_label(manifest: &PluginManifest, values: &HashMap<String, String>, id: &str) -> String {
+    let shown: Vec<String> = manifest
+        .permissions
+        .variables
+        .iter()
+        .filter(|variable| !variable.secret)
+        .filter_map(|variable| {
+            values
+                .get(&variable.key)
+                .filter(|value| !value.is_empty())
+                .cloned()
+        })
+        .collect();
+    if shown.is_empty() {
+        id.replace('-', " ")
+    } else {
+        shown.join(" · ")
     }
 }
 
@@ -220,7 +293,11 @@ async fn run(
     let compiled = compiled(&registry, &installed)?;
     let store = plugin_store(app, id).await?;
     let settings = read_settings(app, id).await?;
-    let variables = declared_variables(app, &manifest, &settings);
+    let variables = declared_variables(
+        app,
+        &manifest,
+        &settings.values(current_project(app).as_deref()),
+    );
     let app_handle = app.clone();
     let context_store = store.clone();
     let result = task::spawn_blocking(move || {
@@ -246,11 +323,26 @@ async fn run(
 #[tauri::command]
 pub(crate) async fn plugin_list(app_handle: AppHandle) -> Result<Vec<PluginInfo>, String> {
     let registry = registry(&app_handle)?;
-    Ok(registry
-        .list()
-        .into_iter()
-        .map(|installed| info(&registry, installed))
-        .collect())
+    let project = current_project(&app_handle);
+    let mut list = Vec::new();
+    for installed in registry.list() {
+        let mut plugin = info(&registry, installed);
+        if let Some(manifest) = &plugin.manifest {
+            let declared = &manifest.permissions.variables;
+            if declared.is_empty() {
+                plugin.configured = true;
+            } else if let Ok(settings) = read_settings(&app_handle, &plugin.id).await {
+                let values =
+                    declared_variables(&app_handle, manifest, &settings.values(project.as_deref()));
+                plugin.configured = declared
+                    .iter()
+                    .all(|variable| values.contains_key(&variable.key));
+                plugin.sign_ins = settings.sign_ins.len();
+            }
+        }
+        list.push(plugin);
+    }
+    Ok(list)
 }
 
 /// The plugins Stoic Dreams publishes, for the Plugins page to offer.
@@ -346,78 +438,99 @@ pub(crate) async fn plugin_set_enabled(
     registry(&app_handle)?.set_enabled(&id, enabled)
 }
 
-#[tauri::command]
-pub(crate) async fn plugin_settings(
-    app_handle: AppHandle,
-    id: String,
-) -> Result<Vec<PluginSetting>, String> {
-    let registry = registry(&app_handle)?;
+fn installed_manifest(registry: &Registry, id: &str) -> Result<PluginManifest, String> {
     let installed = registry
         .list()
         .into_iter()
         .find(|installed| installed.id == id)
         .ok_or_else(|| format!("The plugin {} is not installed.", id))?;
-    let manifest = registry.manifest(&installed)?;
-    let settings = read_settings(&app_handle, &id).await?;
-    Ok(manifest
-        .permissions
-        .variables
-        .iter()
-        .map(|variable| {
-            let value = settings
-                .get(&variable.key)
-                .filter(|value| !value.is_empty());
-            PluginSetting {
-                key: variable.key.clone(),
-                label: if variable.label.is_empty() {
-                    variable.key.clone()
-                } else {
-                    variable.label.clone()
-                },
-                help: variable.help.clone(),
-                secret: variable.secret,
-                is_set: value.is_some(),
-                value: if variable.secret {
-                    None
-                } else {
-                    value.cloned()
-                },
-            }
-        })
-        .collect())
+    registry.manifest(&installed)
 }
 
-/// Saves a plugin's settings. A key left out is kept as it was, and an empty value removes it, so a secret
-/// can be kept without the window ever holding it.
+/// The plugin's settings for the open project, and the sign-ins it could use instead. Secret values never leave.
+#[tauri::command]
+pub(crate) async fn plugin_settings(
+    app_handle: AppHandle,
+    id: String,
+) -> Result<PluginSettingsView, String> {
+    let manifest = installed_manifest(&registry(&app_handle)?, &id)?;
+    let settings = read_settings(&app_handle, &id).await?;
+    let project = current_project(&app_handle);
+    let current = settings.for_project(project.as_deref());
+    let values = current
+        .map(|(_, sign_in)| sign_in.values.clone())
+        .unwrap_or_default();
+    Ok(PluginSettingsView {
+        has_project: project.is_some(),
+        sign_in: current.map(|(id, _)| id.clone()),
+        settings: manifest
+            .permissions
+            .variables
+            .iter()
+            .map(|variable| {
+                let value = values.get(&variable.key).filter(|value| !value.is_empty());
+                PluginSetting {
+                    key: variable.key.clone(),
+                    label: if variable.label.is_empty() {
+                        variable.key.clone()
+                    } else {
+                        variable.label.clone()
+                    },
+                    help: variable.help.clone(),
+                    secret: variable.secret,
+                    is_set: value.is_some(),
+                    value: if variable.secret {
+                        None
+                    } else {
+                        value.cloned()
+                    },
+                }
+            })
+            .collect(),
+        sign_ins: settings
+            .sign_ins
+            .iter()
+            .map(|(id, sign_in)| SignInChoice {
+                id: id.clone(),
+                label: sign_in_label(&manifest, &sign_in.values, id),
+                projects: settings.uses(id),
+            })
+            .collect(),
+    })
+}
+
+/// Saves the open project's settings, to its own sign-in, or a new one when it has none. A key left out is kept
+/// as it was, and an empty value removes it, so a secret can be kept without the window ever holding it.
 #[tauri::command]
 pub(crate) async fn plugin_save_settings(
     app_handle: AppHandle,
     id: String,
     values: HashMap<String, String>,
 ) -> Result<(), String> {
-    let registry = registry(&app_handle)?;
-    let installed = registry
-        .list()
-        .into_iter()
-        .find(|installed| installed.id == id)
-        .ok_or_else(|| format!("The plugin {} is not installed.", id))?;
-    let manifest = registry.manifest(&installed)?;
+    let manifest = installed_manifest(&registry(&app_handle)?, &id)?;
     if let Some(key) = values.keys().find(|key| !manifest.declares_variable(key)) {
         return Err(format!("{} has no setting named {}.", manifest.name, key));
     }
+    let project = current_project(&app_handle)
+        .ok_or_else(|| format!("Open a project to set up {} for it.", manifest.name))?;
     let mut settings = read_settings(&app_handle, &id).await?;
-    for (key, value) in values {
-        let value = value.trim().to_string();
-        if value.is_empty() {
-            settings.remove(&key);
-        } else {
-            settings.insert(key, value);
-        }
-    }
-    let json = serde_json::to_string(&settings).map_err(|err| err.to_string())?;
-    save_json_to_local_storage("plugin settings", &app_handle, json, &settings_file(&id))
-        .await
-        .map(|_| ())
+    settings.save(&project, values);
+    write_settings(&app_handle, &id, &settings).await
+}
+
+/// Has the open project use one of the plugin's existing sign-ins, or none.
+#[tauri::command]
+pub(crate) async fn plugin_use_sign_in(
+    app_handle: AppHandle,
+    id: String,
+    sign_in: Option<String>,
+) -> Result<(), String> {
+    let manifest = installed_manifest(&registry(&app_handle)?, &id)?;
+    let project = current_project(&app_handle)
+        .ok_or_else(|| format!("Open a project to set up {} for it.", manifest.name))?;
+    let mut settings = read_settings(&app_handle, &id).await?;
+    settings.link(&project, sign_in.as_deref())?;
+    write_settings(&app_handle, &id, &settings).await
 }
 
 #[tauri::command]
@@ -485,6 +598,57 @@ pub(crate) async fn plugin_branch_info(app_handle: AppHandle) -> Result<Vec<Valu
         }
     }
     Ok(cards)
+}
+
+/// The notifications of each enabled plugin that contributes them, for the Alerts panel, as
+/// `[{ id, name, items }]`, or `{ id, name, error }` for a plugin that failed.
+#[tauri::command]
+pub(crate) async fn plugin_notifications(app_handle: AppHandle) -> Result<Vec<Value>, String> {
+    let registry = registry(&app_handle)?;
+    let mut lists = Vec::new();
+    for installed in registry
+        .list()
+        .into_iter()
+        .filter(|installed| installed.enabled)
+    {
+        let Ok(manifest) = registry.manifest(&installed) else {
+            continue;
+        };
+        if !manifest.contributes("notifications") {
+            continue;
+        }
+        match run(&app_handle, &installed.id, "notifications", json!({})).await {
+            Ok(items) => {
+                lists.push(json!({ "id": manifest.id, "name": manifest.name, "items": items }))
+            }
+            Err(err) => {
+                lists.push(json!({ "id": manifest.id, "name": manifest.name, "error": err }))
+            }
+        }
+    }
+    Ok(lists)
+}
+
+/// The user closed one of a plugin's notifications.
+#[tauri::command]
+pub(crate) async fn plugin_notification_read(
+    app_handle: AppHandle,
+    id: String,
+    notification: String,
+) -> Result<(), String> {
+    let registry = registry(&app_handle)?;
+    let manifest = registry.manifest(&registry.enabled(&id)?)?;
+    if !manifest.contributes("notifications") {
+        return Err(format!("{} has no notifications.", manifest.name));
+    }
+    run(
+        &app_handle,
+        &id,
+        "notification_read",
+        json!({ "id": notification }),
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Runs something a plugin's button asked Task Proxy to do, after the user clicked it.

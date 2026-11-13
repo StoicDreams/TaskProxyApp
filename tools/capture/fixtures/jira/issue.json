@@ -368,7 +368,14 @@
           "kind": "textarea",
           "label": "Add a comment",
           "name": "body",
-          "placeholder": "Markdown: **bold**, *italic*, `code`, lists, and links",
+          "placeholder": "Markdown: **bold**, *italic*, `code`, lists, and links. Type @ to mention someone.",
+          "suggest": {
+            "id": "users.suggest",
+            "label": "Mention someone",
+            "params": {
+              "key": "ATL-142"
+            }
+          },
           "value": null
         }
       ],

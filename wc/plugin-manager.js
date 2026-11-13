@@ -1,7 +1,7 @@
 /*
  * The plugin manager, in the Plugins drawer: installed plugins, what each may reach, their settings, and installing one from a folder.
- * Settings are saved encrypted for that plugin alone, so project pages and scripts cannot read them, and secret
- * values never come back to this window.
+ * Settings are kept per project by app-plugin-settings, saved encrypted for that plugin alone, so project pages and
+ * scripts cannot read them, and secret values never come back to this window.
  */
 "use strict"
 {
@@ -85,7 +85,7 @@
     }
 
     webui.define("app-plugin-manager", {
-        preload: 'app:plugin-page input-text button alert',
+        preload: 'app:plugin-page app:plugin-settings input-text button alert',
         constructor() {
             const t = this;
             t._load = 0;
@@ -204,67 +204,16 @@
             if (manifest && (manifest.permissions?.variables || []).length) {
                 const details = el('details', { class: 'plugin-section' });
                 const summary = toggles(el('summary'), details);
-                summary.appendChild(el('strong', {}, 'Settings'));
+                summary.appendChild(el('strong', {}, 'Settings for this project'));
                 details.appendChild(summary);
                 const body = el('webui-flex', { column: true, gap: 'var(--padding)', class: 'plugin-section-body' });
                 details.appendChild(body);
                 details.addEventListener('toggle', () => {
-                    if (details.open && !body.firstChild) t.renderSettings(plugin.id, body);
+                    if (details.open && !body.firstChild) body.appendChild(el('app-plugin-settings', { plugin: plugin.id }));
                 });
                 card.appendChild(details);
             }
             return card;
-        },
-        async renderSettings(id, body) {
-            const t = this;
-            const settings = await webui.proxy.plugins.settings(id);
-            if (!settings) return;
-            body.appendChild(el('p', { class: 'plugin-muted' },
-                'Saved encrypted, for this plugin only. A project or global variable with the same name takes its place, so a project can use other settings.'));
-            const inputs = settings.map(setting => {
-                const input = webui.create('webui-input-text', {
-                    label: escape(setting.label),
-                    name: setting.key,
-                    type: setting.secret ? 'password' : null,
-                    placeholder: setting.secret && setting.isSet ? 'Saved. Type a new value to replace it.' : null,
-                });
-                if (!setting.secret && setting.value) input.setAttribute('value', setting.value);
-                body.appendChild(input);
-                if (setting.help) body.appendChild(el('small', { class: 'plugin-muted' }, setting.help));
-                return { setting, input };
-            });
-            const save = button('Save settings', 'primary', 'save');
-            save.addEventListener('click', async () => {
-                const values = {};
-                inputs.forEach(({ setting, input }) => {
-                    const value = `${input.value ?? ''}`;
-                    // A secret left blank keeps its saved value.
-                    if (setting.secret && !value) return;
-                    values[setting.key] = value;
-                });
-                if (await webui.proxy.plugins.saveSettings(id, values)) {
-                    webui.alert('Settings saved.', 'success');
-                    body.replaceChildren();
-                    t.renderSettings(id, body);
-                }
-            });
-            const row = el('webui-flex', { wrap: true, gap: 'var(--padding)' });
-            row.appendChild(save);
-            const secrets = inputs.filter(({ setting }) => setting.secret && setting.isSet);
-            secrets.forEach(({ setting }) => {
-                const clear = button(`Clear ${setting.label}`, 'secondary', 'eraser');
-                clear.addEventListener('click', () => {
-                    webui.dialog.confirm(`Clear the saved ${escape(setting.label)}?`, async () => {
-                        if (await webui.proxy.plugins.saveSettings(id, { [setting.key]: '' })) {
-                            body.replaceChildren();
-                            t.renderSettings(id, body);
-                        }
-                        return true;
-                    });
-                });
-                row.appendChild(clear);
-            });
-            body.appendChild(row);
         },
         async installFromFolder() {
             const t = this;

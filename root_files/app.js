@@ -275,12 +275,19 @@
             settings: (id, err) => tauri.core.invoke('plugin_settings', { id }).catch(err ?? defaultErrHandler),
             /** Saves settings. A key left out keeps its value, and an empty value removes it. */
             saveSettings: (id, values, err) => tauri.core.invoke('plugin_save_settings', { id, values }).then(() => true).catch(err ?? defaultErrHandler),
+            /** Has the open project use one of the plugin's sign-ins, or none with null. */
+            useSignIn: (id, signIn, err) => tauri.core.invoke('plugin_use_sign_in', { id, signIn }).then(() => true).catch(err ?? defaultErrHandler),
             render: (id, page, params, err) => tauri.core.invoke('plugin_render', { id, page, params }).catch(err ?? defaultErrHandler),
             /** request is { page, pageParams, action, params, form }. */
             action: (id, request, err) => tauri.core.invoke('plugin_action', { id, request }).catch(err ?? defaultErrHandler),
             /** A card from each plugin that has something to say about the selected repo's branch. */
             branchInfo: () => tauri.core.invoke('plugin_branch_info').catch(() => undefined),
             hostAction: (id, action, err) => tauri.core.invoke('plugin_host_action', { id, action }).catch(err ?? defaultErrHandler),
+            /** Each plugin's notifications, as [{ id, name, items }] or [{ id, name, error }]. */
+            notifications: () => tauri.core.invoke('plugin_notifications').catch(() => undefined),
+            notificationRead: (id, notification, err) => tauri.core.invoke('plugin_notification_read', { id, notification }).then(() => true).catch(err ?? defaultErrHandler),
+            /** Shows plugins' notifications in the Alerts panel, and keeps them current. */
+            get alerts() { return pluginAlerts; },
             /** Rebuilds the Plugins part of the nav from the enabled plugins' pages. */
             refreshNav: refreshPluginNav,
         }
@@ -817,6 +824,7 @@
             webui.proxy.saveAppData();
         }
         refreshPluginNav();
+        pluginAlerts.start();
         webui.projectData = { navigation: [], data: {} };
         webui.projectData.data ??= {};
         webui.projectData.navigation ??= [];
@@ -974,6 +982,7 @@
         webui.projectData = { id: null, path: null, currentPage: '/', navigation: [], data: {} };
         webui.setData('app-nav-routes', []);
         await webui.proxy.closeProject();
+        refreshPluginNav();
         handlePagePath('/', true);
     }
     async function loadProject(project) {
@@ -996,6 +1005,8 @@
                 webui.projectData.path = webui.projectData.path.replace(/\\/g, '/');
             }
             webui.proxy.projects.setLoaded(!!webui.projectData.id);
+            // Plugins' settings belong to projects, so their pages and notifications change with the project.
+            refreshPluginNav();
             webui.proxy.terminalHelpers.runNextQueued();
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';
@@ -1038,26 +1049,162 @@
             }, syncQueueTimeout);
         }
     }
-    /** A nav folder for each enabled plugin, with its pages. Plugins are managed from the header drawer. */
+    /**
+     * A nav folder for each enabled plugin, with its pages. A plugin whose settings belong to projects shows only
+     * in projects set up for it. Once it is set up for any project, others show a link to set it up there too.
+     */
     function pluginNav(plugins) {
         const escape = text => webui.escapeForHTML(`${text ?? ''}`);
         return (plugins || [])
             .filter(plugin => plugin.enabled && plugin.manifest)
-            .map(({ manifest }) => ({
-                name: escape(manifest.name),
-                icon: manifest.icon || 'puzzle-piece',
-                children: (manifest.pages || []).filter(page => !page.hidden).map(page => ({
-                    name: escape(page.name),
-                    icon: page.icon || manifest.icon || 'puzzle-piece',
-                    url: `/plugin/${manifest.id}/${page.id}`
-                }))
-            }))
+            .map(plugin => {
+                const manifest = plugin.manifest;
+                const pages = (manifest.pages || []).filter(page => !page.hidden);
+                const route = { name: escape(manifest.name), icon: manifest.icon || 'puzzle-piece', children: [] };
+                // Older apps' backends do not say, so a plugin counts as set up unless it says it is not.
+                if (plugin.configured !== false) {
+                    route.children = pages.map(page => ({
+                        name: escape(page.name),
+                        icon: page.icon || manifest.icon || 'puzzle-piece',
+                        url: `/plugin/${manifest.id}/${page.id}`
+                    }));
+                } else if (plugin.signIns > 0 && pages.length) {
+                    route.children = [{ name: 'Set up for this project', icon: 'gear', url: `/plugin/${manifest.id}/${pages[0].id}` }];
+                }
+                return route;
+            })
             .filter(route => route.children.length);
     }
     async function refreshPluginNav() {
         const plugins = await webui.proxy.plugins.list(() => undefined);
         webui.setData('session-plugin-nav', pluginNav(plugins));
+        // A plugin turned on, off, or set up changes which notifications there are.
+        pluginAlerts.refresh();
         return plugins;
+    }
+    /**
+     * Plugins' notifications, in the Alerts panel the bell opens. They are asked for every two minutes. New ones
+     * pop up, except those found when the app starts, which only join the list. One the plugin stops listing, as
+     * when it was read in Jira, is removed, and closing one tells the plugin to mark it read.
+     */
+    const pluginAlerts = {
+        /** Each shown notification's alert, by `<plugin id>:<notification id>`. */
+        shown: new Map(),
+        timer: null,
+        started: false,
+        refreshing: null,
+        intervalMs: 2 * 60 * 1000,
+        start() {
+            if (this.timer) return;
+            this.timer = setInterval(() => this.refresh(), this.intervalMs);
+            this.refresh();
+        },
+        refresh() {
+            // One refresh at a time, so a notification is never shown twice.
+            if (this.refreshing) return this.refreshing;
+            this.refreshing = this._refresh().finally(() => { this.refreshing = null; });
+            return this.refreshing;
+        },
+        async _refresh() {
+            if (!webui.proxy?.plugins) return;
+            const lists = await webui.proxy.plugins.notifications();
+            if (!Array.isArray(lists)) return;
+            // The Alerts panel loads with the page, which can be after the first check when the app starts.
+            for (let tries = 0; typeof webui.addAlert !== 'function' && tries < 100; tries++) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            const popup = this.started;
+            this.started = true;
+            const listed = new Set(lists.map(list => list.id));
+            for (const list of lists) {
+                // A plugin that failed keeps what it showed, rather than clearing it until it works again.
+                if (list.error || !Array.isArray(list.items)) {
+                    if (list.error) console.warn(`${list.name} notifications`, list.error);
+                    continue;
+                }
+                const current = new Set();
+                for (const item of list.items) {
+                    if (!item?.id) continue;
+                    const key = `${list.id}:${item.id}`;
+                    current.add(key);
+                    if (this.shown.has(key)) continue;
+                    const theme = ['info', 'success', 'warning', 'danger'].includes(item.theme) ? item.theme : 'info';
+                    const alert = await webui.addAlert?.(notificationNode(list, item), theme, { popup });
+                    // Web UI alerts from before webui.addAlert cannot say when one is closed, so none are shown.
+                    if (!alert?.addEventListener) continue;
+                    this.shown.set(key, alert);
+                    alert.addEventListener('close', () => {
+                        if (this.shown.get(key) !== alert) return;
+                        this.shown.delete(key);
+                        webui.proxy.plugins.notificationRead(list.id, item.id);
+                    });
+                }
+                this.dismiss(key => key.startsWith(`${list.id}:`) && !current.has(key));
+            }
+            // A plugin turned off, or removed.
+            this.dismiss(key => !listed.has(key.slice(0, key.indexOf(':'))));
+        },
+        dismiss(gone) {
+            for (const [key, alert] of [...this.shown]) {
+                if (!gone(key)) continue;
+                this.shown.delete(key);
+                // Another notification may share this alert, when both read the same.
+                if (![...this.shown.values()].includes(alert)) alert.dismiss?.();
+            }
+        },
+    };
+    /** A notification as an alert's content: its title, when, and text, with its issues as links to their pages. */
+    function notificationNode(list, item) {
+        const box = document.createElement('div');
+        box.className = 'plugin-notification';
+        box.dataset.plugin = list.id;
+        const head = document.createElement('div');
+        const title = document.createElement('strong');
+        appendLinked(title, `${item.title ?? ''}`, list.id, item.links);
+        head.appendChild(title);
+        const meta = document.createElement('small');
+        meta.className = 'plugin-muted';
+        meta.textContent = [list.name, item.time].filter(Boolean).join(' · ');
+        box.append(head, meta);
+        if (item.text) {
+            const text = document.createElement('div');
+            appendLinked(text, `${item.text}`, list.id, item.links);
+            box.appendChild(text);
+        }
+        return box;
+    }
+    /** Adds text, with each place a link's text appears as a link to that plugin page. */
+    function appendLinked(parent, text, pluginId, links) {
+        const usable = (Array.isArray(links) ? links : []).filter(link => link?.text && link.page);
+        let rest = text;
+        while (rest) {
+            let found = null;
+            for (const link of usable) {
+                const at = rest.indexOf(link.text);
+                if (at !== -1 && (!found || at < found.at)) found = { at, link };
+            }
+            if (!found) {
+                parent.append(rest);
+                return;
+            }
+            if (found.at > 0) parent.append(rest.slice(0, found.at));
+            const anchor = makeButton(document.createElement('a'), `Open ${found.link.text}`);
+            anchor.className = 'plugin-link';
+            anchor.textContent = found.link.text;
+            anchor.addEventListener('click', ev => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const query = new URLSearchParams();
+                Object.entries(found.link.params || {}).forEach(([key, value]) => {
+                    if (value !== undefined && value !== null && value !== '') query.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+                });
+                const search = query.toString();
+                document.querySelector('webui-drawer.shared.open')?.classList.remove('open');
+                webui.navigateTo(`/plugin/${encodeURIComponent(pluginId)}/${encodeURIComponent(found.link.page)}${search ? `?${search}` : ''}`);
+            });
+            parent.appendChild(anchor);
+            rest = rest.slice(found.at + found.link.text.length);
+        }
     }
     async function syncAppData() {
         await tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
