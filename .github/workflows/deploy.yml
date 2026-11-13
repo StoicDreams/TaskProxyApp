@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.118
+  VERSION: 0.1.120
 
 jobs:
   test:
@@ -198,6 +198,12 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
+          # The AppImage bundles these GStreamer plugins (bundleMediaFramework in tauri.conf.json). Without them its
+          # GStreamer cannot load the user's own plugins, and previewing a video or audio file crashes the window.
+          sudo apt install gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-libav
       - name: install frontend dependencies
         run: |
           rustup target add wasm32-unknown-unknown

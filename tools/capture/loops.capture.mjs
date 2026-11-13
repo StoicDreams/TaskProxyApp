@@ -1,5 +1,5 @@
 import { test, expect, openApp } from '../../tests/support/app.mjs';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { demoState, PAGE_IDS, testRunOutput } from './demo.mjs';
 import { clickOn, loop, moveTo, parkMouse, prepare, scriptOutput, typeInto } from './helpers.mjs';
 
@@ -253,9 +253,22 @@ test.describe('tutorials', () => {
     });
 });
 
+/**
+ * The Jira plugin draws its own screens for made-up data, which its publish script writes into the TaskProxyPlugins
+ * checkout beside this repo (or TASKPROXY_PLUGINS_ROOT). They are read from there, so publishing a plugin never
+ * changes this repo.
+ */
+const pluginsRoot = process.env.TASKPROXY_PLUGINS_ROOT
+    ? new URL(`file://${process.env.TASKPROXY_PLUGINS_ROOT.replace(/\/?$/, '/')}`)
+    : new URL('../../../TaskProxyPlugins/', import.meta.url);
+const jiraRoot = new URL('plugins/jira/', pluginsRoot);
+const hasJira = existsSync(new URL('demo/issues.json', jiraRoot));
+
 test.describe('plugins', () => {
-    const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/jira/${name}.json`, import.meta.url), 'utf8'));
-    const jira = fixture('plugin');
+    test.skip(!hasJira, `The Jira demo screens were not found in ${jiraRoot.pathname}demo. Run scripts/publish.ps1 in TaskProxyPlugins, or set TASKPROXY_PLUGINS_ROOT.`);
+    const read = url => JSON.parse(readFileSync(url, 'utf8'));
+    const fixture = name => hasJira ? read(new URL(`demo/${name}.json`, jiraRoot)) : {};
+    const jira = hasJira ? read(new URL('plugin.json', jiraRoot)) : {};
     const plugins = [{ id: 'jira', version: jira.version, enabled: true, signed: true, manifest: jira }];
     const dir = 'video/loops/jira';
     /** Opens a Jira page, whose screens come from the plugin's demo, chosen by page and params. */

@@ -49,6 +49,7 @@ UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.m
 - **Released apps run the CDN loader, and only `cargo tauri dev` runs `root_files/loader.js`.** An inline script in `index.html` picks the local copy when the hostname is `127.0.0.1`, which a release never uses. The local copy exists to make loader fixes easy to try here. The source of truth is `cdn/webui/` in StoicDreams/MyFiCDN, so port fixes there and copy the files back to stay in sync.
 - **The Web UI framework changes underneath released apps.** `webui-*` components, the markdown parser, shared CSS, and now the loader all load from `cdn.myfi.ws` at runtime, and their source is not in this repo. A CDN deploy reaches installed apps without a release, so `app.js` and `wc/` must keep working with what is live there.
 - **"Script error." with no file or line usually comes from a CDN component.** WebKit hides the details of these errors. Reproducing the action in Chromium shows the real message and stack.
+- **The AppImage brings its own GStreamer, so it must bring the plugins too.** It bundles the build machine's GStreamer library, which cannot load the user's newer system plugins, and WebKit aborts the page (a gray window) when it finds no audio sink for a video. `bundleMediaFramework` in `tauri.conf.json` and the GStreamer packages the Linux build job installs keep media playable; `cargo tauri dev`, `.deb` and `.rpm` use the system's GStreamer and never show this.
 - **Dev and installed builds share a data folder.** They use the same `.enc` files and WebKit profile, so a bug that needs existing data may not reproduce on a fresh profile, and autosaves from both can overwrite each other.
 - **The main window label is `taskproxy`, not `main`.** This matters for `get_webview_window` and for `windows` in `src-tauri/capabilities/`.
 
@@ -129,8 +130,8 @@ Plugins such as Jira are WebAssembly in the separate TaskProxyPlugins repo (`../
 
 - **A plugin reaches nothing directly.** Every host call goes through `CallContext::handle` in `runtime.rs`, which checks it against the manifest. Add a host call there and in the SDK's `host.rs` together, and test the refusal with the test plugin.
 - **Plugin text is untrusted.** `plugin-page.js` builds with `textContent`, escapes anything a Web UI component puts in `innerHTML` (such as `label`), and sanitizes markdown.
-- **The test plugin's `.wasm` and signatures are committed** in `src-tauri/tests/fixtures/plugins/`. Rebuild them with `pwsh ./scripts/build.ps1 -UpdateAppFixtures` in TaskProxyPlugins, which also replaces the throwaway test key.
-- **Website loops of plugins** come from the plugins section of `tools/capture/loops.capture.mjs`, drawing screens the Jira plugin's demo wrote to `tools/capture/fixtures/jira/`.
+- **Plugin releases never need an app release,** and nothing in this repo should change when a plugin does. The test plugin's `.wasm` and signatures in `src-tauri/tests/fixtures/plugins/` change only when a test here needs a new host call: rebuild them with `pwsh ./scripts/build.ps1 -UpdateAppFixtures` in TaskProxyPlugins, which also replaces the throwaway test key.
+- **Website loops of plugins** come from the plugins section of `tools/capture/loops.capture.mjs`, drawing screens the Jira plugin's demo wrote to `plugins/jira/demo/` in the TaskProxyPlugins checkout beside this one (or `TASKPROXY_PLUGINS_ROOT`).
 
 ### Dogfooding
 

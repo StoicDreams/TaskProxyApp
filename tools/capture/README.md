@@ -22,7 +22,7 @@ npm run capture -- videos               # Only the narrated tutorial videos
 - `helpers.mjs`: `loop` and `record` for videos, `shot` for the rare still, and the pointer, captions, and simulated script output.
 - `loops.capture.mjs`: one loop per action shown on the site, named after the file it writes. Each ends on the result, which becomes its poster.
 - `videos.capture.mjs`: the longer tutorial videos, with captions.
-- `fixtures/jira/`: the Jira plugin's own screens for made-up data, which its loops draw. Refresh them with `cargo run -p taskproxy-jira --example demo -- ../TaskProxyApp/tools/capture/fixtures/jira` in TaskProxyPlugins, which its `scripts/publish.ps1` also does.
+- Jira's loops draw the plugin's own screens for made-up data, read from `plugins/jira/demo/` in the TaskProxyPlugins checkout beside this repo (or `TASKPROXY_PLUGINS_ROOT`), where its `scripts/publish.ps1` writes them. They are skipped, with a warning, when that checkout is missing. Nothing from a plugin release is committed here.
 
 Videos are recorded from Chrome's screencast rather than Playwright's built-in video, which is much blurrier, then encoded with ffmpeg. Playwright does not draw the mouse, so `prepare` adds a pointer and caption overlay to the page.
 
