@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, calls, dialogButton, onCommand } from '../support/app.mjs';
 
 const manifest = {
     id: 'test', name: 'Test Plugin', version: '0.1.0', apiVersion: 1, icon: 'flask',
@@ -76,6 +76,20 @@ test('a table row runs its action, and navigating opens the plugin page with par
     await expect(page.locator('app-plugin-page')).toContainText('The item');
     const [request] = await calls(page, 'plugin_action');
     expect(request).toEqual({ id: 'test', request: { page: 'home', pageParams: {}, action: 'open', params: { key: 'P-1' }, form: {} } });
+});
+
+test('navigating to the same page with new params loads it again, and Back returns to the first', async ({ page }) => {
+    await openPlugin(page, text('The list'), { pluginActions: { 'test/new': { navigate: { page: 'home', params: { edit: '1' } } } } });
+    await onCommand(page, 'plugin_render', ({ params }) => params.edit ? { type: 'heading', text: 'The editor', level: 2 } : {
+        type: 'button', action: { id: 'new', label: 'New' }, theme: 'primary',
+    });
+    await page.evaluate(() => document.querySelector('app-plugin-page').load());
+    await page.locator('app-plugin-page webui-button', { hasText: 'New' }).click();
+    await expect(page).toHaveURL(/\/plugin\/test\/home\?edit=1$/);
+    await expect(page.locator('app-plugin-page')).toContainText('The editor');
+    await page.goBack();
+    await expect(page).toHaveURL(/\/plugin\/test\/home$/);
+    await expect(page.locator('app-plugin-page webui-button', { hasText: 'New' })).toBeVisible();
 });
 
 test('a form sends its values, and a required field must be filled first', async ({ page }) => {

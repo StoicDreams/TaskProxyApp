@@ -94,9 +94,15 @@
             const t = this;
             t.classList.add('plugin-ui');
             adoptPluginStyles(t);
+            // Back and Forward between two addresses of this page change only the query, which does not load a page.
+            t._onPopState ??= () => {
+                if (!t._staticNode && location.pathname === t.path()) t.load();
+            };
+            window.addEventListener('popstate', t._onPopState);
             t._queueLoad();
         },
         disconnected() {
+            window.removeEventListener('popstate', this._onPopState);
             this._load++;
         },
         _queueLoad() {
@@ -107,6 +113,10 @@
                 t._queued = false;
                 if (t.plugin && t.page) t.load();
             });
+        },
+        /** The address of this page, without its query. */
+        path() {
+            return pageUrl(this.plugin, this.page);
         },
         /** Loads the page from the plugin and draws it. */
         async load() {
@@ -382,7 +392,11 @@
             const t = this;
             if (result.message?.text) webui.alert(escape(result.message.text), theme(result.message.theme) || 'info');
             if (result.navigate) {
-                webui.navigateTo(pageUrl(t.plugin, result.navigate.page, result.navigate.params));
+                const url = pageUrl(t.plugin, result.navigate.page, result.navigate.params);
+                const samePage = !t._staticNode && url.split('?')[0] === t.path();
+                webui.navigateTo(url);
+                // The app only loads a page when its path changes, so a new query for this page is loaded here.
+                if (samePage && location.pathname === t.path()) t.load();
                 return;
             }
             if (result.ui) {

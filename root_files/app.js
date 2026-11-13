@@ -303,11 +303,12 @@
         }
         terminal = {
             start: (id, scriptContent, args, inSeparateWindow, size) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow, cols: size?.cols ?? null, rows: size?.rows ?? null }),
-            kill: (id) => tauri.core.invoke('kill_script', { terminalId: id }),
+            // projectId names the project a script runs in, when it is not the open one, as in All Running.
+            kill: (id, projectId) => tauri.core.invoke('kill_script', projectId ? { terminalId: id, projectId } : { terminalId: id }),
             killAll: () => tauri.core.invoke('kill_all_scripts', {}),
             /** Typed input, including control keys such as Ctrl+C, for a script running in a terminal. */
-            write: (id, data) => tauri.core.invoke('write_terminal_input', { terminalId: id, data }),
-            resize: (id, cols, rows) => tauri.core.invoke('resize_terminal', { terminalId: id, cols, rows }),
+            write: (id, data, projectId) => tauri.core.invoke('write_terminal_input', projectId ? { terminalId: id, data, projectId } : { terminalId: id, data }),
+            resize: (id, cols, rows, projectId) => tauri.core.invoke('resize_terminal', projectId ? { terminalId: id, cols, rows, projectId } : { terminalId: id, cols, rows }),
             onData: (callback) => tauri.event.listen('terminal-data', callback),
             onFinished: (callback) => tauri.event.listen('terminal-finished', callback),
             getPowerShellStatus: (errHandler) => tauri.core.invoke('get_powershell_status', {}).catch(errHandler ?? defaultErrHandler),
@@ -555,18 +556,19 @@
              * Asks a running script to stop the way Ctrl+C does in a terminal, and forces it to end if it is
              * still running after a few seconds. Scripts without a terminal are ended straight away.
              */
-            async stopScript(id) {
-                const state = this.getState();
+            async stopScript(id, projectId) {
+                const state = this.getState(projectId);
                 const term = state.terminals[id];
                 if (!term || term.status !== 'Running') return;
                 // A stopped script failed, whatever exit code Ctrl+C or the kill leaves it with.
                 term.stopped = true;
-                const forceStop = () => webui.proxy.terminal.kill(id).catch(() => {
+                const other = this.otherProject(projectId);
+                const forceStop = () => webui.proxy.terminal.kill(id, other).catch(() => {
                     // The finished event updates the status and starts the next queued script.
-                    this._scriptFinished(id);
+                    this._scriptFinished(id, projectId);
                 });
                 if (!term.interactive) return forceStop();
-                const sent = await webui.proxy.terminal.write(id, '\x03').then(() => true, () => false);
+                const sent = await webui.proxy.terminal.write(id, '\x03', other).then(() => true, () => false);
                 if (!sent) return forceStop();
                 for (let waited = 0; waited < stopGraceMs && term.status === 'Running'; waited += 100) {
                     await webui.wait(100);
@@ -605,6 +607,9 @@
                 state.terminals[id].stopped = false;
                 state.terminals[id].startedAt = Date.now();
                 state.terminals[id].endedAt = null;
+                // So All Running can name the project a script runs in, after the user switches to another.
+                state.terminals[id].projectId = webui.projectData?.id ?? '';
+                state.terminals[id].projectName = webui.getData('app-current-project')?.display || webui.projectData?.path || '';
                 // Settles with the exit code when this run ends. Made before starting, since a short script can end first.
                 state.terminals[id].finished = new Promise(resolve => state.terminals[id]._resolveFinished = resolve);
                 if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
@@ -679,8 +684,8 @@
                 return `${pad(hours)}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
             },
             /** Forget a terminal and its output. Running scripts and the live terminal are kept. */
-            removeTerminal(id) {
-                let state = this.getState();
+            removeTerminal(id, projectId) {
+                let state = this.getState(projectId);
                 const term = state.terminals[id];
                 if (!term || term.isLive || term.status === 'Running') return false;
                 delete state.terminals[id];
@@ -710,35 +715,74 @@
                     this._scriptFinished(data.terminalId, data.projectId, data.code);
                 });
             },
-            async getDropdownOptions(state, showAll) {
-                let options = [];
-                const liveTerm = state.terminals['live'];
-                options.push({ id: 'live', value: 'live', display: `Live (${liveTerm.status})` });
-                let showPageScripts = webui.getData('app-terminals-page-scripts') === true || webui.getData('app-terminals-page-scripts') === 'true';
-                if (showAll) {
+            /**
+             * The Terminal Manager's views, for its switch: the live terminal, saved scripts, this project's page
+             * scripts, what is running in this project, and what is running in every project.
+             */
+            filters: ['Live', 'Saved', 'Page', 'Running', 'All Running'],
+            /** The views that list running scripts, and that a run opens the Terminal Manager on. */
+            runningFilters: ['Running', 'All Running'],
+            /** The project id to send with a terminal command, which is only needed for a project that is not open. */
+            otherProject(projectId) {
+                return projectId && projectId !== (webui.projectData?.id ?? '') ? projectId : undefined;
+            },
+            /** A dropdown value for a terminal: its id, or for another project's terminal, `<project id>::<id>`. */
+            terminalValue(id, projectId) {
+                return this.otherProject(projectId) ? `${projectId}::${id}` : id;
+            },
+            /** A dropdown value as `{ id, projectId }`, where projectId is undefined for the open project. */
+            parseTerminalValue(value) {
+                const at = `${value ?? ''}`.indexOf('::');
+                if (at === -1) return { id: value, projectId: undefined };
+                return { id: value.substring(at + 2), projectId: value.substring(0, at) };
+            },
+            /**
+             * The Terminal Manager's script list for one of its `filters`. Live has none, since it is the live terminal.
+             * In the running views, `watching`, as `{ id, projectId }`, stays listed after it finishes, so a script being
+             * watched does not vanish from the list the moment it ends.
+             */
+            async getDropdownOptions(state, filter, watching) {
+                const options = [];
+                const add = (id, display, projectId) => {
+                    const value = this.terminalValue(id, projectId);
+                    if (!options.some(option => option.value === value)) options.push({ id: value, value, display });
+                };
+                const nameOf = (term, projectId) => {
+                    const name = term.id === 'live' ? 'Live Command' : term.name;
+                    return this.otherProject(projectId) ? `${term.projectName || 'Another project'}: ${name}` : name;
+                };
+                const isWatched = (term, projectId) => watching?.id === term.id
+                    && (this.otherProject(watching.projectId) ?? '') === (this.otherProject(projectId) ?? '');
+                const listed = (term, projectId) => term.status === 'Running' || isWatched(term, projectId);
+                if (filter === 'Saved') {
                     state.allScripts = await webui.proxy.getScripts() || [];
                     state.allScripts.forEach(path => {
                         if (path.indexOf('taskproxy_tmp_') !== -1) return;
-                        const term = state.terminals[path];
-                        const status = term ? term.status : 'Ready';
-                        options.push({ id: path, value: path, display: `${path} (${status})` });
+                        add(path, `${path} (${state.terminals[path]?.status ?? 'Ready'})`);
                     });
-                }
-                Object.values(state.terminals).forEach(term => {
-                    if (term.id === 'live') return;
-                    if (term.isPageScript && !showPageScripts && state.activeId !== term.id) return;
-                    if (!options.find(o => o.id === term.id)) {
-                        options.push({ id: term.id, value: term.id, display: `${term.name} (${term.status})` });
+                } else if (filter === 'Page') {
+                    Object.values(state.terminals).forEach(term => {
+                        if (term.isPageScript) add(term.id, `${term.name} (${term.status})`);
+                    });
+                } else if (filter === 'Running') {
+                    Object.values(state.terminals).forEach(term => {
+                        if (listed(term)) add(term.id, `${nameOf(term)} (${term.status})`);
+                    });
+                } else if (filter === 'All Running') {
+                    for (const [projectId, projectState] of terminalStates) {
+                        Object.values(projectState.terminals).forEach(term => {
+                            if (listed(term, projectId)) add(term.id, `${nameOf(term, projectId)} (${term.status})`, projectId);
+                        });
                     }
-                });
+                }
                 return options;
             },
-            clearOutput(id) {
-                let state = this.getState();
+            clearOutput(id, projectId) {
+                let state = this.getState(projectId);
                 if (state.terminals[id]) {
                     state.terminals[id].output = [];
                     state.terminals[id].outputSize = 0;
-                    webui.setData('app-terminal-cleared', { terminalId: id, tick: Date.now() });
+                    webui.setData('app-terminal-cleared', { terminalId: id, projectId: this.otherProject(projectId), tick: Date.now() });
                 }
             }
         }

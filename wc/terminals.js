@@ -30,12 +30,19 @@
             });
         },
         disconnected() { },
-        openDrawer() {
+        /**
+         * Opens the Terminal Manager. `run` is set when a script was just started, which opens it on a running view
+         * unless one is already chosen, so the script shows.
+         */
+        openDrawer({ run = false } = {}) {
             const t = this;
             let el = document.querySelector(t.drawer);
             if (!el) {
                 webui.alert('Drawer not found!');
                 return;
+            }
+            if (run && !webui.proxy.terminalHelpers.runningFilters.includes(t.filter())) {
+                t.setFilter('Running');
             }
             if (el.classList.contains('open')) {
                 el.classList.remove('open');
@@ -49,9 +56,19 @@
             // A drawer's title, not a second banner for the page.
             header.setAttribute('role', 'heading');
             header.setAttribute('aria-level', '2');
-            header.innerHTML = 'Terminal Manager';
-            header.style.width = '2000px';
-            header.style.maxWidth = '100%';
+            header.style.alignItems = 'center';
+            header.innerHTML = `<span>Terminal Manager</span>
+<webui-switch id="term-filter" style="margin-left: auto;" label="Show scripts" title="Live: the live terminal. Saved: the scripts saved in this project. Page: the scripts run from this project's pages. Running: what is running in this project. All Running: what is running in every project."></webui-switch>`;
+            t._filterSwitch = header.querySelector('#term-filter');
+            customElements.whenDefined('webui-switch').then(() => {
+                if (typeof t._filterSwitch.setOptions !== 'function') customElements.upgrade(t._filterSwitch);
+                t._filterSwitch.setOptions(webui.proxy.terminalHelpers.filters);
+                t._filterSwitch.setValue(t.filter());
+            });
+            t._filterSwitch.addEventListener('change', () => {
+                webui.setData('app-terminals-filter', t._filterSwitch.value);
+                t.refreshDropdown();
+            });
             el.appendChild(header);
             el.appendChild(t.getBodyContent());
             setTimeout(() => {
@@ -71,26 +88,24 @@
             container.style.boxSizing = 'border-box';
             container.innerHTML = `
 <div id="term-content-wrapper" style="display:none; flex-direction:column; gap:var(--padding); height:100%;">
-    <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="center">
-        <webui-dropdown label="Script" id="term-dropdown"></webui-dropdown>
-        <webui-toggle-icon id="term-page-scripts-toggle" data-bind="app-terminals-page-scripts" data-default="app-terminals-page-scripts:true" label="Page" title="Show Activated Page Scripts" theme-on="primary"></webui-toggle-icon>
-        <webui-toggle-icon id="term-filter-toggle" data-bind="app-terminals-all-scripts" label="All" title="Show All Scripts" theme-on="primary"></webui-toggle-icon>
-    </webui-grid>
     <webui-flex gap="0.5rem" align="center" wrap="wrap">
-        <webui-button id="btn-kill" theme="warning" label="Stop" title="Stop the script the way Ctrl+C does, and force it to end if it is still running after a few seconds"></webui-button>
+        <webui-dropdown label="Script" id="term-dropdown" style="flex: 1 1 15em;"></webui-dropdown>
         <webui-button id="btn-kill-all" theme="danger" label="Kill All" title="End every running script now"></webui-button>
         <webui-button id="btn-remove-script" theme="secondary" label="Remove" title="Remove this finished page script from the list"></webui-button>
         <webui-button id="btn-remove-finished" theme="secondary" label="Remove Finished Page Scripts"></webui-button>
-        <webui-button id="btn-select-all" theme="secondary" label="Select All" title="Select all of this terminal's output and copy it to the clipboard" style="margin-left: auto;"></webui-button>
-        <webui-button id="btn-clear" theme="secondary" label="Clear Output"></webui-button>
     </webui-flex>
     <!-- The script scrolls when it is long, so the terminal below always keeps its space. -->
     <webui-flex column style="flex: 0 1 auto; min-height: 120px; overflow: auto;">
-        <label style="font-weight: bold; margin-bottom: 0.25rem;">Script Content:</label>
-        <app-script-runner id="term-runner" style="min-height: 120px;"></app-script-runner>
+        <app-script-runner id="term-runner" label="Script Content:" style="min-height: 120px;"></app-script-runner>
     </webui-flex>
     <webui-flex column style="flex: 1 0 40vh; min-height: 40vh;">
-        <label style="font-weight: bold; margin-bottom: 0.25rem;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal: <span id="term-status" class="term-status"></span></label>
+        <webui-flex gap="0.5rem" align="center" wrap="wrap" style="margin-bottom: 0.25rem;">
+            <span style="font-weight: bold;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal: <span id="term-status" class="term-status"></span></span>
+            <webui-flex grow></webui-flex>
+            <webui-button id="btn-kill" theme="warning" label="Stop" title="Stop the script the way Ctrl+C does, and force it to end if it is still running after a few seconds"></webui-button>
+            <webui-button id="btn-select-all" theme="secondary" label="Select All" title="Select all of this terminal's output and copy it to the clipboard"></webui-button>
+            <webui-button id="btn-clear" theme="secondary" label="Clear Output"></webui-button>
+        </webui-flex>
         <app-terminal-view id="term-console" style="flex-grow: 1;"></app-terminal-view>
     </webui-flex>
 </div>
@@ -132,8 +147,6 @@
                 }
                 contentWrapper.style.display = 'flex';
                 t._activeDropdown = container.querySelector('#term-dropdown');
-                t._pageScriptsToggle = container.querySelector('#term-page-scripts-toggle');
-                t._filterToggle = container.querySelector('#term-filter-toggle');
                 t._runner = container.querySelector('#term-runner');
                 t._activeConsole = container.querySelector('#term-console');
                 t._status = container.querySelector('#term-status');
@@ -144,8 +157,8 @@
                 t._btnRemoveFinished = container.querySelector('#btn-remove-finished');
                 t._btnRemove.addEventListener('click', () => {
                     const helpers = webui.proxy.terminalHelpers;
-                    if (helpers.removeTerminal(helpers.getState().activeId)) {
-                        t.switchTerminal(helpers.getState().activeId);
+                    if (helpers.removeTerminal(t.viewState().activeId, t._viewProject)) {
+                        t.switchTerminal(t.viewState().activeId, t._viewProject);
                     }
                 });
                 t._btnRemoveFinished.addEventListener('click', () => {
@@ -156,22 +169,16 @@
                 });
                 let initState = webui.proxy.terminalHelpers.getState();
                 initState.allScripts = await webui.proxy.getScripts() || [];
-                t._pageScriptsToggle.addEventListener('change', () => {
-                    t.refreshDropdown();
-                });
-                t._filterToggle.addEventListener('change', () => {
-                    t.refreshDropdown();
-                });
                 t._activeDropdown.addEventListener('change', () => {
-                    if (t._isRefreshing) return;
-                    let currentState = webui.proxy.terminalHelpers.getState();
-                    if (t._activeDropdown.value && t._activeDropdown.value !== currentState.activeId) {
-                        t.switchTerminal(t._activeDropdown.value);
-                    }
+                    if (t._isRefreshing || !t._activeDropdown.value) return;
+                    const helpers = webui.proxy.terminalHelpers;
+                    if (t._activeDropdown.value === helpers.terminalValue(t.viewState().activeId, t._viewProject)) return;
+                    const chosen = helpers.parseTerminalValue(t._activeDropdown.value);
+                    t.switchTerminal(chosen.id, chosen.projectId);
                 });
                 t._btnKill.addEventListener('click', async () => {
-                    let state = webui.proxy.terminalHelpers.getState();
-                    await webui.proxy.terminalHelpers.stopScript(state.activeId);
+                    if (t._none) return;
+                    await webui.proxy.terminalHelpers.stopScript(t.viewState().activeId, t._viewProject);
                 });
                 btnKillAll.addEventListener('click', async () => {
                     // Clear the queue first, so finishing scripts do not start the next one.
@@ -195,25 +202,64 @@
                     }
                 });
                 btnClear.addEventListener('click', () => {
-                    let state = webui.proxy.terminalHelpers.getState();
-                    webui.proxy.terminalHelpers.clearOutput(state.activeId);
+                    if (t._none) return;
+                    webui.proxy.terminalHelpers.clearOutput(t.viewState().activeId, t._viewProject);
                     webui.setData('app-terminal-refresh', Date.now());
                 });
                 t.switchTerminal(initState.activeId);
             }, 0);
             return container;
         },
-        async switchTerminal(id) {
+        /** Chooses which scripts the list shows, and marks it on the switch. */
+        setFilter(value) {
+            webui.setData('app-terminals-filter', value);
+            if (typeof this._filterSwitch?.setValue === 'function' && this._filterSwitch.value !== value) this._filterSwitch.setValue(value);
+        },
+        /** Which scripts the list shows: one of terminalHelpers.filters. */
+        filter() {
+            const value = webui.getData('app-terminals-filter');
+            return webui.proxy.terminalHelpers.filters.includes(value) ? value : 'Live';
+        },
+        /**
+         * The terminal state being shown: the open project's, or another project's when a script running there was
+         * picked from All Running.
+         */
+        viewState() {
+            const helpers = webui.proxy.terminalHelpers;
+            if (!helpers.otherProject(this._viewProject)) this._viewProject = undefined;
+            return helpers.getState(this._viewProject);
+        },
+        /**
+         * Shows a terminal, in another project when `projectId` names one. With no id it shows none, for a view
+         * with nothing in it.
+         */
+        async switchTerminal(id, projectId) {
             const t = this;
             await webui.wait(() => t._runner && typeof t._runner.setScript === 'function' && typeof t._activeConsole?.attach === 'function');
-            let state = webui.proxy.terminalHelpers.getState();
+            const helpers = webui.proxy.terminalHelpers;
+            t._none = !id;
+            if (t._none) {
+                t.renderConsole();
+                t.renderStatus();
+                t.refreshButtons();
+                t._runner.setScript('', '');
+                t._runner.setReadOnly(true);
+                return;
+            }
+            t._viewProject = helpers.otherProject(projectId);
+            const state = t.viewState();
+            // The Live view only shows the live terminal, so showing a script moves to a view that lists it.
+            if (id !== 'live' && t.filter() === 'Live') {
+                const term = state.terminals[id];
+                t.setFilter(term?.status === 'Running' ? 'Running' : term?.isPageScript ? 'Page' : 'Saved');
+            }
             state.activeId = id;
             if (!state.terminals[id]) {
                 let scriptContent = '';
-                if (id !== 'live') {
+                if (id !== 'live' && !t._viewProject) {
                     scriptContent = await webui.proxy.getProjectFile(id).catch(() => '') || '';
                 }
-                state.terminals[id] = webui.proxy.terminalHelpers.newTerminal(id, { script: scriptContent });
+                state.terminals[id] = helpers.newTerminal(id, { script: scriptContent });
             }
             const current = state.terminals[id];
             t.renderConsole();
@@ -222,9 +268,15 @@
             t.refreshButtons();
             setTimeout(() => {
                 t._runner.setScript(current.id, current.script || '');
-                t._runner.setReadOnly(!!current.isPageScript);
+                // Another project's script is only watched here, since its files are not the open project's.
+                t._runner.setReadOnly(!!current.isPageScript || !!t._viewProject);
             }, 10);
         },
+        /**
+         * Lists the scripts the chosen view shows. When the terminal being shown is not one of them, as after
+         * changing views, the first one shows instead, and with none the list says None and is turned off. The Live
+         * view has no list, since it is the live terminal.
+         */
         async refreshDropdown() {
             const t = this;
             if (!t._activeDropdown) return;
@@ -234,22 +286,54 @@
                 return;
             }
             t._isRefreshing = true;
-            const state = webui.proxy.terminalHelpers.getState();
-            t._activeDropdown.setOptions(await webui.proxy.terminalHelpers.getDropdownOptions(state, !!t._filterToggle.value));
-            await webui.wait(50);
-            if (t._activeDropdown && t._activeDropdown.value !== state.activeId) {
-                t._activeDropdown.value = state.activeId;
-                await webui.wait(50);
+            const helpers = webui.proxy.terminalHelpers;
+            const filter = t.filter();
+            const viewing = t._none ? null : { id: t.viewState().activeId, projectId: t._viewProject };
+            let next;
+            if (filter === 'Live') {
+                t._activeDropdown.setOptions([]);
+                t.setListEnabled(false);
+                if (!viewing || viewing.id !== 'live' || viewing.projectId) next = { id: 'live' };
+            } else {
+                // A script that finished while shown stays listed until the view changes, so it does not vanish.
+                const watching = filter === t._listedFilter ? viewing : null;
+                const options = await helpers.getDropdownOptions(helpers.getState(), filter, watching);
+                if (!options.length) {
+                    t._activeDropdown.setOptions([{ id: '', value: '', display: 'None' }]);
+                    t.setListEnabled(false);
+                    if (viewing) next = { id: null };
+                } else {
+                    t._activeDropdown.setOptions(options);
+                    t.setListEnabled(true);
+                    const selected = viewing && helpers.terminalValue(viewing.id, viewing.projectId);
+                    if (!selected || !options.some(option => option.value === selected)) {
+                        next = helpers.parseTerminalValue(options[0].value);
+                    } else {
+                        await webui.wait(50);
+                        if (t._activeDropdown.value !== selected) t._activeDropdown.value = selected;
+                    }
+                }
             }
+            t._listedFilter = filter;
+            await webui.wait(50);
             t._isRefreshing = false;
+            if (next) {
+                // Switching refreshes the list again, which then selects what it switched to.
+                t.switchTerminal(next.id, next.projectId);
+                return;
+            }
             if (t._refreshAgain) {
                 t._refreshAgain = false;
                 t.refreshDropdown();
             }
         },
+        /** Turns the script list on or off. */
+        setListEnabled(enabled) {
+            this._activeDropdown.toggleAttribute('disabled', !enabled);
+        },
         refreshButtons() {
-            const state = webui.proxy.terminalHelpers.getState();
-            const current = state.terminals[state.activeId];
+            const state = this.viewState();
+            const current = this._none ? null : state.terminals[state.activeId];
             const isRunning = current && current.status === 'Running';
             if (this._btnKill) this._btnKill.disabled = !isRunning;
             if (this._btnRemove) {
@@ -257,7 +341,8 @@
                 this._btnRemove.disabled = isRunning;
             }
             if (this._btnRemoveFinished) {
-                const hasFinished = Object.values(state.terminals).some(term => term.isPageScript && term.status !== 'Running');
+                // It removes the open project's page scripts, so it is hidden while another project's script shows.
+                const hasFinished = !this._viewProject && Object.values(state.terminals).some(term => term.isPageScript && term.status !== 'Running');
                 this._btnRemoveFinished.style.display = hasFinished ? '' : 'none';
             }
         },
@@ -271,8 +356,8 @@
                 return;
             }
             const helpers = webui.proxy.terminalHelpers;
-            const state = helpers.getState();
-            const run = helpers.runStatus(state.terminals[state.activeId]);
+            const state = t.viewState();
+            const run = t._none ? null : helpers.runStatus(state.terminals[state.activeId]);
             const text = run ? `${run.state} ${helpers.formatElapsed(run.elapsed)}` : '';
             if (label.textContent !== text) label.textContent = text;
             label.dataset.state = run ? run.state.toLowerCase() : '';
@@ -288,8 +373,7 @@
         /** Shows the active terminal. Its output is only replayed when it changes, or when `force` is set. */
         renderConsole(force) {
             if (typeof this._activeConsole?.attach !== 'function') return;
-            const state = webui.proxy.terminalHelpers.getState();
-            this._activeConsole.attach(state.activeId, !!force);
+            this._activeConsole.attach(this._none ? null : this.viewState().activeId, !!force, this._viewProject);
         },
         onTerminalRefresh() {
             // Saved data can reach this before app.js has set up the proxy, when there is nothing to refresh yet.
@@ -301,8 +385,8 @@
         },
         onTerminalCleared(data) {
             if (!data || !webui.proxy?.terminalHelpers) return;
-            const state = webui.proxy.terminalHelpers.getState();
-            if (state.activeId === data.terminalId) {
+            const state = this.viewState();
+            if (state.activeId === data.terminalId && (data.projectId ?? undefined) === (this._viewProject ?? undefined)) {
                 this.renderConsole(true);
             }
         },

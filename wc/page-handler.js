@@ -492,7 +492,6 @@
                 }
             }
         }
-        webui.setData('app-terminals-page-scripts', true);
         let state = webui.proxy.terminalHelpers.getState();
         state.activeId = totalName;
         webui.proxy.terminalHelpers.ensureListeners();
@@ -507,10 +506,8 @@
                 true,
                 maskedContent
             );
-            let terminalsApp = document.querySelector('app-terminals');
-            if (terminalsApp) {
-                terminalsApp.openDrawer();
-            }
+            // Opened on a running view, so the script that just started is listed.
+            document.querySelector('app-terminals')?.openDrawer({ run: true });
         } catch (err) {
             webui.alert(err, 'warning');
         }

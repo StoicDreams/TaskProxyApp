@@ -534,7 +534,7 @@
                 finished = helpers.runAndWait(beforeCommitTerminal, wrapper);
                 // Started before the panel opens, so the panel shows this script.
                 await webui.wait(50);
-                document.querySelector('app-terminals')?.openDrawer();
+                document.querySelector('app-terminals')?.openDrawer({ run: true });
                 finished = await finished;
             } catch (err) {
                 t.reportFor(origin, `${path} could not run, so nothing was committed: ${err?.message ?? err}`, 'danger');

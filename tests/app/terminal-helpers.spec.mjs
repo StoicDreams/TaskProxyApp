@@ -92,18 +92,54 @@ test.describe('webui.proxy.terminalHelpers', () => {
         expect((await terminal(page, 'a.ps1')).output).toEqual([]);
         expect((await terminal(page, 'a.ps1')).outputSize).toBe(0);
     });
-    test('getDropdownOptions hides page scripts unless asked', async ({ page }) => {
+    test('getDropdownOptions lists saved scripts, page scripts, or running scripts, by filter', async ({ page }) => {
+        await page.evaluate(() => { window.__backend.handlers.get_scripts = () => ['build.ps1', 'test.ps1']; });
         await run(page, 'page-script', 'x', [], false, false, true);
-        await page.evaluate(() => webui.setData('app-terminals-page-scripts', false));
-        const optionIds = () => page.evaluate(async () => {
+        await run(page, 'test.ps1', 'x', [], false, false);
+        await finish(page, 'page-script');
+        const optionIds = filter => page.evaluate(async filter => {
             const helpers = webui.proxy.terminalHelpers;
-            const state = helpers.getState();
-            state.activeId = 'live';
-            return (await helpers.getDropdownOptions(state, false)).map(option => option.id);
+            return (await helpers.getDropdownOptions(helpers.getState(), filter, null)).map(option => option.id);
+        }, filter);
+        // The live terminal has a view of its own, so no list includes it.
+        expect(await optionIds('Saved')).toEqual(['build.ps1', 'test.ps1']);
+        expect(await optionIds('Page')).toEqual(['page-script']);
+        expect(await optionIds('Running')).toEqual(['test.ps1']);
+        expect(await optionIds('Live')).toEqual([]);
+    });
+    test('a script that finished while being watched stays in the running lists', async ({ page }) => {
+        await run(page, 'page-script', 'x', [], false, false, true);
+        await finish(page, 'page-script');
+        const ids = await page.evaluate(async () => {
+            const helpers = webui.proxy.terminalHelpers;
+            return (await helpers.getDropdownOptions(helpers.getState(), 'Running', { id: 'page-script' })).map(option => option.id);
         });
-        expect(await optionIds()).toEqual(['live']);
-        await page.evaluate(() => webui.setData('app-terminals-page-scripts', true));
-        expect(await optionIds()).toEqual(['live', 'page-script']);
+        expect(ids).toEqual(['page-script']);
+    });
+    test('All Running lists running scripts in every project, named by project', async ({ page }) => {
+        await run(page, 'test.ps1', 'x', [], false, false);
+        const options = await page.evaluate(async () => {
+            const helpers = webui.proxy.terminalHelpers;
+            // A script still running in a project the user switched away from.
+            const other = helpers.getState('other-project');
+            other.terminals['deploy.ps1'] = helpers.newTerminal('deploy.ps1', { status: 'Running', projectId: 'other-project', projectName: 'Storefront' });
+            other.terminals['old.ps1'] = helpers.newTerminal('old.ps1', { status: 'Finished', projectName: 'Storefront' });
+            return helpers.getDropdownOptions(helpers.getState(), 'All Running', null);
+        });
+        expect(options.map(option => [option.value, option.display])).toEqual([
+            ['test.ps1', 'test.ps1 (Running)'],
+            ['other-project::deploy.ps1', 'Storefront: deploy.ps1 (Running)'],
+        ]);
+        expect(await page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('other-project::deploy.ps1'))).toEqual({ id: 'deploy.ps1', projectId: 'other-project' });
+        expect(await page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('test.ps1'))).toEqual({ id: 'test.ps1' });
+    });
+    test('stopping another project\'s script names that project to the backend', async ({ page }) => {
+        await page.evaluate(async () => {
+            const helpers = webui.proxy.terminalHelpers;
+            helpers.getState('other-project').terminals['deploy.ps1'] = helpers.newTerminal('deploy.ps1', { status: 'Running', interactive: false });
+            await helpers.stopScript('deploy.ps1', 'other-project');
+        });
+        expect(await calls(page, 'kill_script')).toEqual([{ terminalId: 'deploy.ps1', projectId: 'other-project' }]);
     });
 });
 

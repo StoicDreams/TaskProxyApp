@@ -243,3 +243,36 @@ header h1.editable-title:empty::before {
     border-left: 4px solid var(--color-info);
     padding: 0.25em 0.75em;
 }
+
+/*
+ * The right drawer opens at the same width for every panel, rather than as wide as its content asks, until the user
+ * resizes it. Resizing saves a width, which the drawer then sets itself, so this only applies before that.
+ */
+webui-drawer.shared:not([width]) {
+    width: max(400px, 25vw);
+}
+
+/* Every drawer's title looks the same, and headings in a drawer's content stay smaller than it. */
+webui-drawer.shared > [slot="header"] {
+    font-size: 1.2rem;
+    font-weight: bold;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+webui-drawer.shared > [slot="header"] webui-switch {
+    font-size: 0.75rem;
+    font-weight: normal;
+}
+
+webui-drawer.shared h1,
+webui-drawer.shared h2,
+webui-drawer.shared h3 {
+    font-size: 1.1rem;
+}
+
+webui-drawer.shared h4,
+webui-drawer.shared h5,
+webui-drawer.shared h6 {
+    font-size: 1rem;
+}

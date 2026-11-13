@@ -253,6 +253,18 @@ fn script_key(project_id: &str, terminal_id: &str) -> String {
     format!("{}\0{}", project_id, terminal_id)
 }
 
+/// The project a command is for: the one named, such as a script still running in a project the user switched
+/// away from, or else the open project.
+fn target_project_id(
+    project_state: &State<'_, CurrentProject>,
+    project_id: Option<String>,
+) -> Result<String, String> {
+    match project_id.filter(|id| !id.is_empty()) {
+        Some(id) => Ok(id),
+        None => current_project_id(project_state),
+    }
+}
+
 fn current_project_id(project_state: &State<'_, CurrentProject>) -> Result<String, String> {
     let project = project_state
         .lock()
@@ -818,8 +830,9 @@ async fn running_pty(
     state: &State<'_, TerminalManager>,
     project_state: &State<'_, CurrentProject>,
     terminal_id: &str,
+    project_id: Option<String>,
 ) -> Result<Arc<PtyControl>, String> {
-    let key = script_key(&current_project_id(project_state)?, terminal_id);
+    let key = script_key(&target_project_id(project_state, project_id)?, terminal_id);
     let processes = state.processes.lock().await;
     let script = processes
         .get(&key)
@@ -835,10 +848,11 @@ async fn running_pty(
 pub(crate) async fn write_terminal_input(
     terminal_id: String,
     data: String,
+    project_id: Option<String>,
     state: State<'_, TerminalManager>,
     project_state: State<'_, CurrentProject>,
 ) -> Result<(), String> {
-    let control = running_pty(&state, &project_state, &terminal_id).await?;
+    let control = running_pty(&state, &project_state, &terminal_id, project_id).await?;
     task::spawn_blocking(move || {
         let mut writer = control.writer.lock().map_err(|e| e.to_string())?;
         let writer = writer.as_mut().ok_or("The script has finished.")?;
@@ -857,13 +871,14 @@ pub(crate) async fn resize_terminal(
     terminal_id: String,
     cols: u16,
     rows: u16,
+    project_id: Option<String>,
     state: State<'_, TerminalManager>,
     project_state: State<'_, CurrentProject>,
 ) -> Result<(), String> {
     if cols == 0 || rows == 0 {
         return Ok(());
     }
-    let control = running_pty(&state, &project_state, &terminal_id).await?;
+    let control = running_pty(&state, &project_state, &terminal_id, project_id).await?;
     let master = control.master.lock().map_err(|e| e.to_string())?;
     if let Some(master) = master.as_ref() {
         master
@@ -903,10 +918,14 @@ fn request_kill(script: &mut RunningScript) {
 #[tauri::command]
 pub(crate) async fn kill_script(
     terminal_id: String,
+    project_id: Option<String>,
     state: State<'_, TerminalManager>,
     project_state: State<'_, CurrentProject>,
 ) -> Result<String, String> {
-    let key = script_key(&current_project_id(&project_state)?, &terminal_id);
+    let key = script_key(
+        &target_project_id(&project_state, project_id)?,
+        &terminal_id,
+    );
     let mut processes = state.processes.lock().await;
     if let Some(script) = processes.get_mut(&key) {
         request_kill(script);

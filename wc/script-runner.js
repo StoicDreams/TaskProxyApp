@@ -82,15 +82,21 @@
             t._previewPanel = t.template.querySelector('webui-code');
             t._toggleFullPath = t.template.querySelector('webui-toggle-icon[label="Full Path"]');
             t._readOnlyNote = t.template.querySelector('.read-only-note');
+            t._label = t.template.querySelector('.runner-label');
             t._fileName = '';
             t._isReadOnly = false;
         },
-        attr: ['src'],
+        attr: ['src', 'label'],
         attrChanged(property, value) {
             const t = this;
             switch (property) {
                 case 'src':
                     t.loadScript(value);
+                    break;
+                case 'label':
+                    // A heading at the start of the button row, such as the Terminal Manager's "Script Content:".
+                    t._label.textContent = value || '';
+                    t._label.hidden = !value;
                     break;
             }
         },
@@ -341,12 +347,19 @@
 .read-only-note {
     display: none;
 }
+.runner-label {
+    font-weight: bold;
+}
+.runner-label[hidden] {
+    display: none;
+}
 :host(.read-only) .read-only-note {
     display: block;
 }
 </style>
 <p class="read-only-note">Page scripts run from their page, which fills in their variables. Values are masked here.</p>
-<webui-flex align="center">
+<webui-flex align="center" wrap="wrap">
+    <span class="runner-label" hidden></span>
     <webui-button theme="info" label="Run"></webui-button>
     <webui-button theme="warning" label="Reset"></webui-button>
     <webui-button theme="success" label="Save"></webui-button>

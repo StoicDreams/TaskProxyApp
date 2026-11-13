@@ -41,7 +41,7 @@
             t._placeholder = t.template.querySelector('.placeholder');
             t._onData = ev => {
                 const data = ev.detail;
-                if (!t._term || data.terminalId !== t._terminalId || data.projectId !== webui.projectData?.id) return;
+                if (!t._term || data.terminalId !== t._terminalId || data.projectId !== (t._projectId ?? webui.projectData?.id)) return;
                 t._term.write(data.data);
                 t.showPlaceholder(false);
             };
@@ -101,7 +101,7 @@
             if (t._pendingId !== undefined) {
                 const id = t._pendingId;
                 t._pendingId = undefined;
-                t.attach(id, true);
+                t.attach(id, true, t._pendingProject);
             }
         },
         /** Fits the terminal to its space, and tells a running script its new size. */
@@ -123,12 +123,12 @@
             const t = this;
             const current = t.current();
             if (!t._lastSize || !current || current.status !== 'Running' || !current.interactive) return;
-            webui.proxy.terminal.resize(current.id, t._lastSize.cols, t._lastSize.rows).catch(() => { });
+            webui.proxy.terminal.resize(current.id, t._lastSize.cols, t._lastSize.rows, helpers().otherProject(t._projectId)).catch(() => { });
         },
         current() {
             const t = this;
             if (!t._terminalId) return null;
-            return helpers().getState().terminals[t._terminalId] || null;
+            return helpers().getState(t._projectId).terminals[t._terminalId] || null;
         },
         /** Typed keys only reach a script that is running in a terminal. */
         sendInput(data) {
@@ -138,23 +138,27 @@
             if (t._replaying) return;
             const current = t.current();
             if (!current || current.status !== 'Running' || !current.interactive) return;
-            webui.proxy.terminal.write(current.id, data).catch(() => { });
+            webui.proxy.terminal.write(current.id, data, helpers().otherProject(t._projectId)).catch(() => { });
         },
         /**
          * Shows a terminal's output. Its kept output is replayed when the terminal changes, or when `force`
-         * is set, such as after its output is cleared.
+         * is set, such as after its output is cleared. `projectId` names another project's terminal, as the
+         * Terminal Manager's All Running list shows them.
          */
-        async attach(id, force) {
+        async attach(id, force, projectId) {
             const t = this;
+            projectId = helpers().otherProject(projectId);
             if (!t._term) {
                 t._pendingId = id;
+                t._pendingProject = projectId;
                 return;
             }
-            if (id === t._terminalId && !force) {
+            if (id === t._terminalId && projectId === t._projectId && !force) {
                 t.reportSize();
                 return;
             }
             t._terminalId = id;
+            t._projectId = projectId;
             const current = t.current();
             t._term.reset();
             const output = current ? current.output.join('') : '';

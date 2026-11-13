@@ -523,7 +523,9 @@ mod manual {
                 Ok((stream, _)) => {
                     stream.set_nonblocking(false).unwrap();
                     let (root, token) = (root.clone(), token.clone());
-                    std::thread::spawn(move || serve_connection(stream, &token, || Some(root.clone())));
+                    std::thread::spawn(move || {
+                        serve_connection(stream, &token, || Some(root.clone()))
+                    });
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(20)),
             }
