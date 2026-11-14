@@ -8,7 +8,7 @@
 
 /// The newest patch of each spec line this version of Task Proxy supports. Add a line, or raise a patch, only
 /// after the app does everything that version of the spec describes, and record it in Docs/Plugins.md.
-pub(crate) const SPEC_VERSIONS: [&str; 1] = ["0.1.2"];
+pub(crate) const SPEC_VERSIONS: [&str; 1] = ["0.1.3"];
 
 /// A manifest without `spec`, written before spec versions existed, declares `apiVersion: 1`, which is spec 0.1.0.
 pub(crate) const LEGACY_API_VERSION: u32 = 1;

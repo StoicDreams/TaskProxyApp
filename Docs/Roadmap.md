@@ -22,7 +22,7 @@ Still to decide:
 
 ### Next plugin: Task Manager
 
-A plugin listing every running task, background processes included, drafted as plugin spec 0.1.3 in TaskProxyPlugins' `spec/0.1.md` (section 10), so a stuck one can be found and closed from Task Proxy. It comes from a real case: a `trunk serve` outlived the `cargo tauri dev` that started it, held port 1426 and blocked every later dev run, and Ctrl+C didn't stop the new runs.
+A plugin listing every running task, background processes included, drafted as plugin spec 0.1.4 in TaskProxyPlugins' `spec/0.1.md` (section 10), so a stuck one can be found and closed from Task Proxy. It comes from a real case: a `trunk serve` outlived the `cargo tauri dev` that started it, held port 1426 and blocked every later dev run, and Ctrl+C didn't stop the new runs.
 
 - **What it shows:**
   - a table of processes with their name, command line, folder, parent, start time or age, CPU and memory, and the ports they listen on

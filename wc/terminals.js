@@ -110,7 +110,7 @@
     </webui-flex>
 </div>
 <div id="term-install-wrapper" style="display:none; flex-direction:column; gap:var(--padding); align-items:center; text-align:center; padding: 2rem;">
-    <webui-icon icon="emoji-warning" style="font-size: 3rem; margin-bottom: 1rem; color: var(--color-warning);"></webui-icon>
+    <webui-icon icon="triangle_exclamation|fill" style="font-size: 3rem; margin-bottom: 1rem; color: var(--color-warning);"></webui-icon>
     <h2>PowerShell Not Found</h2>
     <webui-content id="term-install-instructions"></webui-content>
     <webui-button id="btn-install-pwsh" theme="success" label="Install PowerShell" style="display:none; margin-top: 1rem;"></webui-button>
@@ -394,7 +394,7 @@
 <style type="text/css">
 :host { display:inline-flex; cursor:pointer; padding:1px; align-items:center; justify-content:center; }
 </style>
-<webui-icon icon="circle_emoji-pager|theme:black|fill"></webui-icon>
+<webui-icon icon="circle_terminal|theme:black|fill"></webui-icon>
 `
     });
 }

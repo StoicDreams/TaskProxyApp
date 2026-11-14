@@ -210,17 +210,17 @@
                 webui.copyToClipboard(input.value);
             };
             if (scope === 'Page') {
-                createIconBtn('emoji-package', 'Copy Value to Project Scope', 'info', copyToProj);
-                createIconBtn('emoji-earth_americas', 'Copy Value to Global Scope', 'info', copyToGlob);
+                createIconBtn('folder', 'Copy Value to Project Scope', 'info', copyToProj);
+                createIconBtn('globe', 'Copy Value to Global Scope', 'info', copyToGlob);
             }
             if (scope === 'Project') {
-                createIconBtn('emoji-earth_americas', 'Copy Value to Global Scope', 'info', copyToGlob);
-                createIconBtn('emoji-sponge', 'Clear Value', 'warning', clearValue);
-                createIconBtn('emoji-wastebasket', 'Delete Variable', 'danger', deleteVar);
+                createIconBtn('globe', 'Copy Value to Global Scope', 'info', copyToGlob);
+                createIconBtn('eraser', 'Clear Value', 'warning', clearValue);
+                createIconBtn('trash-can', 'Delete Variable', 'danger', deleteVar);
             }
             if (scope === 'Global') {
-                createIconBtn('emoji-sponge', 'Clear Value', 'warning', clearValue);
-                createIconBtn('emoji-wastebasket', 'Delete Variable', 'danger', deleteVar);
+                createIconBtn('eraser', 'Clear Value', 'warning', clearValue);
+                createIconBtn('trash-can', 'Delete Variable', 'danger', deleteVar);
             }
             createIconBtn('copy', 'Copy Value to Clipboard', 'info', copyToClip);
             wrap.appendChild(actionsFlex);

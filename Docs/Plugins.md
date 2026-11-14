@@ -48,7 +48,8 @@ The contract between Task Proxy and plugins is the plugin spec, versioned on its
 |---|---|
 | 0.1.115 to 0.1.117 | An early form of 0.1.0, as `apiVersion: 1` |
 | 0.1.118 to 0.1.121 | 0.1.0, as `apiVersion: 1`, without reading `spec` |
-| After 0.1.121 | 0.1.2 |
+| The first release after 0.1.121 | 0.1.2 |
+| Later releases | 0.1.3 |
 
 To change what plugins can do:
 

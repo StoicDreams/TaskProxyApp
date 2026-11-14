@@ -95,7 +95,7 @@
             bar.after(webui.create('webui-line'));
         }
         let btnSave = webui.create('webui-button', {
-            html: 'Save', title: "Save Page", 'start-icon': 'emoji-floppy_disk', theme: 'primary'
+            html: 'Save', title: "Save Page", 'start-icon': 'save', theme: 'primary'
         });
         btnSave.addEventListener('click', async _ => {
             if (!myFile) return;
@@ -451,7 +451,7 @@
                     let header = webui.querySelector('label', root);
                     if (!copyBtn && !header) return;
                     let playBtn = webui.create('webui-icon', {
-                        icon: 'emoji-play_button',
+                        icon: 'play',
                         class: 'run-script-btn',
                         style: 'cursor: pointer; margin-left: 8px;',
                         title: 'Run Script'

@@ -9,7 +9,7 @@
             const t = this;
             t.setAttribute('title', 'Save Project & App Data');
             makeButton(t);
-            let icon = webui.create('webui-icon', { theme: 'success', 'icon': 'emoji-floppy_disk|fill' });
+            let icon = webui.create('webui-icon', { theme: 'success', 'icon': 'save|fill' });
             t.appendChild(icon);
             function saveProject() {
                 if (isSavingProject) return;

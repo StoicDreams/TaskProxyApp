@@ -334,11 +334,8 @@
                 }
                 case 'text':
                     return el(node.strong ? 'strong' : 'span', { class: node.muted ? 'plugin-muted' : 'plugin-text' }, node.text);
-                case 'markdown': {
-                    const box = el('div', { class: 'plugin-markdown' });
-                    box.innerHTML = sanitizeProjectHtml(webui.parseMarkdown(`${node.text ?? ''}`));
-                    return box;
-                }
+                case 'markdown':
+                    return t.buildMarkdown(node);
                 case 'badge':
                     return el('span', { class: 'plugin-badge', 'data-theme': theme(node.theme) || null }, node.text);
                 case 'link': {
@@ -356,9 +353,28 @@
                 case 'properties': {
                     const list = el('dl', { class: 'plugin-properties' });
                     (node.items || []).forEach(item => {
-                        list.appendChild(el('dt', {}, item.label));
+                        const label = el('dt', {}, item.label);
+                        list.appendChild(label);
                         const value = el('dd');
-                        value.appendChild(t.build(item.value));
+                        const shown = t.build(item.value);
+                        value.appendChild(shown);
+                        if (item.edit) {
+                            // Clicking the label switches between the value and its editor.
+                            const editor = el('div', { class: 'plugin-property-edit' });
+                            editor.appendChild(t.build(item.edit));
+                            editor.hidden = true;
+                            value.appendChild(editor);
+                            const toggle = makeButton(el('a', { class: 'plugin-link plugin-property-label', 'aria-expanded': 'false', title: `Edit ${item.label ?? ''}` }, item.label));
+                            toggle.addEventListener('click', ev => {
+                                ev.preventDefault();
+                                const editing = editor.hidden;
+                                editor.hidden = !editing;
+                                if (shown.nodeType === Node.ELEMENT_NODE) shown.hidden = editing;
+                                toggle.setAttribute('aria-expanded', `${editing}`);
+                                if (editing) editor.querySelector('textarea, input:not([type="hidden"])')?.focus?.();
+                            });
+                            label.replaceChildren(toggle);
+                        }
                         list.appendChild(value);
                     });
                     return list;
@@ -413,6 +429,35 @@
                     // A node type from a newer plugin, so the rest of the page still shows.
                     return el('span', { class: 'plugin-muted' }, `(This version of Task Proxy cannot show "${node.type}".)`);
             }
+        },
+        /**
+         * Sanitized markdown. Its images come only from the node's `images`, as data URIs, so a plugin cannot load
+         * anything from the web. With `toggle`, a switch shows the markdown as written instead.
+         */
+        buildMarkdown(node) {
+            const box = el('div', { class: 'plugin-markdown' });
+            box.innerHTML = sanitizeProjectHtml(webui.parseMarkdown(`${node.text ?? ''}`));
+            const images = node.images && typeof node.images === 'object' ? node.images : {};
+            box.querySelectorAll('img').forEach(img => {
+                const uri = images[img.getAttribute('src') ?? ''];
+                if (typeof uri === 'string' && /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,[a-z0-9+/=]+$/i.test(uri)) img.src = uri;
+                else img.remove();
+            });
+            if (!node.toggle) return box;
+            const wrap = el('div', { class: 'plugin-markdown-wrap' });
+            const raw = el('pre', { class: 'plugin-markdown-raw' }, `${node.text ?? ''}`);
+            raw.hidden = true;
+            const mode = makeButton(el('a', { class: 'plugin-link plugin-markdown-mode', 'aria-pressed': 'false' }, 'Show raw'));
+            mode.addEventListener('click', ev => {
+                ev.preventDefault();
+                const showRaw = raw.hidden;
+                raw.hidden = !showRaw;
+                box.hidden = showRaw;
+                mode.textContent = showRaw ? 'Show rendered' : 'Show raw';
+                mode.setAttribute('aria-pressed', `${showRaw}`);
+            });
+            wrap.append(mode, box, raw);
+            return wrap;
         },
         buildButton(node, ctx) {
             const t = this;
@@ -780,7 +825,12 @@
             t._dialog?.box.classList.add('plugin-busy');
             try {
                 if (action.host) {
-                    await t.runHost(action.host, ctx);
+                    // A form submitted with a host action fills that action's own fields, such as a branch's name.
+                    const host = { ...action.host };
+                    if (form && typeof form === 'object') {
+                        Object.keys(host).filter(key => key !== 'type' && key in form).forEach(key => host[key] = form[key]);
+                    }
+                    await t.runHost(host, ctx);
                     return;
                 }
                 const request = { page: t.page || '', pageParams: t._params || {}, action: action.id, params: action.params || {}, form: form || {} };

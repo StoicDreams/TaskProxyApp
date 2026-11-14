@@ -395,8 +395,43 @@ header h1.editable-title:empty::before {
     flex: 1 1 20em;
 }
 
+/* Images in a plugin's markdown, such as those in a Jira description. */
+.plugin-markdown img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Shown and hidden with the hidden attribute, which other rules' display would otherwise override. */
+.plugin-markdown[hidden],
+.plugin-markdown-raw[hidden],
+.plugin-property-edit[hidden],
+.plugin-properties dd > [hidden] {
+    display: none !important;
+}
+
+.plugin-markdown-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+
+.plugin-markdown-mode {
+    align-self: flex-end;
+    font-size: 0.9em;
+}
+
+.plugin-markdown-raw {
+    white-space: pre-wrap;
+    margin: 0;
+}
+
+.plugin-property-edit {
+    min-width: min(30em, 100%);
+}
+
 /* A plugin's form asked to sit in one row, as Jira's Add a column does. */
-.plugin-form-row {
+/* Beside a label in a row it takes the room left, and in a column only its own height. */
+.plugin-row > .plugin-form-row {
     flex: 1 1 30em;
 }
 

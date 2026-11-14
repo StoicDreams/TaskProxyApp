@@ -449,3 +449,69 @@ test.describe('spec 0.1.2', () => {
         await expect.poll(async () => (await calls(page, 'plugin_action'))[0]?.request.form).toEqual({ layer0: '', layer1: '', layer2: '' });
     });
 });
+
+test.describe('spec 0.1.3', () => {
+    // A 1x1 PNG.
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+    test("markdown images come only from the node's own data URIs, and the raw text can be shown", async ({ page }) => {
+        await openPlugin(page, {
+            type: 'markdown', toggle: true,
+            text: '**Bold** ![Shot](attachment-1) ![Web](https://tracker.example.com/pixel.png) ![Missing](attachment-2) ![Svg](svg)',
+            images: { 'attachment-1': png, svg: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' },
+        });
+        const view = page.locator('app-plugin-page');
+        const images = view.locator('.plugin-markdown img');
+        await expect(images).toHaveCount(1);
+        await expect(images.first()).toHaveAttribute('src', png);
+        await expect(images.first()).toHaveAttribute('alt', 'Shot');
+        await expect(view.locator('.plugin-markdown strong')).toHaveText('Bold');
+        const raw = view.locator('.plugin-markdown-raw');
+        await expect(raw).toBeHidden();
+        await view.getByRole('button', { name: 'Show raw' }).click();
+        await expect(raw).toBeVisible();
+        await expect(raw).toContainText('**Bold** ![Shot](attachment-1)');
+        await expect(view.locator('.plugin-markdown')).toBeHidden();
+        await view.getByRole('button', { name: 'Show rendered' }).click();
+        await expect(view.locator('.plugin-markdown')).toBeVisible();
+    });
+
+    test('markdown without toggle has no switch', async ({ page }) => {
+        await openPlugin(page, { type: 'markdown', text: 'Plain' });
+        await expect(page.locator('app-plugin-page .plugin-markdown-mode')).toHaveCount(0);
+    });
+
+    test('clicking a property label switches it to its editor and back', async ({ page }) => {
+        await openPlugin(page, {
+            type: 'properties', items: [
+                { label: 'Summary', value: text('Fix login'), edit: { type: 'form', fields: [{ name: 'value', kind: 'text', value: 'Fix login' }], submit: action('save', 'Save') } },
+                { label: 'Status', value: text('Done') },
+            ],
+        }, { pluginActions: { 'test/save': { refresh: true } } });
+        const view = page.locator('app-plugin-page');
+        const label = view.getByRole('button', { name: 'Summary' });
+        await expect(view.locator('dt', { hasText: 'Status' }).getByRole('button')).toHaveCount(0);
+        await expect(view.locator('.plugin-property-edit')).toBeHidden();
+        await label.click();
+        await expect(view.locator('.plugin-property-edit')).toBeVisible();
+        await expect(view.locator('dd', { hasText: 'Fix login' }).locator('> .plugin-text')).toBeHidden();
+        await view.locator('.plugin-property-edit webui-input-text input').fill('Fix the login');
+        await view.locator('.plugin-property-edit webui-button', { hasText: 'Save' }).click();
+        await expect.poll(async () => (await calls(page, 'plugin_action'))[0]?.request.form).toEqual({ value: 'Fix the login' });
+        await expect(view.locator('.plugin-property-edit')).toBeHidden();
+    });
+
+    test("a form submitted with a host action fills the action's fields, such as a branch's name", async ({ page }) => {
+        await openPlugin(page, {
+            type: 'form',
+            fields: [{ name: 'name', label: 'Branch name', kind: 'text', value: 'P-1-fix', required: true }, { name: 'other', kind: 'hidden', value: 'x' }],
+            submit: { id: '', label: 'Create branch', host: { type: 'git.createBranch', name: 'P-1-fix' } },
+        });
+        const form = page.locator('app-plugin-page form');
+        await form.locator('webui-input-text input').fill('feature/PROJ-1_fix-login');
+        await form.locator('webui-button', { hasText: 'Create branch' }).click();
+        // Only the host action's own fields are filled, and the plugin is not called.
+        await expect.poll(() => calls(page, 'plugin_host_action')).toEqual([{ id: 'test', action: { type: 'git.createBranch', name: 'feature/PROJ-1_fix-login' } }]);
+        expect(await calls(page, 'plugin_action')).toEqual([]);
+    });
+});

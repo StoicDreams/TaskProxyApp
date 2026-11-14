@@ -1,12 +1,12 @@
 [
   {
     "name": "Folder",
-    "icon": "badge_emoji-file_folder|backing|inverted|theme:success|bordered",
+    "icon": "badge_folder|backing|inverted|theme:success|bordered",
     "url": null,
     "children": [
       {
         "name": "Page",
-        "icon": "badge_emoji-page_facing_up|theme:warning|backing|inverted|shade:duo",
+        "icon": "badge_file|theme:warning|backing|inverted|shade:duo",
         "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
         "children": null
       }
@@ -14,13 +14,13 @@
   },
   {
     "name": "Dev",
-    "icon": "emoji-gear",
+    "icon": "code",
     "url": "/0a574ff4-f8b3-49ec-b391-76a1722a80b9",
     "children": null
   },
   {
     "name": "Release",
-    "icon": "emoji-package",
+    "icon": "package",
     "url": "/901091c2-ba23-481a-8fd2-534467758277",
     "children": null
   }

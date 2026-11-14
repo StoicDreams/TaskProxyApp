@@ -25,6 +25,10 @@ pub(crate) struct HttpRequest {
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub body: Option<String>,
+    /// `base64` answers with the body's bytes as base64, for images and other files that are not text. Since spec
+    /// 0.1.3.
+    #[serde(default)]
+    pub encoding: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -350,9 +354,17 @@ impl HttpSend for NetworkHttp {
             }
             Ok(HttpResponse {
                 status,
-                body: String::from_utf8_lossy(&body).into_owned(),
+                body: encode_body(&body, request.encoding.as_deref()),
             })
         })
+    }
+}
+
+/// A response body as text, or as base64 when the plugin asked for that.
+pub(crate) fn encode_body(body: &[u8], encoding: Option<&str>) -> String {
+    match encoding {
+        Some("base64") => general_purpose::STANDARD.encode(body),
+        _ => String::from_utf8_lossy(body).into_owned(),
     }
 }
 
@@ -582,6 +594,19 @@ pub(crate) mod tests {
             r#"ok: "TEST-7-login""#
         );
         assert_eq!(host_call(&setup, json!({ "op": "now" })), "ok: true");
+    }
+
+    #[test]
+    fn bodies_that_are_not_text_can_come_back_as_base64() {
+        let png = [0x89u8, b'P', b'N', b'G', 0, 0xff];
+        assert_eq!(encode_body(&png, Some("base64")), "iVBORwD/");
+        assert_eq!(encode_body(b"plain", None), "plain");
+        assert_eq!(encode_body(b"plain", Some("other")), "plain");
+        let request: HttpRequest = serde_json::from_value(serde_json::json!({
+            "method": "GET", "url": "https://a.example.com/x", "encoding": "base64"
+        }))
+        .unwrap();
+        assert_eq!(request.encoding.as_deref(), Some("base64"));
     }
 
     #[test]

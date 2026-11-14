@@ -292,12 +292,12 @@ export const PROJECT = { name: 'Acme Storefront', path: '/home/sam/code/acme-sto
 /** Backend state for openApp, describing the demo project. */
 export function demoState(overrides = {}) {
     const navigation = [
-        { name: 'Team Onboarding', icon: 'circle_emoji-rocket|theme:primary|backing|inverted', url: `/${pages.onboarding}`, children: null },
-        { name: 'Release Checklist', icon: 'circle_emoji-package|theme:success|backing|inverted', url: `/${pages.release}`, children: null },
+        { name: 'Team Onboarding', icon: 'circle_user-plus|theme:primary|backing|inverted', url: `/${pages.onboarding}`, children: null },
+        { name: 'Release Checklist', icon: 'circle_list-check|theme:success|backing|inverted', url: `/${pages.release}`, children: null },
         {
-            name: 'Operations', icon: 'badge_emoji-file_folder|backing|inverted|theme:info|bordered', url: null, children: [
-                { name: 'Health Check', icon: 'emoji-stethoscope', url: `/${pages.health}`, children: null },
-                { name: 'Deploy', icon: 'emoji-rocket', url: `/${pages.deploy}`, children: null },
+            name: 'Operations', icon: 'badge_server|backing|inverted|theme:info|bordered', url: null, children: [
+                { name: 'Health Check', icon: 'heart-pulse', url: `/${pages.health}`, children: null },
+                { name: 'Deploy', icon: 'rocket', url: `/${pages.deploy}`, children: null },
             ],
         },
     ];

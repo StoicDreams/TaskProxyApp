@@ -230,6 +230,60 @@
     const changeClasses = { Modify: 'modify', Add: 'add', Delete: 'delete', Conflict: 'conflict' };
     /** Video and audio, which are never text, so they go straight to the preview. */
     const mediaFile = /\.(mp4|m4v|mov|webm|mkv|avi|wmv|mpe?g|ogv|3gp|3g2|mp3|m4a|wav|flac|aac|ogg|oga|opus|weba|aiff?)$/i;
+    /** Text files that show something when drawn, which the preview can show drawn or as written. */
+    function renderKind(name, text) {
+        if (/\.(md|markdown)$/i.test(name)) return 'markdown';
+        if (/\.html?$/i.test(name)) return 'html';
+        if (/\.svg$/i.test(name)) return 'svg';
+        if (/\.webui$/i.test(name) && `${text ?? ''}`.startsWith('WEBUI-ICON-')) return 'icon';
+        return '';
+    }
+    /** Shown as written or drawn, kept while switching files. */
+    let renderMode = 'raw';
+    /**
+     * A page for the sandboxed preview frame. The frame runs no scripts and the page allows none, so nothing in a
+     * project's file can reach Task Proxy. Markdown and HTML are also sanitized, Web UI components show as their
+     * content, and only images inside the file or on Task Proxy's CDN load.
+     */
+    function previewDocument(kind, text) {
+        const policy = "default-src 'none'; img-src data: https://cdn.myfi.ws; style-src 'unsafe-inline' https://cdn.myfi.ws; font-src data: https://cdn.myfi.ws";
+        const style = `
+            :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
+            body { margin: 0; padding: 1rem; overflow-wrap: anywhere; }
+            img, svg, video { max-width: 100%; height: auto; }
+            pre { overflow: auto; padding: 0.5rem; background: color-mix(in srgb, currentColor 8%, transparent); }
+            code { font-family: ui-monospace, monospace; }
+            table { border-collapse: collapse; }
+            th, td { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); padding: 0.25rem 0.5rem; }
+            [class^="webui-"], webui-page-segment, webui-paper, webui-flex, webui-grid, webui-cards, webui-card, webui-tabs,
+            webui-content, webui-alert, webui-quote, webui-code, webui-data { display: block; }
+            webui-page-segment, webui-paper, webui-card, webui-alert { padding: 0.5rem 1rem; margin: 0.5rem 0;
+                border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 6px; }
+            webui-data { display: none; }
+            .svg { display: grid; place-items: center; min-height: calc(100vh - 2rem);
+                background: repeating-conic-gradient(#8882 0 25%, transparent 0 50%) 0 0 / 20px 20px; }`;
+        let body;
+        switch (kind) {
+            case 'markdown':
+                body = sanitizeProjectHtml(webui.parseMarkdown(`${text ?? ''}`));
+                break;
+            case 'html':
+                body = sanitizeProjectHtml(`${text ?? ''}`);
+                break;
+            case 'svg': {
+                // As an image, an SVG's scripts and links never run.
+                const bytes = new TextEncoder().encode(`${text ?? ''}`);
+                let binary = '';
+                for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+                const data = btoa(binary);
+                body = `<div class="svg"><img alt="" src="data:image/svg+xml;base64,${data}"></div>`;
+                break;
+            }
+            default:
+                body = '';
+        }
+        return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>${style}</style></head><body>${body}</body></html>`;
+    }
     /**
      * Waits for a Web UI element's definition. Elements in a template that has not joined the page yet
      * do not upgrade when the definition arrives, so upgrade them directly.
@@ -314,7 +368,7 @@
             + `<button type="button" class="file" title="${path}"><span class="change-type">${details.change}</span> <strong class="name">${webui.escapeForHTML(details.name)}</strong>`
             + (details.folder ? ` <span class="folder">${webui.escapeForHTML(details.folder)}</span>` : '')
             + `</button>`
-            + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}">🗑️</button>`
+            + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}"><webui-icon icon="${isNew ? 'trash-can' : 'undo'}"></webui-icon></button>`
             + `</div>`;
     }
     // How often the Repo dropdown asks again about CI runs that have not finished.
@@ -323,13 +377,20 @@
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: 'tabs table dropdown input-message input-text toggle-icon alert content-compare file-preview',
+        preload: 'tabs table dropdown input-message input-text toggle-icon alert content-compare file-preview icon',
         constructor() {
             const t = this;
             t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
             t._fileName = t.template.querySelector('.preview h2');
             t._filesContainer = t.template.querySelector('.files');
             t._diffViewer = t.template.querySelector('webui-content-compare');
+            t._renderToggle = t.template.querySelector('.render-toggle');
+            t._renderFrame = t.template.querySelector('iframe.rendered');
+            t._iconPreview = t.template.querySelector('.icon-preview');
+            t._renderToggle.querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+                renderMode = button.dataset.mode;
+                t.drawRender();
+            }));
             t._filePreview = t.template.querySelector('webui-file-preview');
             t._previewPane = t.template.querySelector('.preview');
             t._message = t.template.querySelector('webui-input-message[label="Commit Message"]');
@@ -852,6 +913,8 @@
             t._fileName.innerHTML = `<em>Loading</em> ${changeDetail.display}`;
             t._diffViewer.clear?.();
             t.showFilePreview(false);
+            // The same file loading again, as after a refresh, keeps its switch, so a click on it is not lost.
+            if (t._render?.name !== changeDetail.fileName) t.setRenderable('', undefined);
             if (changeDetail.fileName.endsWith('/')) {
                 return;
             }
@@ -912,8 +975,60 @@
                     customElements.upgrade(t._diffViewer);
                 }
                 t._diffViewer.setDiff?.(result.old, result.new, changeDetail.change);
+                // A deleted file previews what it was, and any other its new content.
+                t.setRenderable(changeDetail.fileName, data.fileContent);
             }
             t._fileName.innerHTML = changeDetail.display;
+        },
+        /** Offers to show a file drawn, for files that show something, such as markdown, HTML, SVG, and Web UI icons. */
+        setRenderable(name, text) {
+            const t = this;
+            const kind = text === undefined ? '' : renderKind(name, text);
+            t._render = kind ? { kind, text, name } : null;
+            t._renderToggle.hidden = !kind;
+            t.drawRender();
+        },
+        /** Shows the file as written, as its comparison, or drawn, in the sandboxed frame or, for an icon, by Web UI. */
+        drawRender() {
+            const t = this;
+            const preview = !!t._render && renderMode === 'preview';
+            t._renderToggle.querySelectorAll('button').forEach(button => {
+                const on = button.dataset.mode === (preview ? 'preview' : 'raw');
+                button.setAttribute('aria-pressed', `${on}`);
+                button.classList.toggle('active', on);
+            });
+            t._previewPane.classList.toggle('showing-render', preview);
+            const icon = preview && t._render.kind === 'icon';
+            t._renderFrame.hidden = !preview || icon;
+            t._iconPreview.hidden = !icon;
+            if (!preview) {
+                t._renderFrame.removeAttribute('srcdoc');
+                t._iconPreview.replaceChildren();
+                return;
+            }
+            if (icon) {
+                // Only the icon's paths are used, set as attributes by the icon component, never as markup.
+                const sizes = ['1.5rem', '3rem', '6rem', '10rem'];
+                // An icon name would load another icon over this one, so the looks are themes alone.
+                const looks = ['', 'primary', 'success'];
+                const rows = looks.map(look => {
+                    const row = document.createElement('div');
+                    row.className = 'icon-row';
+                    sizes.forEach(size => {
+                        const icon = webui.create('webui-icon', look ? { theme: look } : {});
+                        icon.style.fontSize = size;
+                        const draw = () => icon.setIconDefinition?.(t._render?.text);
+                        customElements.whenDefined('webui-icon').then(() => setTimeout(draw, 50));
+                        row.appendChild(icon);
+                    });
+                    return row;
+                });
+                t._iconPreview.replaceChildren(...rows);
+                return;
+            }
+            // Setting the same page again would reload the frame, as when the same file loads again after a refresh.
+            const page = previewDocument(t._render.kind, t._render.text);
+            if (t._renderFrame.getAttribute('srcdoc') !== page) t._renderFrame.srcdoc = page;
         },
         /** Shows the file preview in place of the comparison, or the comparison again. */
         showFilePreview(show) {
@@ -1635,8 +1750,67 @@ button.revert {
     overflow: auto;
 }
 .preview.showing-file webui-content-compare,
-.preview:not(.showing-file) webui-file-preview {
+.preview:not(.showing-file) webui-file-preview,
+.preview.showing-render webui-content-compare {
     display: none;
+}
+.preview-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+.preview-head h2 {
+    flex: 1;
+    min-width: 0;
+}
+.render-toggle {
+    display: flex;
+    flex: none;
+}
+.render-toggle[hidden],
+.preview iframe.rendered[hidden],
+.preview .icon-preview[hidden] {
+    display: none;
+}
+.render-toggle button {
+    padding: 0.2rem 0.75rem;
+    border: 1px solid var(--color-info);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.render-toggle button:first-child {
+    border-radius: var(--corners) 0 0 var(--corners);
+}
+.render-toggle button:last-child {
+    border-radius: 0 var(--corners) var(--corners) 0;
+}
+.render-toggle button.active {
+    background: var(--color-info);
+    color: var(--color-info-offset);
+}
+.preview iframe.rendered {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    background: var(--color-background);
+}
+.preview .icon-preview {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+}
+.preview .icon-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1.5rem;
 }
 /* Side by side panes are too narrow on small windows, so stack them and let the page scroll. */
 @media (max-width: 900px) {
@@ -1705,8 +1879,16 @@ button.revert {
                 <div class="files"></div>
             </div>
             <div class="preview">
-                <h2></h2>
+                <div class="preview-head">
+                    <h2></h2>
+                    <div class="render-toggle" role="group" aria-label="Show the file" hidden>
+                        <button type="button" data-mode="raw" title="Show the changes as written">Raw</button>
+                        <button type="button" data-mode="preview" title="Show the file drawn, in a sandbox that runs nothing from it">Preview</button>
+                    </div>
+                </div>
                 <webui-content-compare></webui-content-compare>
+                <iframe class="rendered" sandbox="" referrerpolicy="no-referrer" title="Preview of the file" hidden></iframe>
+                <div class="icon-preview" hidden></div>
                 <webui-file-preview nodownload noframes></webui-file-preview>
             </div>
         </div>

@@ -994,3 +994,69 @@ test.describe('plugin branch cards', () => {
         await expect(manager(page).locator('#plugin-branch-cards app-plugin-page')).toHaveCount(0);
     });
 });
+
+test.describe('files that show something when drawn', () => {
+    const select = (page, file) => manager(page).locator(`.files .file-row[data-path="${file}"] button.file`).click();
+    const toggle = page => manager(page).locator('.render-toggle');
+    const frame = page => manager(page).locator('iframe.rendered');
+    const files = {
+        'README.md': '# Title\n\n**Bold** <script>window.parent.__hacked = 1</script><img src="x" onerror="window.parent.__hacked = 2">\n\n<webui-page-segment>Segment text</webui-page-segment>',
+        'icons/star.webui': 'WEBUI-ICON-STAR\nM0 -80Q20 -20 80 0Q20 20 0 80Q-20 20 -80 0Q-20 -20 0 -80z',
+        'logo.svg': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><script>alert(1)</script><circle cx="5" cy="5" r="4"/></svg>',
+        'page.html': '<h1 onclick="x()">Hi</h1><iframe src="https://example.com"></iframe>',
+    };
+    const openDrawn = page => open(page, { changes: ['?? README.md', '?? icons/star.webui', '?? logo.svg', '?? page.html', 'M  a.txt'] }, { files });
+
+    test('markdown switches between its changes and a sandboxed preview that runs nothing from it', async ({ page }) => {
+        await openDrawn(page);
+        await select(page, 'README.md');
+        await expect(toggle(page)).toBeVisible();
+        // Raw, the comparison, comes first.
+        await expect(toggle(page).getByRole('button', { name: 'Raw', exact: true })).toHaveAttribute('aria-pressed', 'true');
+        await expect(manager(page).locator('webui-content-compare')).toBeVisible();
+        await expect(frame(page)).toBeHidden();
+        await toggle(page).getByRole('button', { name: 'Preview', exact: true }).click();
+        await expect(frame(page)).toBeVisible();
+        await expect(manager(page).locator('webui-content-compare')).toBeHidden();
+        // The frame may run no scripts, and its page allows none either.
+        await expect(frame(page)).toHaveAttribute('sandbox', '');
+        const srcdoc = await frame(page).getAttribute('srcdoc');
+        expect(srcdoc).toContain("default-src 'none'");
+        expect(srcdoc).not.toContain('<script');
+        expect(srcdoc).not.toContain('onerror');
+        const doc = page.frameLocator('app-git-manager iframe.rendered');
+        await expect(doc.locator('h1')).toHaveText('Title');
+        await expect(doc.locator('strong')).toHaveText('Bold');
+        await expect(doc.locator('webui-page-segment')).toHaveText('Segment text');
+        expect(await page.evaluate(() => window.__hacked)).toBeUndefined();
+        // The choice stays for the next file that can be drawn, and files that cannot hide the switch.
+        await select(page, 'page.html');
+        await expect(doc.locator('h1')).toHaveText('Hi');
+        const html = await frame(page).getAttribute('srcdoc');
+        expect(html).not.toContain('onclick');
+        expect(html).not.toContain('<iframe');
+        await select(page, 'a.txt');
+        await expect(toggle(page)).toBeHidden();
+        await expect(frame(page)).toBeHidden();
+        await expect(manager(page).locator('webui-content-compare')).toBeVisible();
+        await select(page, 'README.md');
+        await expect(frame(page)).toBeVisible();
+        await toggle(page).getByRole('button', { name: 'Raw', exact: true }).click();
+        await expect(frame(page)).toBeHidden();
+        await expect(manager(page).locator('webui-content-compare')).toBeVisible();
+    });
+
+    test('an SVG is drawn as an image, and a Web UI icon by the icon component at several sizes', async ({ page }) => {
+        await openDrawn(page);
+        await select(page, 'logo.svg');
+        await toggle(page).getByRole('button', { name: 'Preview', exact: true }).click();
+        const svg = await frame(page).getAttribute('srcdoc');
+        expect(svg).toContain('<img alt="" src="data:image/svg+xml;base64,');
+        expect(svg).not.toContain('<script');
+        await select(page, 'icons/star.webui');
+        await expect(frame(page)).toBeHidden();
+        const icons = manager(page).locator('.icon-preview webui-icon');
+        await expect(icons).toHaveCount(12);
+        await expect.poll(() => icons.first().evaluate(icon => icon._definition)).toContain('WEBUI-ICON-STAR');
+    });
+});
