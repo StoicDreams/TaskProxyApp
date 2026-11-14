@@ -201,10 +201,12 @@
             });
             actions.append(toggle, remove);
             card.appendChild(actions);
-            if (manifest && (manifest.permissions?.variables || []).length) {
-                const details = el('details', { class: 'plugin-section' });
+            // Each project is set up for a plugin on its own, so it only shows in the projects that use it.
+            if (manifest) {
+                const details = el('details', { class: 'plugin-section', open: !plugin.configured && plugin.enabled });
                 const summary = toggles(el('summary'), details);
-                summary.appendChild(el('strong', {}, 'Settings for this project'));
+                summary.appendChild(el('strong', {}, (manifest.permissions?.variables || []).length ? 'Settings for this project' : 'Use in this project'));
+                summary.appendChild(el('span', { class: 'plugin-muted', 'data-role': 'project-state' }, plugin.configured ? ' · set up' : ' · not set up'));
                 details.appendChild(summary);
                 const body = el('webui-flex', { column: true, gap: 'var(--padding)', class: 'plugin-section-body' });
                 details.appendChild(body);

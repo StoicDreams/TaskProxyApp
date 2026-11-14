@@ -28,7 +28,8 @@
  * - pluginActions: { 'plugin/action': result } for plugin_action. A missing action fails.
  * - pluginSettings: { plugin: view } for plugin_settings, where view is { hasProject, signIn, settings, signIns }, or
  *   just the open project's settings, [{ key, label, help, secret, isSet, value }], with a sign-in when any is set.
- *   plugin_list's `configured` and `signIns` come from the plugin entry, so tests say how a plugin is set up.
+ *   plugin_list's `configured` and `signIns` come from the plugin entry, so tests say how a plugin is set up; a
+ *   plugin that does not say counts as set up for the open project. plugin_use_in_project sets both `used` and it.
  * - pickedFolder: the folder the folder picker returns, or null for none. pluginFolder: { manifest } it holds.
  * - branchCards: what plugin_branch_info returns, as [{ id, name, card }].
  * - pluginNotifications: what plugin_notifications returns, as [{ id, name, items }].
@@ -166,7 +167,7 @@ function setup(state) {
             git_restore_file: () => 'Successfully reverted',
             git_restore_all: () => 'All changes have been successfully reverted.',
             git_delete_file: () => 'Successfully deleted',
-            plugin_list: () => JSON.parse(JSON.stringify(plugins)),
+            plugin_list: () => JSON.parse(JSON.stringify(plugins.map(plugin => ({ configured: true, signIns: 0, ...plugin })))),
             plugin_catalog: () => {
                 if (state.catalog === undefined) throw 'Could not reach the plugin catalog';
                 return state.catalog;
@@ -219,6 +220,13 @@ function setup(state) {
                     setting.isSet = !!signIn;
                     if (!setting.secret) setting.value = signIn ? `${setting.key} of ${signIn}` : null;
                 });
+                return null;
+            },
+            plugin_use_in_project: ({ id, used }) => {
+                const view = pluginSettings[id] ??= { hasProject: true, signIn: null, settings: [], signIns: [] };
+                if (!view.hasProject) throw 'Open a project to use it in it.';
+                view.used = used;
+                plugins.forEach(plugin => { if (plugin.id === id) plugin.configured = used; });
                 return null;
             },
             plugin_render: ({ id, page }) => {

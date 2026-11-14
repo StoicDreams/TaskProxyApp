@@ -277,6 +277,8 @@
             saveSettings: (id, values, err) => tauri.core.invoke('plugin_save_settings', { id, values }).then(() => true).catch(err ?? defaultErrHandler),
             /** Has the open project use one of the plugin's sign-ins, or none with null. */
             useSignIn: (id, signIn, err) => tauri.core.invoke('plugin_use_sign_in', { id, signIn }).then(() => true).catch(err ?? defaultErrHandler),
+            /** Turns a plugin with no settings on or off for the open project. */
+            useInProject: (id, used, err) => tauri.core.invoke('plugin_use_in_project', { id, used }).then(() => true).catch(err ?? defaultErrHandler),
             render: (id, page, params, err) => tauri.core.invoke('plugin_render', { id, page, params }).catch(err ?? defaultErrHandler),
             /** request is { page, pageParams, action, params, form }. */
             action: (id, request, err) => tauri.core.invoke('plugin_action', { id, request }).catch(err ?? defaultErrHandler),
@@ -1050,8 +1052,9 @@
         }
     }
     /**
-     * A nav folder for each enabled plugin, with its pages. A plugin whose settings belong to projects shows only
-     * in projects set up for it. Once it is set up for any project, others show a link to set it up there too.
+     * A nav folder for each enabled plugin that the open project is set up for, with its pages. A project is set up
+     * for a plugin by giving it settings, such as a sign-in, or, for a plugin with none, by turning it on there, so
+     * no project's nav shows plugins it does not use. Setting one up is done in the Plugins drawer.
      */
     function pluginNav(plugins) {
         const escape = text => webui.escapeForHTML(`${text ?? ''}`);
@@ -1061,15 +1064,12 @@
                 const manifest = plugin.manifest;
                 const pages = (manifest.pages || []).filter(page => !page.hidden);
                 const route = { name: escape(manifest.name), icon: manifest.icon || 'puzzle-piece', children: [] };
-                // Older apps' backends do not say, so a plugin counts as set up unless it says it is not.
-                if (plugin.configured !== false) {
+                if (plugin.configured === true) {
                     route.children = pages.map(page => ({
                         name: escape(page.name),
                         icon: page.icon || manifest.icon || 'puzzle-piece',
                         url: `/plugin/${manifest.id}/${page.id}`
                     }));
-                } else if (plugin.signIns > 0 && pages.length) {
-                    route.children = [{ name: 'Set up for this project', icon: 'gear', url: `/plugin/${manifest.id}/${pages[0].id}` }];
                 }
                 return route;
             })

@@ -19,7 +19,8 @@ pub(crate) struct PluginInfo {
     /// `None` when the installed files cannot be read, with `error` saying why.
     pub manifest: Option<PluginManifest>,
     pub error: Option<String>,
-    /// Whether the open project has every setting the plugin declares, so its pages can work.
+    /// Whether the open project is set up for the plugin: it has every setting the plugin declares, or, for a plugin
+    /// with none, was turned on for it. Only then does the plugin show in the nav or run.
     pub configured: bool,
     /// How many sign-ins the user has entered for it, in any project.
     pub sign_ins: usize,
@@ -134,6 +135,8 @@ pub(crate) struct PluginSettingsView {
     /// The settings of that sign-in, or empty ones for a new sign-in.
     pub settings: Vec<PluginSetting>,
     pub sign_ins: Vec<SignInChoice>,
+    /// For a plugin with no settings, whether it is turned on for the open project.
+    pub used: bool,
 }
 
 fn sign_in_label(manifest: &PluginManifest, values: &HashMap<String, String>, id: &str) -> String {
@@ -236,10 +239,8 @@ fn declared_variables(
     manifest: &PluginManifest,
     settings: &HashMap<String, String>,
 ) -> HashMap<String, String> {
+    // Not global variables: those would reach every project, and a plugin only reaches the projects set up for it.
     let project = get_state_data::<ProjectData>(app)
-        .map(|data| data.data)
-        .unwrap_or_default();
-    let global = get_state_data::<TaskProxyData>(app)
         .map(|data| data.data)
         .unwrap_or_default();
     manifest
@@ -250,7 +251,6 @@ fn declared_variables(
             project
                 .get(&variable.key)
                 .and_then(text_value)
-                .or_else(|| global.get(&variable.key).and_then(text_value))
                 .or_else(|| {
                     settings
                         .get(&variable.key)
@@ -260,6 +260,27 @@ fn declared_variables(
                 .map(|value| (variable.key.clone(), value))
         })
         .collect()
+}
+
+/// Whether the open project is set up for a plugin: it has every declared setting, from its sign-in or its own
+/// variables, or, for a plugin with no settings, it was turned on for this project.
+fn set_up_for_project(
+    app: &AppHandle,
+    manifest: &PluginManifest,
+    settings: &PluginSettings,
+    project: Option<&str>,
+) -> bool {
+    let Some(project) = project else {
+        return false;
+    };
+    let declared = &manifest.permissions.variables;
+    if declared.is_empty() {
+        return settings.used_in.contains(project);
+    }
+    let values = declared_variables(app, manifest, &settings.values(Some(project)));
+    declared
+        .iter()
+        .all(|variable| values.contains_key(&variable.key))
 }
 
 /// The open project's root, and its selected repo, or its first when none is chosen, as the Git Controller does.
@@ -293,11 +314,14 @@ async fn run(
     let compiled = compiled(&registry, &installed)?;
     let store = plugin_store(app, id).await?;
     let settings = read_settings(app, id).await?;
-    let variables = declared_variables(
-        app,
-        &manifest,
-        &settings.values(current_project(app).as_deref()),
-    );
+    let project = current_project(app);
+    if !set_up_for_project(app, &manifest, &settings, project.as_deref()) {
+        return Err(format!(
+            "{} is not set up for this project. Set it up in the Plugins drawer.",
+            manifest.name
+        ));
+    }
+    let variables = declared_variables(app, &manifest, &settings.values(project.as_deref()));
     let app_handle = app.clone();
     let context_store = store.clone();
     let result = task::spawn_blocking(move || {
@@ -327,18 +351,12 @@ pub(crate) async fn plugin_list(app_handle: AppHandle) -> Result<Vec<PluginInfo>
     let mut list = Vec::new();
     for installed in registry.list() {
         let mut plugin = info(&registry, installed);
-        if let Some(manifest) = &plugin.manifest {
-            let declared = &manifest.permissions.variables;
-            if declared.is_empty() {
-                plugin.configured = true;
-            } else if let Ok(settings) = read_settings(&app_handle, &plugin.id).await {
-                let values =
-                    declared_variables(&app_handle, manifest, &settings.values(project.as_deref()));
-                plugin.configured = declared
-                    .iter()
-                    .all(|variable| values.contains_key(&variable.key));
-                plugin.sign_ins = settings.sign_ins.len();
-            }
+        if let Some(manifest) = &plugin.manifest
+            && let Ok(settings) = read_settings(&app_handle, &plugin.id).await
+        {
+            plugin.configured =
+                set_up_for_project(&app_handle, manifest, &settings, project.as_deref());
+            plugin.sign_ins = settings.sign_ins.len();
         }
         list.push(plugin);
     }
@@ -462,6 +480,9 @@ pub(crate) async fn plugin_settings(
         .unwrap_or_default();
     Ok(PluginSettingsView {
         has_project: project.is_some(),
+        used: project
+            .as_deref()
+            .is_some_and(|project| settings.used_in.contains(project)),
         sign_in: current.map(|(id, _)| id.clone()),
         settings: manifest
             .permissions
@@ -515,6 +536,37 @@ pub(crate) async fn plugin_save_settings(
         .ok_or_else(|| format!("Open a project to set up {} for it.", manifest.name))?;
     let mut settings = read_settings(&app_handle, &id).await?;
     settings.save(&project, values);
+    write_settings(&app_handle, &id, &settings).await
+}
+
+/// Whether the open project is set up for a plugin, for calls made on the app's own behalf, which skip plugins
+/// the project does not use.
+async fn plugin_set_up(app: &AppHandle, manifest: &PluginManifest) -> bool {
+    let Ok(settings) = read_settings(app, &manifest.id).await else {
+        return false;
+    };
+    set_up_for_project(app, manifest, &settings, current_project(app).as_deref())
+}
+
+/// Turns a plugin with no settings on or off for the open project. A plugin with settings is set up by entering
+/// them, or choosing another project's, instead.
+#[tauri::command]
+pub(crate) async fn plugin_use_in_project(
+    app_handle: AppHandle,
+    id: String,
+    used: bool,
+) -> Result<(), String> {
+    let manifest = installed_manifest(&registry(&app_handle)?, &id)?;
+    if !manifest.permissions.variables.is_empty() {
+        return Err(format!(
+            "{} is set up for a project by entering its settings.",
+            manifest.name
+        ));
+    }
+    let project = current_project(&app_handle)
+        .ok_or_else(|| format!("Open a project to use {} in it.", manifest.name))?;
+    let mut settings = read_settings(&app_handle, &id).await?;
+    settings.use_in(&project, used);
     write_settings(&app_handle, &id, &settings).await
 }
 
@@ -580,6 +632,9 @@ pub(crate) async fn plugin_branch_info(app_handle: AppHandle) -> Result<Vec<Valu
         if !manifest.contributes("gitBranchInfo") {
             continue;
         }
+        if !plugin_set_up(&app_handle, &manifest).await {
+            continue;
+        }
         let card = run(
             &app_handle,
             &installed.id,
@@ -615,6 +670,9 @@ pub(crate) async fn plugin_notifications(app_handle: AppHandle) -> Result<Vec<Va
             continue;
         };
         if !manifest.contributes("notifications") {
+            continue;
+        }
+        if !plugin_set_up(&app_handle, &manifest).await {
             continue;
         }
         match run(&app_handle, &installed.id, "notifications", json!({})).await {

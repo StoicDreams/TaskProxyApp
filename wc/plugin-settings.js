@@ -69,6 +69,20 @@
             }
             const settings = Array.isArray(view.settings) ? view.settings : [];
             const signIns = Array.isArray(view.signIns) ? view.signIns : [];
+            if (!settings.length) {
+                // A plugin with nothing to set up is turned on for each project that uses it.
+                box.appendChild(el('p', { class: 'plugin-muted' }, view.used
+                    ? `This plugin is on for ${project}.`
+                    : `This plugin is off for ${project}, so it stays out of its menu. Turn it on to use it here.`));
+                const turn = button(view.used ? 'Stop using it in this project' : 'Use in this project', view.used ? 'secondary' : 'primary', view.used ? 'link-slash' : 'link');
+                turn.dataset.role = 'use-in-project';
+                turn.addEventListener('click', async () => {
+                    if (await webui.proxy.plugins.useInProject(id, !view.used)) t.changed();
+                });
+                box.appendChild(turn);
+                t.replaceChildren(box);
+                return;
+            }
             if (view.signIn) {
                 const current = signIns.find(choice => choice.id === view.signIn);
                 const others = Math.max((current?.projects || 1) - 1, 0);
@@ -113,7 +127,7 @@
                 t.fields(box, id, settings, 'Save for this project');
             }
             box.appendChild(el('small', { class: 'plugin-muted' },
-                'Saved encrypted, for this plugin only. A project or global variable with the same name takes its place.'));
+                'Saved encrypted, for this plugin only. A project variable with the same name takes its place.'));
             t.replaceChildren(box);
         },
         /** The settings' inputs, and buttons to save them and to clear saved secrets. */

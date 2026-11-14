@@ -128,6 +128,7 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 
 Plugins such as Jira are WebAssembly in the separate TaskProxyPlugins repo (`../TaskProxyPlugins`), run by `src-tauri/src/plugins/` with Extism, and drawn by `wc/plugin-page.js`. `Docs/Plugins.md` covers the permission model, the catalog, and signing.
 
+- **A plugin shows only in projects set up for it.** That means its settings (a sign-in) for the project, or, for a plugin with no settings, being turned on for it. Until then it has no nav entry, cards, or notifications there, and `run` in `commands.rs` refuses its calls. Global variables never set a plugin up, since they reach every project. Keep this for every plugin.
 - **A plugin reaches nothing directly.** Every host call goes through `CallContext::handle` in `runtime.rs`, which checks it against the manifest. Add a host call there and in the SDK's `host.rs` together, and test the refusal with the test plugin.
 - **Plugin text is untrusted.** `plugin-page.js` builds with `textContent`, escapes anything a Web UI component puts in `innerHTML` (such as `label`), and sanitizes markdown.
 - **Plugin releases never need an app release,** and nothing in this repo should change when a plugin does. The test plugin's `.wasm` and signatures in `src-tauri/tests/fixtures/plugins/` change only when a test here needs a new host call: rebuild them with `pwsh ./scripts/build.ps1 -UpdateAppFixtures` in TaskProxyPlugins, which also replaces the throwaway test key.

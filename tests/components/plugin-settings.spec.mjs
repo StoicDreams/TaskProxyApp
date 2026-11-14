@@ -100,14 +100,45 @@ test.describe('plugins set up per project', () => {
         await expect(nav(page).locator('[url="/plugin/jira/views"]')).toHaveCount(1);
     });
 
-    test('once set up for another project, an unset project offers to set it up', async ({ page }) => {
+    test('a project not set up for a plugin never shows it, even when other projects are', async ({ page }) => {
         await openApp(page, {
             plugins: [{ id: 'jira', version: '0.1.0', enabled: true, signed: true, manifest: jira, configured: false, signIns: 1 }],
+            pluginSettings: { jira: { hasProject: true, signIn: null, settings: fields(), signIns: [work] } },
         });
-        await expect(nav(page)).toContainText('Jira');
-        await expect(nav(page)).toContainText('Set up for this project');
-        await expect(nav(page).locator('[url="/plugin/jira/issues"]')).toHaveCount(1);
-        await expect(nav(page).locator('[url="/plugin/jira/views"]')).toHaveCount(0);
+        await expect(page.locator('app-plugin-settings')).toHaveCount(0);
+        await expect(nav(page)).not.toContainText('Jira');
+        await expect(nav(page).locator('[url^="/plugin/jira/"]')).toHaveCount(0);
+        // It is set up from the Plugins drawer, which opens its settings, offering those of the other projects.
+        await page.evaluate(() => document.querySelector('app-plugins-drawer').open('jira'));
+        const card = page.locator('webui-drawer.shared [data-plugin="jira"]');
+        await expect(card.locator('[data-role="project-state"]')).toHaveText(/not set up/);
+        await expect(card.locator('[data-role="sign-in-choice"]')).toBeVisible();
+        await page.evaluate(() => {
+            const list = window.__backend.handlers.plugin_list;
+            window.__backend.handlers.plugin_list = () => list().map(plugin => ({ ...plugin, configured: true }));
+        });
+        await card.locator('[data-role="sign-in-choice"] webui-button', { hasText: 'Use these' }).click();
+        await expect(nav(page).locator('[url="/plugin/jira/views"]')).toHaveCount(1);
+    });
+
+    test('a plugin with no settings is turned on for each project that uses it', async ({ page }) => {
+        const notes = { id: 'notes', name: 'Notes', version: '0.1.0', apiVersion: 1, icon: 'note-sticky', permissions: { hosts: [], variables: [], git: [] }, pages: [{ id: 'list', name: 'All Notes' }] };
+        await openApp(page, {
+            plugins: [{ id: 'notes', version: '0.1.0', enabled: true, signed: true, manifest: notes, configured: false }],
+        });
+        await expect(nav(page)).not.toContainText('Notes');
+        await page.evaluate(() => document.querySelector('app-plugins-drawer').open('notes'));
+        const card = page.locator('webui-drawer.shared [data-plugin="notes"]');
+        await expect(card).toContainText('Use in this project');
+        const turn = card.locator('[data-role="use-in-project"]');
+        await expect(turn).toContainText('Use in this project');
+        await turn.click();
+        await expect.poll(() => calls(page, 'plugin_use_in_project')).toEqual([{ id: 'notes', used: true }]);
+        await expect(nav(page).locator('[url="/plugin/notes/list"]')).toHaveCount(1);
+        await expect(turn).toContainText('Stop using it in this project');
+        await turn.click();
+        await expect.poll(() => calls(page, 'plugin_use_in_project')).toHaveLength(2);
+        await expect(nav(page).locator('[url^="/plugin/notes/"]')).toHaveCount(0);
     });
 
     test('switching projects asks again which plugins are set up', async ({ page }) => {

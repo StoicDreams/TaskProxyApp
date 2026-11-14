@@ -152,6 +152,7 @@ pub fn run() {
             plugins::commands::plugin_render,
             plugins::commands::plugin_save_settings,
             plugins::commands::plugin_use_sign_in,
+            plugins::commands::plugin_use_in_project,
             plugins::commands::plugin_settings,
             plugins::commands::plugin_set_enabled,
             appdata::delete_securitykey,

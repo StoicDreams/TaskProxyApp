@@ -246,7 +246,7 @@
             const plugins = await webui.proxy.plugins.list(() => undefined);
             if (load !== t._load) return;
             const info = (plugins || []).find(item => item.id === plugin);
-            if (info?.configured === false) {
+            if (info && !info.configured) {
                 t.showSetup(info);
                 return;
             }
@@ -266,9 +266,12 @@
             const project = webui.getData('app-current-project')?.display || 'this project';
             const box = el('webui-flex', { column: true, gap: 'var(--padding)', class: 'plugin-setup' });
             box.appendChild(el('h3', { class: 'plugin-heading' }, `Set up ${name} for ${project}`));
-            box.appendChild(el('p', {}, info.signIns > 0
-                ? `${name} is not set up for this project yet. Use the settings from another project, or enter new ones for this one.`
-                : `${name} needs a few settings before it can connect. They are kept for this project only.`));
+            const needsSettings = (info.manifest?.permissions?.variables || []).length > 0;
+            box.appendChild(el('p', {}, !needsSettings
+                ? `${name} is not turned on for this project.`
+                : info.signIns > 0
+                    ? `${name} is not set up for this project yet. Use the settings from another project, or enter new ones for this one.`
+                    : `${name} needs a few settings before it can connect. They are kept for this project only.`));
             const settings = el('app-plugin-settings', { plugin: info.id });
             settings.addEventListener('plugin-settings-changed', () => t.load());
             box.appendChild(settings);

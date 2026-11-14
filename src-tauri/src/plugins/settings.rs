@@ -1,11 +1,12 @@
 //! A plugin's settings, kept per project. The user enters them as a sign-in, such as a Jira site, email, and
 //! token, and each project uses one sign-in or none, so a project only reaches the accounts it was set up with.
-//! Projects can share a sign-in.
+//! Projects can share a sign-in. A plugin with no settings is instead turned on for each project that uses it, so
+//! no project shows a plugin nobody set up for it.
 //!
 //! The file was once one set of values for every project. That set becomes a sign-in for the project that is
 //! open when it is first read.
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +23,9 @@ pub(crate) struct PluginSettings {
     /// The sign-in each project uses, by project id.
     #[serde(default)]
     pub projects: HashMap<String, String>,
+    /// The projects a plugin with no settings is turned on for.
+    #[serde(default)]
+    pub used_in: BTreeSet<String>,
 }
 
 impl PluginSettings {
@@ -32,7 +36,10 @@ impl PluginSettings {
         }
         let value: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|err| err.to_string())?;
-        if value.get("signIns").is_some() || value.get("projects").is_some() {
+        if ["signIns", "projects", "usedIn"]
+            .iter()
+            .any(|key| value.get(key).is_some())
+        {
             return serde_json::from_value(value).map_err(|err| err.to_string());
         }
         let values: HashMap<String, String> =
@@ -114,6 +121,15 @@ impl PluginSettings {
         Ok(())
     }
 
+    /// Turns a plugin with no settings on or off for a project.
+    pub fn use_in(&mut self, project: &str, used: bool) {
+        if used {
+            self.used_in.insert(project.to_string());
+        } else {
+            self.used_in.remove(project);
+        }
+    }
+
     /// How many projects use each sign-in.
     pub fn uses(&self, id: &str) -> usize {
         self.projects.values().filter(|used| *used == id).count()
@@ -191,5 +207,20 @@ mod tests {
         settings.save("p4", values(&[("jira_site", "four")]));
         assert_ne!(settings.projects["p4"], first);
         assert!(settings.values(None).is_empty());
+    }
+
+    #[test]
+    fn a_plugin_with_no_settings_is_turned_on_per_project() {
+        let mut settings = PluginSettings::default();
+        settings.use_in("p1", true);
+        assert!(settings.used_in.contains("p1"));
+        assert!(!settings.used_in.contains("p2"));
+        let written = serde_json::to_vec(&settings).unwrap();
+        assert_eq!(
+            PluginSettings::read(&written, Some("p2")).unwrap(),
+            settings
+        );
+        settings.use_in("p1", false);
+        assert!(settings.used_in.is_empty());
     }
 }
