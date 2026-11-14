@@ -392,15 +392,17 @@ test.describe('plugins', () => {
     test('the view editor', async ({ page }) => {
         await openJira(page, '/plugin/jira/views?edit=1');
         await loop(page, 'view-editor', async () => {
-            const layer = view(page).locator('details.plugin-section').nth(2);
-            await layer.scrollIntoViewIfNeeded();
-            const field = layer.locator('webui-dropdown');
+            // Each layer holds its own Subtasks section, with another field list, so use the layer's own, which comes first.
+            const layer = () => view(page).locator('details.plugin-section')
+                .filter({ has: page.locator(':scope > summary strong', { hasText: /^Grandparent$/ }) });
+            await layer().scrollIntoViewIfNeeded();
+            const field = layer().locator('webui-dropdown').first();
             await moveTo(page, field);
             await page.waitForTimeout(400);
             await field.evaluate(el => { el.value = 'status'; });
             await page.waitForTimeout(500);
-            await clickOn(page, layer.locator('webui-button', { hasText: 'Add' }), { after: 1200 });
-            await moveTo(page, view(page).locator('details.plugin-section').nth(2).locator('.plugin-row', { hasText: 'Status' }));
+            await clickOn(page, layer().locator('webui-button', { hasText: 'Add' }).first(), { after: 1200 });
+            await moveTo(page, layer().locator('.plugin-row', { hasText: 'Status' }).first());
         }, { dir });
     });
 

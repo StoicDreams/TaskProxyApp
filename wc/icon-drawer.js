@@ -73,7 +73,7 @@
         },
         disconnected() { },
         shadowTemplate: `
-<webui-icon icon="icons"></webui-icon>
+<webui-icon icon="icons|fill"></webui-icon>
 <style type="text/css">
 :host {
     display:inline-flex;
