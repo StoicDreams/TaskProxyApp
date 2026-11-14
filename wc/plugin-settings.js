@@ -74,7 +74,7 @@
                 box.appendChild(el('p', { class: 'plugin-muted' }, view.used
                     ? `This plugin is on for ${project}.`
                     : `This plugin is off for ${project}, so it stays out of its menu. Turn it on to use it here.`));
-                const turn = button(view.used ? 'Stop using it in this project' : 'Use in this project', view.used ? 'secondary' : 'primary', view.used ? 'link-slash' : 'link');
+                const turn = button(view.used ? 'Stop using it in this project' : 'Use in this project', view.used ? 'secondary' : 'primary', view.used ? 'xmark' : 'link');
                 turn.dataset.role = 'use-in-project';
                 turn.addEventListener('click', async () => {
                     if (await webui.proxy.plugins.useInProject(id, !view.used)) t.changed();
@@ -90,7 +90,7 @@
                     ? `${project} uses these settings, as ${others === 1 ? 'one other project does' : `${others} other projects do`}. Changes here change them there too.`
                     : `These settings are for ${project} only.`));
                 t.fields(box, id, settings, 'Save settings');
-                const stop = button('Stop using them in this project', 'secondary', 'link-slash');
+                const stop = button('Stop using them in this project', 'secondary', 'xmark');
                 stop.dataset.role = 'stop-using';
                 stop.addEventListener('click', () => {
                     webui.dialog.confirm(`Stop using these settings in ${escape(project)}? ${others ? 'The other projects keep them.' : 'They are forgotten, since no other project uses them.'}`, async () => {

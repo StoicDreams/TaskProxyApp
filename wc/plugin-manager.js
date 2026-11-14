@@ -148,7 +148,10 @@
                 card.appendChild(head);
                 if (entry.description) card.appendChild(el('p', {}, entry.description));
                 const update = installed && isNewer(entry.version, installed.version);
-                if (installed && !update) {
+                if (entry.incompatible) {
+                    // No listed version supports a plugin spec this app runs, so it says which side to update.
+                    card.appendChild(el('p', { class: 'plugin-muted', 'data-role': 'incompatible' }, entry.incompatible));
+                } else if (installed && !update) {
                     card.appendChild(el('span', { class: 'plugin-badge', 'data-theme': 'success' }, 'Installed'));
                 } else {
                     const action = button(update ? `Update to v${entry.version}` : 'Install', 'primary', update ? 'refresh' : 'download');

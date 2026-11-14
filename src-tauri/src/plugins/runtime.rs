@@ -43,14 +43,30 @@ pub(crate) trait HttpSend: Send + Sync {
 #[derive(Deserialize, Debug)]
 #[serde(tag = "op", rename_all = "camelCase")]
 enum HostRequest {
-    Var { key: String },
-    StoreGet { key: String },
-    StoreSet { key: String, value: Option<Value> },
-    ProjectFileRead { path: String },
-    ProjectFileWrite { path: String, text: String },
+    Var {
+        key: String,
+    },
+    StoreGet {
+        key: String,
+    },
+    StoreSet {
+        key: String,
+        value: Option<Value>,
+    },
+    ProjectFileRead {
+        path: String,
+    },
+    ProjectFileWrite {
+        path: String,
+        text: String,
+    },
     CurrentBranch,
     Now,
-    Http { request: HttpRequest },
+    Http {
+        request: HttpRequest,
+    },
+    /// Since spec 0.1.1.
+    HostInfo,
 }
 
 /// A plugin's own storage, kept in memory and saved encrypted after a call changes it.
@@ -160,6 +176,11 @@ impl CallContext {
                     .map(|elapsed| elapsed.as_millis() as u64)
                     .unwrap_or(0),
             )),
+            HostRequest::HostInfo => Ok(serde_json::json!({
+                "app": env!("CARGO_PKG_VERSION"),
+                "spec": self.manifest.spec_version()?.to_string(),
+                "platform": std::env::consts::OS,
+            })),
             HostRequest::Http { request } => {
                 self.check_url(&request.url)?;
                 let response = self.http.send(&request)?;
@@ -561,6 +582,25 @@ pub(crate) mod tests {
             r#"ok: "TEST-7-login""#
         );
         assert_eq!(host_call(&setup, json!({ "op": "now" })), "ok: true");
+    }
+
+    #[test]
+    fn host_info_names_the_app_spec_and_platform() {
+        let setup = setup();
+        let answer: Value =
+            serde_json::from_slice(&setup.context.handle(br#"{"op":"hostInfo"}"#)).unwrap();
+        assert_eq!(answer["ok"]["app"], env!("CARGO_PKG_VERSION"));
+        // The test plugin names only apiVersion 1, which runs as the newest 0.1 patch.
+        assert_eq!(answer["ok"]["spec"], crate::plugins::spec::SPEC_VERSIONS[0]);
+        assert_eq!(answer["ok"]["platform"], std::env::consts::OS);
+        let unknown: Value =
+            serde_json::from_slice(&setup.context.handle(br#"{"op":"processes"}"#)).unwrap();
+        assert!(
+            unknown["error"]
+                .as_str()
+                .unwrap()
+                .contains("did not understand")
+        );
     }
 
     #[test]

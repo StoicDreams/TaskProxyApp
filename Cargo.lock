@@ -6228,7 +6228,7 @@ checksum = "8c447be3a2abfa84b2d91680c56600bd6b2873866de27b36ec911be705e291da"
 
 [[package]]
 name = "taskproxy"
-version = "0.1.121"
+version = "0.1.122"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -6270,7 +6270,7 @@ dependencies = [
 
 [[package]]
 name = "taskproxy-ui"
-version = "0.1.121"
+version = "0.1.122"
 dependencies = [
  "js-sys",
  "serde",

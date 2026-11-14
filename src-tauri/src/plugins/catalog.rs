@@ -19,6 +19,11 @@ pub(crate) struct CatalogEntry {
     pub id: String,
     pub name: String,
     pub version: String,
+    /// The plugin spec versions this version supports. Entries from before spec versions only have `apiVersion`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spec: Vec<String>,
+    /// Kept for Task Proxy 0.1.121 and earlier, which require it.
+    #[serde(default)]
     pub api_version: u32,
     #[serde(default)]
     pub description: String,
@@ -33,6 +38,59 @@ pub(crate) struct CatalogEntry {
     pub manifest_signature: String,
     pub wasm: String,
     pub wasm_signature: String,
+    /// Older versions that support spec lines this one dropped, so an app that is not updated can still install
+    /// the newest version it can run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub versions: Vec<CatalogEntry>,
+    /// Set by Task Proxy, not the catalog: why no listed version runs in this app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incompatible: Option<String>,
+}
+
+fn version_key(version: &str) -> Vec<u32> {
+    version
+        .split('.')
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+impl CatalogEntry {
+    /// The newest listed version this app can run, or the newest listed with why it cannot.
+    pub fn for_this_app(self) -> CatalogEntry {
+        let mut candidates: Vec<CatalogEntry> = Vec::with_capacity(self.versions.len() + 1);
+        let mut newest = self;
+        candidates.append(&mut newest.versions);
+        candidates.push(newest);
+        candidates.sort_by_key(|entry| std::cmp::Reverse(version_key(&entry.version)));
+        let mut refusal = None;
+        for candidate in &candidates {
+            match super::spec::check(&candidate.name, &candidate.spec, candidate.api_version) {
+                Ok(_) => {
+                    let mut chosen = candidate.clone();
+                    chosen.versions.clear();
+                    chosen.incompatible = None;
+                    return chosen;
+                }
+                Err(err) if refusal.is_none() => refusal = Some(err),
+                Err(_) => {}
+            }
+        }
+        let mut chosen = candidates.swap_remove(0);
+        chosen.versions.clear();
+        chosen.incompatible = refusal;
+        chosen
+    }
+}
+
+/// Reads the catalog, skipping entries this app cannot read, so a new kind of entry never hides the others.
+pub(crate) fn read_catalog(body: &[u8]) -> Result<Vec<CatalogEntry>, String> {
+    let entries: Vec<Value> = serde_json::from_slice(body)
+        .map_err(|err| format!("The plugin catalog could not be read: {}", err))?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value::<CatalogEntry>(entry).ok())
+        .map(CatalogEntry::for_this_app)
+        .collect())
 }
 
 fn decode_base64(text: &str) -> Result<String, String> {
@@ -137,8 +195,7 @@ async fn download(url: &str) -> Result<Vec<u8>, String> {
 
 pub(crate) async fn fetch_catalog() -> Result<Vec<CatalogEntry>, String> {
     let body = download(CATALOG_URL).await?;
-    serde_json::from_slice(&body)
-        .map_err(|err| format!("The plugin catalog could not be read: {}", err))
+    read_catalog(&body)
 }
 
 /// Downloads a plugin from the catalog and checks it. Returns its manifest text and code.
@@ -156,6 +213,7 @@ pub(crate) async fn download_package(
 mod tests {
     use super::*;
     use crate::plugins::runtime::tests::{TEST_MANIFEST, TEST_WASM};
+    use serde_json::json;
 
     /// A key made only for these tests. Its private half is not kept anywhere.
     const TEST_KEY: &str = include_str!("../../tests/fixtures/plugins/test-signing.key.pub");
@@ -168,6 +226,7 @@ mod tests {
             id: "test".into(),
             name: "Test Plugin".into(),
             version: "0.1.0".into(),
+            spec: Vec::new(),
             api_version: 1,
             description: String::new(),
             category: "testing".into(),
@@ -177,7 +236,46 @@ mod tests {
             manifest_signature: MANIFEST_SIGNATURE.into(),
             wasm: format!("{}test/0.1.0/plugin.wasm", CATALOG_ROOT),
             wasm_signature: WASM_SIGNATURE.into(),
+            versions: Vec::new(),
+            incompatible: None,
         }
+    }
+
+    fn listed(version: &str, spec: &[&str]) -> CatalogEntry {
+        CatalogEntry {
+            version: version.into(),
+            spec: spec.iter().map(|spec| spec.to_string()).collect(),
+            api_version: 0,
+            ..entry()
+        }
+    }
+
+    #[test]
+    fn the_newest_version_this_app_runs_is_offered() {
+        let mut newest = listed("0.3.0", &["9.0.0"]);
+        newest.versions = vec![listed("0.1.4", &["0.1.0"]), listed("0.2.0", &["0.0.1"])];
+        let chosen = newest.for_this_app();
+        assert_eq!(chosen.version, "0.1.4");
+        assert!(chosen.incompatible.is_none());
+        assert!(chosen.versions.is_empty());
+        // When none run, the newest is shown with why.
+        let mut none = listed("0.3.0", &["9.0.0"]);
+        none.versions = vec![listed("0.2.0", &["0.0.1"])];
+        let shown = none.for_this_app();
+        assert_eq!(shown.version, "0.3.0");
+        assert!(shown.incompatible.unwrap().contains("Update Task Proxy"));
+        // Old entries name only apiVersion 1.
+        assert!(entry().for_this_app().incompatible.is_none());
+    }
+
+    #[test]
+    fn unreadable_entries_are_skipped() {
+        let good = serde_json::to_value(entry()).unwrap();
+        let body = serde_json::to_vec(&json!([{ "id": "future", "shape": "new" }, good])).unwrap();
+        let read = read_catalog(&body).unwrap();
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].id, "test");
+        assert!(read_catalog(b"{").is_err());
     }
 
     #[test]

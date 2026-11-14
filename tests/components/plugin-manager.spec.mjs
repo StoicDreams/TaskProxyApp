@@ -137,6 +137,14 @@ test.describe('catalog', () => {
         await expect(manager.locator('[data-catalog="jira"] webui-button')).toHaveText('Update to v0.10.0');
     });
 
+    test('a plugin for a plugin spec this app does not support says which side to update, and offers no install', async ({ page }) => {
+        const reason = 'Jira supports plugin spec 0.2.0, and this version of Task Proxy supports 0.1.1. Update Task Proxy to use it.';
+        const manager = await openManager(page, { plugins: [], catalog: [{ ...entry('0.4.0'), spec: ['0.2.0'], incompatible: reason }] });
+        const card = manager.locator('[data-catalog="jira"]');
+        await expect(card.locator('[data-role="incompatible"]')).toHaveText(reason);
+        await expect(card.locator('webui-button')).toHaveCount(0);
+    });
+
     test('a catalog that cannot be reached says so, and installed plugins still show', async ({ page }) => {
         const manager = await openManager(page);
         // webui-flex copies its class to its own slot, so name the element.

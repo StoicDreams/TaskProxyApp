@@ -2,15 +2,19 @@
 //! does not declare, and shows these permissions before a plugin is installed.
 use crate::prelude::*;
 
-/// The plugin API version this app runs. A plugin built for another version is refused.
-pub(crate) const API_VERSION: u32 = 1;
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PluginManifest {
     pub id: String,
     pub name: String,
     pub version: String,
+    /// The plugin spec versions it supports, one for each line, each the lowest patch of that line it needs, as
+    /// `["0.1.0"]`. See `spec.rs`.
+    #[serde(default)]
+    pub spec: Vec<String>,
+    /// Only for Task Proxy 0.1.121 and earlier, which read no `spec` and run only `apiVersion: 1`, which is spec
+    /// 0.1.0. A manifest with no `spec` is read as that.
+    #[serde(default)]
     pub api_version: u32,
     #[serde(default)]
     pub description: String,
@@ -122,19 +126,7 @@ impl PluginManifest {
                 self.version
             ));
         }
-        if self.api_version != API_VERSION {
-            return Err(format!(
-                "{} is built for plugin API version {}, and this version of Task Proxy runs version {}. {}",
-                self.name,
-                self.api_version,
-                API_VERSION,
-                if self.api_version > API_VERSION {
-                    "Update Task Proxy to use it."
-                } else {
-                    "Install a newer version of the plugin."
-                }
-            ));
-        }
+        self.spec_version()?;
         if !self.category.is_empty() && !is_slug(&self.category) {
             return Err(format!("The category '{}' is not valid.", self.category));
         }
@@ -175,6 +167,11 @@ impl PluginManifest {
             return Err(format!("The page id '{}' is not valid.", page.id));
         }
         Ok(())
+    }
+
+    /// The spec version this app runs the plugin with, or why it cannot run it.
+    pub fn spec_version(&self) -> Result<super::spec::SpecVersion, String> {
+        super::spec::check(&self.name, &self.spec, self.api_version)
     }
 
     pub fn allows_host(&self, host: &str) -> bool {
@@ -247,10 +244,13 @@ mod tests {
         ] {
             assert!(manifest(changes.clone()).is_err(), "{}", changes);
         }
-        let newer = manifest(json!({ "apiVersion": 2 })).unwrap_err();
+        // Old manifests name only apiVersion 1. Others need a spec this app supports.
+        assert!(manifest(json!({ "apiVersion": 2 })).is_err());
+        assert!(manifest(json!({ "apiVersion": 0 })).is_err());
+        assert!(manifest(json!({ "spec": ["0.1.0"], "apiVersion": 0 })).is_ok());
+        let newer = manifest(json!({ "spec": ["0.9.0"] })).unwrap_err();
         assert!(newer.contains("Update Task Proxy"), "{}", newer);
-        let older = manifest(json!({ "apiVersion": 0 })).unwrap_err();
-        assert!(older.contains("newer version of the plugin"), "{}", older);
+        assert!(manifest(json!({ "spec": ["0.1"] })).is_err());
     }
 
     #[test]

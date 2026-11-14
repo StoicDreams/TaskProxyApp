@@ -381,6 +381,9 @@ pub(crate) async fn plugin_install_catalog(
         .into_iter()
         .find(|entry| entry.id == id)
         .ok_or_else(|| format!("The plugin catalog has no plugin named {}.", id))?;
+    if let Some(reason) = &entry.incompatible {
+        return Err(reason.clone());
+    }
     let (manifest, wasm) = super::catalog::download_package(&entry, &public_key).await?;
     let registry = registry(&app_handle)?;
     let installed = task::spawn_blocking({

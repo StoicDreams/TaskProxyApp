@@ -300,6 +300,13 @@
             t._ctx = 'page';
             t.replaceChildren(t.build(node));
             t.syncToggles(t);
+            // A reorder list moved from the keyboard keeps focus on the item that moved, after the plugin redraws.
+            const refocus = t._refocus;
+            t._refocus = null;
+            if (refocus) {
+                [...t.querySelectorAll('.plugin-reorder-item')].find(item => item.dataset.id === refocus)
+                    ?.querySelector('.plugin-reorder-handle')?.focus();
+            }
         },
         /**
          * Builds a node. Actions from what it builds answer to where it was built: the page, or the dialog. `t._ctx`
@@ -396,6 +403,8 @@
                 }
                 case 'form':
                     return t.buildForm(node, ctx);
+                case 'reorder':
+                    return t.buildReorder(node, ctx);
                 case 'notice':
                     return el('webui-alert', { theme: theme(node.theme) || 'info', show: true }, node.text);
                 case 'empty':
@@ -665,7 +674,8 @@
             const shown = (node.fields || []).filter(field => field.kind !== 'hidden');
             const extra = (node.buttons || []).length || (node.children || []).length;
             const inline = !extra && shown.length <= 1 && !shown.some(field => ['textarea', 'multiselect', 'checkbox'].includes(field.kind) || field.suggest);
-            const form = el('form', { class: inline ? 'plugin-form plugin-form-inline' : 'plugin-form' });
+            // A plugin can also ask for every field and button in one row.
+            const form = el('form', { class: node.inline === true ? 'plugin-form plugin-form-inline plugin-form-row' : inline ? 'plugin-form plugin-form-inline' : 'plugin-form' });
             const readers = [];
             (node.fields || []).forEach(field => t.addField(form, field, readers, ctx));
             const actions = el('webui-flex', { gap: 'var(--padding)', wrap: true, align: 'center', class: 'plugin-form-actions' });
@@ -704,6 +714,48 @@
                 send();
             });
             return form;
+        },
+        /**
+         * Items put in order by dragging, or with Alt+Up and Alt+Down, using the app's drag and drop, as user pages
+         * and the navigation manager do. Once the order settles it runs the node's action with the ids as `order`.
+         */
+        buildReorder(node, ctx) {
+            const t = this;
+            const list = el('div', { class: 'plugin-reorder', role: 'list' });
+            const rows = [];
+            const order = () => [...list.children].filter(row => row.classList.contains('plugin-reorder-item')).map(row => row.dataset.id);
+            let saved = null;
+            let timer = null;
+            const changed = row => {
+                // Moving an item blurs it, so the item is focused again once the plugin redraws. Several quick moves
+                // from the keyboard are sent as one.
+                t._refocus = row.dataset.id;
+                clearTimeout(timer);
+                timer = setTimeout(() => {
+                    const now = order();
+                    if (now.join('\n') === saved.join('\n')) return;
+                    saved = now;
+                    t.run(node.action, { order: now }, ctx);
+                }, 400);
+            };
+            const dragNDrop = getDragNDropSetup(() => rows.filter(row => row.isConnected));
+            (node.items || []).forEach(item => {
+                const row = el('div', { class: 'plugin-reorder-item drag-handle', role: 'listitem', 'data-id': `${item.id ?? ''}` });
+                const label = (item.children || []).find(child => child?.type === 'text')?.text ?? `${item.id ?? ''}`;
+                row.appendChild(el('span', {
+                    class: 'plugin-reorder-handle', tabindex: 0,
+                    'aria-label': `${label}. Drag, or press Alt+Up or Alt+Down, to move it.`,
+                    title: 'Drag, or press Alt+Up or Alt+Down, to move',
+                }, '⠿'));
+                const body = el('webui-flex', { wrap: true, gap: 'var(--padding)', align: 'center', class: 'plugin-reorder-body' });
+                (item.children || []).forEach(child => body.appendChild(t.build(child)));
+                row.appendChild(body);
+                list.appendChild(row);
+                rows.push(row);
+                dragNDrop(row, () => changed(row));
+            });
+            saved = order();
+            return list;
         },
         /** Asks the plugin for something, such as choices, and returns its answer without acting on it. */
         async ask(action, quiet) {

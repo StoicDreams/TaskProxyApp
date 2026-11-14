@@ -12,7 +12,7 @@ Decided:
 - **Plugin UI:** plugins return screens as data, and Task Proxy draws them. No plugin code runs in the window.
 - **Manifest:** `plugin.json`, with permissions for hosts, variables, and git, shown before installing.
 - **Install:** per user, from the CDN catalog with signatures checked, or from a folder for development. Never from a repository.
-- **Versioning:** each manifest names its `apiVersion`, and the app refuses other versions.
+- **Versioning:** a plugin spec, versioned apart from the app and plugins, in TaskProxyPlugins' `spec/`. Each app release and each plugin version lists the spec versions it supports, and they match on a shared line.
 - **Secrets:** a plugin's settings are saved encrypted for it alone, and it reads only the variables it declares.
 
 Still to decide:
@@ -22,7 +22,7 @@ Still to decide:
 
 ### Next plugin: Task Manager
 
-A plugin listing every running task, background processes included, so a stuck one can be found and closed from Task Proxy. It comes from a real case: a `trunk serve` outlived the `cargo tauri dev` that started it, held port 1426 and blocked every later dev run, and Ctrl+C didn't stop the new runs.
+A plugin listing every running task, background processes included, drafted as plugin spec 0.1.3 in TaskProxyPlugins' `spec/0.1.md` (section 10), so a stuck one can be found and closed from Task Proxy. It comes from a real case: a `trunk serve` outlived the `cargo tauri dev` that started it, held port 1426 and blocked every later dev run, and Ctrl+C didn't stop the new runs.
 
 - **What it shows:**
   - a table of processes with their name, command line, folder, parent, start time or age, CPU and memory, and the ports they listen on

@@ -390,3 +390,62 @@ test.describe('forms with panels and dialogs', () => {
         expect(sent.request.form).toEqual({ body: 'Thanks @Sara Kim can you check?', 'body.mentions': { '@Sara Kim': 'sara-2' } });
     });
 });
+
+test.describe('spec 0.1.2', () => {
+    const items = ['Key', 'Parent key', 'Parent story points'].map((label, index) => ({
+        id: `id-${index}`,
+        children: [text(label), { type: 'link', text: '✕', action: action('remove', `Remove ${label}`, { params: { index } }) }],
+    }));
+    const list = { type: 'reorder', items, action: action('order', 'Reorder') };
+    const orders = async page => (await calls(page, 'plugin_action')).filter(call => call.request.action === 'order').map(call => call.request.form.order);
+
+    test('a reorder list is put in order by dragging an item, and sends the new order once', async ({ page }) => {
+        await openPlugin(page, list, { pluginActions: { 'test/order': { refresh: true }, 'test/remove': {} } });
+        const rows = page.locator('app-plugin-page .plugin-reorder-item');
+        await expect(rows).toHaveCount(3);
+        await expect(rows.first()).toContainText('Key');
+        // The app's drag starts once the mouse is held, as on user pages and in the navigation manager.
+        const from = await rows.nth(2).boundingBox();
+        const to = await rows.nth(0).boundingBox();
+        await page.mouse.move(from.x + 10, from.y + from.height / 2);
+        await page.mouse.down();
+        await page.waitForTimeout(300);
+        await page.mouse.move(from.x + 10, to.y + 2, { steps: 8 });
+        await page.mouse.up();
+        await expect.poll(() => orders(page)).toEqual([['id-2', 'id-0', 'id-1']]);
+        // A click on an item's own link still runs it, and is not a move.
+        await rows.nth(1).locator('a', { hasText: '✕' }).click();
+        await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.action)).toContain('remove');
+        expect(await orders(page)).toHaveLength(1);
+    });
+
+    test('Alt+Down moves an item from the keyboard, and keeps focus on it after the plugin redraws', async ({ page }) => {
+        await openPlugin(page, list, { pluginActions: { 'test/order': { refresh: true } } });
+        const handle = page.locator('app-plugin-page .plugin-reorder-item[data-id="id-0"] .plugin-reorder-handle');
+        await expect(handle).toHaveAttribute('aria-label', /Key\. Drag, or press Alt\+Up or Alt\+Down/);
+        await handle.focus();
+        await page.keyboard.press('Alt+ArrowDown');
+        await page.keyboard.press('Alt+ArrowDown');
+        // Quick moves are sent together.
+        await expect.poll(() => orders(page)).toEqual([['id-1', 'id-2', 'id-0']]);
+        await expect.poll(() => page.evaluate(() => document.activeElement?.closest?.('.plugin-reorder-item')?.dataset.id)).toBe('id-0');
+    });
+
+    test('an inline form sets its fields and button in one row', async ({ page }) => {
+        const choices = [{ value: '', label: 'Choose…' }, { value: 'summary', label: 'Summary' }];
+        await openPlugin(page, {
+            type: 'form', inline: true, submit: action('add', 'Add'),
+            fields: ['Issue', 'Parent', 'Grandparent'].map((label, layer) => ({ name: `layer${layer}`, label, kind: 'select', options: choices, value: '' })),
+        }, { pluginActions: { 'test/add': {} } });
+        const form = page.locator('app-plugin-page form.plugin-form-row');
+        await expect(form.locator('webui-dropdown')).toHaveCount(3);
+        const boxes = await form.locator(':scope > *').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()));
+        expect(boxes).toHaveLength(4);
+        const overlap = Math.min(...boxes.map(box => box.bottom)) - Math.max(...boxes.map(box => box.top));
+        expect(overlap, 'every field and the button share one row').toBeGreaterThan(0);
+        const widths = boxes.slice(0, 3).map(box => Math.round(box.width));
+        expect(Math.max(...widths) - Math.min(...widths), 'the fields share the row evenly').toBeLessThan(5);
+        await form.locator('webui-button', { hasText: 'Add' }).click();
+        await expect.poll(async () => (await calls(page, 'plugin_action'))[0]?.request.form).toEqual({ layer0: '', layer1: '', layer2: '' });
+    });
+});

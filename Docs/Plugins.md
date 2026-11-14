@@ -34,6 +34,31 @@ Plugins add integrations, such as Jira, as WebAssembly that users install. Their
 - **Mentions:** a text field with `suggest` asks the plugin for people as the user types `@`, and the form also sends `<name>.mentions`, each `@Name` written with its id.
 - **Plugins drawer:** the puzzle piece button beside Icons & Emojis (`wc/plugins-drawer.js`) opens the shared right drawer with `app-plugin-manager`. A plugin's `openSettings` host action opens it on that plugin's settings.
 
-## Changing the plugin API
+## Spec versions
 
-The protocol in the SDK's `protocol.rs` and `ui.rs` is shared with released apps. Adding optional fields and node types is safe. Renaming or removing anything needs a new `API_VERSION` in `plugins/manifest.rs` and the SDK, since a manifest for another version is refused.
+The contract between Task Proxy and plugins is the plugin spec, versioned on its own, in TaskProxyPlugins' [`spec/`](https://github.com/StoicDreams/TaskProxyPlugins/tree/main/spec) folder. Its README has the versioning rules and the full compatibility tables.
+
+- **What this app supports:** `SPEC_VERSIONS` in `src-tauri/src/plugins/spec.rs` lists the newest patch of each spec line this app implements.
+- **What each plugin supports:** each manifest lists its spec versions as `spec`, each the lowest patch it needs.
+- **How they match:** on a line both list, when this app's patch is at least the plugin's. A manifest with no `spec` and `apiVersion: 1` is spec 0.1.0.
+- **When there is no match:** `PluginManifest::validate` refuses the plugin and says which side to update.
+- **The catalog:** `catalog.rs` offers the newest listed version this app can run, from each entry and its older `versions`, and skips entries it cannot read.
+
+| Task Proxy | Spec versions |
+|---|---|
+| 0.1.115 to 0.1.117 | An early form of 0.1.0, as `apiVersion: 1` |
+| 0.1.118 to 0.1.121 | 0.1.0, as `apiVersion: 1`, without reading `spec` |
+| After 0.1.121 | 0.1.2 |
+
+To change what plugins can do:
+
+1. **Change the spec first,** following its README's "Changing the spec".
+2. **Implement it here:**
+   - `runtime.rs` for host calls
+   - `plugin-page.js` for nodes and results
+   - `plugin_host_action` in `commands.rs` for host actions
+   - `manifest.rs` for permissions
+3. **Raise the patch** in `SPEC_VERSIONS` only once this app does everything that patch describes.
+4. **Record it:** add a row to the table above and to the spec README's.
+
+A new spec line is added beside the old one, which stays supported for as long as plugins need it.
