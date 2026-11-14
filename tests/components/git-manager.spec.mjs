@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, callOrder, onCommand, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, calls, callOrder, onCommand, dialogButton, openDialog } from '../support/app.mjs';
 
 const open = async (page, git = {}, state = {}) => {
     await openApp(page, { currentPage: '/git-controller', git: { changes: ['M  a.txt', '?? b.txt', ' D c.txt'], ...git }, ...state, files: { 'a.txt': 'one', 'b.txt': 'two', ...(state.files || {}) } }, '/git-controller');
@@ -238,7 +238,7 @@ test('deleting a remote branch says so', async ({ page }) => {
     await openBranches(page);
     await manager(page).locator('webui-button.btn-delete').click();
     // Scoped to the dialog, because the page's help text also mentions the remote.
-    await expect(page.locator('dialog').getByText('from the remote')).toBeVisible();
+    await expect(openDialog(page).getByText('from the remote')).toBeVisible();
 });
 test('pull, push, sync, and fetch call the backend', async ({ page }) => {
     await open(page);
@@ -283,11 +283,11 @@ test.describe('branches', () => {
     test('a new branch needs a name, and starts from the branch it was made from', async ({ page }) => {
         await openClean(page);
         await row(page, 'other').and(page.locator('.btn-new')).click();
-        await expect(page.locator('dialog[open]')).toContainText("Create New Branch from 'other'");
+        await expect(openDialog(page)).toContainText("Create New Branch from 'other'");
         await dialogButton(page, 'Create').click();
-        await expect(page.locator('dialog[open]')).toContainText('Branch name cannot be empty.');
+        await expect(openDialog(page)).toContainText('Branch name cannot be empty.');
         expect(await calls(page, 'git_create_branch')).toEqual([]);
-        await page.locator('dialog[open] webui-input-text[name="branchName"] input').fill('  feature  ');
+        await openDialog(page).locator('webui-input-text[name="branchName"] input').fill('  feature  ');
         await dialogButton(page, 'Create').click();
         await expect.poll(async () => (await calls(page, 'git_create_branch'))).toEqual([{ repo: '', branch: 'feature', baseBranch: 'other' }]);
         await expect(manager(page).locator('webui-alert').first()).toContainText('Branch created.');
@@ -297,12 +297,12 @@ test.describe('branches', () => {
         await openBranches(page);
         await row(page, 'other').and(page.locator('.btn-new')).click();
         await expect(manager(page).locator('webui-alert').first()).toContainText('uncommitted changes');
-        await expect(page.locator('dialog[open]')).toHaveCount(0);
+        await expect(openDialog(page)).toHaveCount(0);
     });
     test('merging asks first, naming both branches', async ({ page }) => {
         await openClean(page);
         await row(page, 'other').and(page.locator('.btn-merge')).click();
-        await expect(page.locator('dialog[open]')).toContainText('merge other into the current branch (main)');
+        await expect(openDialog(page)).toContainText('merge other into the current branch (main)');
         await dialogButton(page, 'Cancel').click();
         await page.waitForTimeout(100);
         expect(await calls(page, 'git_merge_branch')).toEqual([]);
@@ -316,7 +316,7 @@ test.describe('branches', () => {
         await onCommand(page, 'git_merge_branch', () => { throw 'Merge conflicts in a.txt'; });
         await row(page, 'other').and(page.locator('.btn-merge')).click();
         await dialogButton(page, 'Merge').click();
-        await expect(page.locator('dialog[open]')).toContainText('Merge conflicts in a.txt');
+        await expect(openDialog(page)).toContainText('Merge conflicts in a.txt');
     });
     test('the current branch cannot be merged or deleted', async ({ page }) => {
         await openClean(page);
@@ -327,8 +327,8 @@ test.describe('branches', () => {
     test('deleting a local branch asks first', async ({ page }) => {
         await openClean(page);
         await row(page, 'other').and(page.locator('.btn-delete')).click();
-        await expect(page.locator('dialog[open]')).toContainText('delete the branch other?');
-        await expect(page.locator('dialog[open]')).not.toContainText('from the remote');
+        await expect(openDialog(page)).toContainText('delete the branch other?');
+        await expect(openDialog(page)).not.toContainText('from the remote');
         await dialogButton(page, 'Delete').click();
         await expect.poll(async () => (await calls(page, 'git_delete_branch'))).toEqual([{ repo: '', branch: 'other' }]);
         await expect(manager(page).locator('webui-alert').first()).toContainText('Branch deleted.');
@@ -370,7 +370,7 @@ test.describe('stash and force pull', () => {
     test('force pull asks first, and only overwrites once confirmed', async ({ page }) => {
         await open(page);
         await manager(page).locator('#btn-pull-overwrite').click();
-        await expect(page.locator('dialog[open]')).toContainText('overwrite all local changes');
+        await expect(openDialog(page)).toContainText('overwrite all local changes');
         await dialogButton(page, 'Cancel').click();
         await page.waitForTimeout(100);
         expect(await calls(page, 'git_pull_overwrite')).toEqual([]);

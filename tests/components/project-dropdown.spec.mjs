@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls } from '../support/app.mjs';
+import { test, expect, openApp, calls, openDialog } from '../support/app.mjs';
 
 const projects = [{ name: 'One', path: '/one' }, { name: 'Two', path: '/two' }];
 
@@ -149,6 +149,6 @@ test.describe('changed files and commits', () => {
         await page.locator('app-project-dropdown').evaluate(el => el.fetchRemotes());
         await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
         expect(await page.evaluate(() => window.__alerts)).toEqual([]);
-        await expect(page.locator('dialog[open]')).toHaveCount(0);
+        await expect(openDialog(page)).toHaveCount(0);
     });
 });

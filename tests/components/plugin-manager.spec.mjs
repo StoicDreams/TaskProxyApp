@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, calls, dialogButton, openDialog } from '../support/app.mjs';
 
 const jira = {
     id: 'jira', name: 'Jira', version: '0.1.0', apiVersion: 1, description: 'Jira Cloud in Task Proxy.', category: 'issue-tracking',
@@ -45,7 +45,7 @@ test('with none installed, the page says so', async ({ page }) => {
 test('installing from a folder shows the permissions first, and Cancel installs nothing', async ({ page }) => {
     const manager = await openManager(page, { plugins: [], pickedFolder: '/home/me/jira', pluginFolder: { manifest: jira } });
     await manager.locator('webui-button', { hasText: 'Install from folder' }).click();
-    const dialog = page.locator('dialog[open]');
+    const dialog = openDialog(page);
     await expect(dialog).toContainText('Jira 0.1.0');
     await expect(dialog).toContainText('Connect to *.atlassian.net');
     await expect(dialog).toContainText('not signed');
@@ -62,7 +62,7 @@ test('installing from a folder shows the permissions first, and Cancel installs 
 test('choosing no folder does nothing', async ({ page }) => {
     const manager = await openManager(page, { pickedFolder: null });
     await manager.locator('webui-button', { hasText: 'Install from folder' }).click();
-    await expect(page.locator('dialog[open]')).toHaveCount(0);
+    await expect(openDialog(page)).toHaveCount(0);
     expect(await calls(page, 'plugin_inspect_folder')).toEqual([]);
 });
 
@@ -100,7 +100,7 @@ test('a plugin can be turned off and removed', async ({ page }) => {
     expect(await calls(page, 'plugin_set_enabled')).toEqual([{ id: 'jira', enabled: false }]);
     await expect(page.locator('webui-nav.plugin-nav [url="/plugin/jira/issues"]')).toHaveCount(0);
     await card.locator('webui-button', { hasText: 'Remove' }).click();
-    await expect(page.locator('dialog[open]')).toContainText('with its settings and saved data');
+    await expect(openDialog(page)).toContainText('with its settings and saved data');
     await dialogButton(page, 'Confirm').click();
     await expect(manager.locator('[data-plugin="jira"]')).toHaveCount(0);
     expect(await calls(page, 'plugin_remove')).toEqual([{ id: 'jira' }]);
@@ -123,7 +123,7 @@ test.describe('catalog', () => {
         const manager = await openManager(page, { plugins: [], catalog: [entry('0.1.0')], catalogManifests: { jira } });
         const card = manager.locator('[data-catalog="jira"]');
         await card.locator('webui-button', { hasText: 'Install' }).click();
-        const dialog = page.locator('dialog[open]');
+        const dialog = openDialog(page);
         await expect(dialog).toContainText('Connect to *.atlassian.net');
         await expect(dialog).toContainText('Signed by Stoic Dreams');
         await dialogButton(page, 'Install').click();

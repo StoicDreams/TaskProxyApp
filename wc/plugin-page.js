@@ -179,7 +179,8 @@
             if (menuKey(ev)) ev.preventDefault();
         });
         // A dialog shows above everything else, so a menu opened from one goes inside it to show above it.
-        (owner.closest('dialog') || document.body).appendChild(list);
+        // Content of a webui.dialog is slotted into webui-dialogs, so a child added there shows in its dialog.
+        (owner.closest('dialog, webui-dialogs') || document.body).appendChild(list);
         const place = () => {
             const rect = owner.getBoundingClientRect();
             const below = window.innerHeight - rect.bottom;

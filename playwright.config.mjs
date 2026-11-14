@@ -16,7 +16,7 @@ export default defineConfig({
     retries: process.env.CI ? 1 : 0,
     reporter: [['list'], ['html', { open: 'never' }]],
     use: {
-        // Nothing listens here. Tests answer every request, and the loader picks the local copy on this host.
+        // Nothing listens here. Tests answer every request, and the loader comes from the CDN, as in the app.
         baseURL: 'http://127.0.0.1:1426',
         serviceWorkers: 'block',
         viewport: { width: 1500, height: 1000 },

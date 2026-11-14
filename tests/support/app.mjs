@@ -185,10 +185,18 @@ function serveProjectFiles(page, state) {
     });
 }
 
+/**
+ * The open dialog, with its content. A webui.dialog shows its content in a slot of webui-dialogs, outside the
+ * shadow dialog element, so it is matched by its webui-dialogs element.
+ */
+export function openDialog(page) {
+    // Only open dialogs, since a page's help bubble keeps its own closed dialog on the page.
+    return page.locator('webui-dialogs:has(dialog[open]), dialog[open]:not(webui-dialogs dialog)').last();
+}
+
 /** A button in the open dialog. */
 export function dialogButton(page, text) {
-    // Only open dialogs, since a page's help bubble keeps its own closed dialog on the page.
-    return page.locator('dialog[open]').last().getByText(text, { exact: true }).last();
+    return openDialog(page).getByText(text, { exact: true }).last();
 }
 
 /** Every call the app made to a backend command, oldest first. Each is that call's arguments. */

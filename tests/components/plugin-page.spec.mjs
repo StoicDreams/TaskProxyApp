@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, dialogButton, onCommand } from '../support/app.mjs';
+import { test, expect, openApp, calls, dialogButton, onCommand, openDialog } from '../support/app.mjs';
 
 const manifest = {
     id: 'test', name: 'Test Plugin', version: '0.1.0', apiVersion: 1, icon: 'flask',
@@ -141,9 +141,9 @@ test('an action that asks first only runs when confirmed', async ({ page }) => {
         { pluginActions: { 'test/delete': { refresh: true } } });
     const button = page.locator('app-plugin-page webui-button');
     await button.click();
-    await expect(page.locator('dialog[open]')).toContainText('Delete <b>it</b>?');
+    await expect(openDialog(page)).toContainText('Delete <b>it</b>?');
     await dialogButton(page, 'Cancel').click();
-    await expect(page.locator('dialog[open]')).toHaveCount(0);
+    await expect(openDialog(page)).toHaveCount(0);
     expect(await calls(page, 'plugin_action')).toEqual([]);
     await button.click();
     await dialogButton(page, 'Confirm').click();

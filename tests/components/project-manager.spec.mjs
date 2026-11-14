@@ -1,4 +1,4 @@
-import { test, expect, openApp, mount, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, mount, calls, dialogButton, openDialog } from '../support/app.mjs';
 
 async function manager(page, project = { name: 'Repo', path: '/repo' }) {
     await openApp(page, { project });
@@ -46,10 +46,10 @@ test('markup in a project name does not run', async ({ page }) => {
     const name = '"><img src=q onerror="window.__xss=1">';
     const el = await manager(page, { name, path: '/repo' });
     await el.locator('#btn-remove').click();
-    await page.locator('dialog[open]').last().waitFor();
+    await openDialog(page).last().waitFor();
     await page.waitForTimeout(200);
     expect(await page.evaluate(() => window.__xss)).toBeUndefined();
-    await expect(page.locator('dialog img')).toHaveCount(0);
+    await expect(openDialog(page).locator('img')).toHaveCount(0);
 });
 test('with no project, it says so', async ({ page }) => {
     await openApp(page, { project: null });
