@@ -476,6 +476,25 @@ test.describe('spec 0.1.3', () => {
         await expect(view.locator('.plugin-markdown')).toBeVisible();
     });
 
+    test('markdown images are 100px high, show larger while hovered, and open in a dialog at 60vh', async ({ page }) => {
+        await openPlugin(page, { type: 'markdown', text: 'Steps\n\n1. ![Shot](attachment-1)', images: { 'attachment-1': png } });
+        const image = page.locator('app-plugin-page .plugin-markdown img');
+        await expect.poll(() => image.evaluate(el => el.getBoundingClientRect().height)).toBe(100);
+        await image.hover();
+        const hover = page.locator('.plugin-image-hover');
+        await expect(hover).toBeVisible();
+        await expect(hover).toHaveAttribute('src', png);
+        await page.mouse.move(0, 0);
+        await expect(hover).toHaveCount(0);
+        await image.click();
+        const full = page.locator('.plugin-image-full');
+        await expect(full).toBeVisible();
+        await expect(full).toHaveAttribute('src', png);
+        const height = await page.evaluate(() => window.innerHeight * 0.6);
+        await expect.poll(() => full.evaluate(el => el.getBoundingClientRect().height)).toBeCloseTo(height, 0);
+        await expect(hover).toHaveCount(0);
+    });
+
     test('markdown without toggle has no switch', async ({ page }) => {
         await openPlugin(page, { type: 'markdown', text: 'Plain' });
         await expect(page.locator('app-plugin-page .plugin-markdown-mode')).toHaveCount(0);

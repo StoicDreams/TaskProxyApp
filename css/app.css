@@ -395,10 +395,39 @@ header h1.editable-title:empty::before {
     flex: 1 1 20em;
 }
 
-/* Images in a plugin's markdown, such as those in a Jira description. */
+/* Images in a plugin's markdown, such as those in a Jira description: small, larger while hovered, and full in a dialog. */
 .plugin-markdown img {
     max-width: 100%;
-    height: auto;
+}
+
+/*
+ * Specific enough to beat Web UI's rules, which cap images at their container's height and draw one that starts a
+ * list item as a 1.4em icon, as in a Jira description's numbered steps.
+ */
+.plugin-markdown img.plugin-image {
+    display: inline-block;
+    float: none;
+    height: 100px;
+    width: auto;
+    max-width: 100%;
+    max-height: none;
+    margin-right: 0;
+    object-fit: contain;
+    vertical-align: top;
+    cursor: zoom-in;
+}
+
+.plugin-image-hover {
+    position: fixed;
+    z-index: 10000;
+    max-height: 45vh;
+    width: auto;
+    object-fit: contain;
+    pointer-events: none;
+    background: var(--color-background);
+    border: 1px solid var(--color-background-offset);
+    border-radius: var(--corners);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 /* Shown and hidden with the hidden attribute, which other rules' display would otherwise override. */

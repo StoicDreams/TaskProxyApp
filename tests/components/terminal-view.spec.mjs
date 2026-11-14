@@ -69,10 +69,14 @@ test('typing reaches a script running in a terminal', async ({ page }) => {
     expect((await calls(page, 'write_terminal_input'))[0].terminalId).toBe('a.ps1');
 });
 test('Ctrl+C without a selection stops the script, as in a terminal', async ({ page }) => {
-    const el = await view(page);
+    const el = await view(page, { startedAt: Date.now() });
     await el.click();
     await page.keyboard.press('Control+C');
     await expect.poll(() => sent(page)).toBe('\x03');
+    // A script stopped this way failed, even when PowerShell exits with 0, so a commit waiting on it does not go ahead.
+    expect(await page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].stopped)).toBe(true);
+    await emit(page, 'terminal-finished', { projectId: 'project-id', terminalId: 'a.ps1', code: 0 });
+    await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.runStatus(webui.proxy.terminalHelpers.getState().terminals['a.ps1'])?.state)).toBe('Failed');
 });
 test('replayed questions to the terminal are not answered into the script', async ({ page }) => {
     // PowerShell asks where the cursor is while waiting at a prompt. Live, the terminal answers it.

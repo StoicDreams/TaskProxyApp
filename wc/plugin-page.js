@@ -11,6 +11,56 @@
     const themes = new Set(['primary', 'secondary', 'tertiary', 'info', 'success', 'warning', 'danger']);
     const theme = value => themes.has(value) ? value : '';
     const escape = text => webui.escapeForHTML(`${text ?? ''}`);
+    /** The larger copy of an image shown while the pointer is over it. One is shared, since one shows at a time. */
+    let hoverPreview;
+    function hideHoverPreview() {
+        hoverPreview?.remove();
+    }
+    // The image moves away from the preview when the page scrolls.
+    window.addEventListener('scroll', hideHoverPreview, true);
+    /**
+     * Makes a markdown image show larger while the pointer is over it, and open in a dialog when clicked, or with
+     * Enter or Space. Its source is a checked data URI, so it can go into the dialog's markup.
+     */
+    function showsLarger(img) {
+        img.classList.add('plugin-image');
+        img.tabIndex = 0;
+        img.setAttribute('role', 'button');
+        img.title = 'Open the image larger';
+        img.addEventListener('mouseenter', () => {
+            hoverPreview ??= el('img', { class: 'plugin-image-hover', alt: '' });
+            hoverPreview.src = img.src;
+            document.body.appendChild(hoverPreview);
+            const box = img.getBoundingClientRect();
+            // Beside the image, on whichever side has more room, and kept inside the window.
+            const right = window.innerWidth - box.right;
+            const width = Math.max(right, box.left) - 16;
+            hoverPreview.style.maxWidth = `${Math.max(120, Math.min(width, window.innerWidth * 0.5))}px`;
+            hoverPreview.style.left = right >= box.left ? `${box.right + 8}px` : '';
+            hoverPreview.style.right = right >= box.left ? '' : `${window.innerWidth - box.left + 8}px`;
+            hoverPreview.style.top = `${Math.max(8, Math.min(box.top, window.innerHeight * 0.55 - 8))}px`;
+        });
+        img.addEventListener('mouseleave', hideHoverPreview);
+        const open = () => {
+            hideHoverPreview();
+            webui.dialog({
+                title: img.alt || 'Image',
+                // Styled here, since the dialog's content is outside the app's stylesheet.
+                content: `<img class="plugin-image-full" src="${img.src}" alt="${escape(img.alt)}" style="display:block;height:60vh;max-height:none;width:auto;max-width:90vw;margin:auto;object-fit:contain;">`,
+                confirm: 'Close',
+            });
+        };
+        img.addEventListener('click', ev => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            open();
+        });
+        img.addEventListener('keydown', ev => {
+            if (ev.key !== 'Enter' && ev.key !== ' ') return;
+            ev.preventDefault();
+            open();
+        });
+    }
     /** Whether each plugin's sections are open, by plugin and section key, kept with the app's state. */
     const sectionsKey = 'app-plugin-sections';
 
@@ -440,8 +490,12 @@
             const images = node.images && typeof node.images === 'object' ? node.images : {};
             box.querySelectorAll('img').forEach(img => {
                 const uri = images[img.getAttribute('src') ?? ''];
-                if (typeof uri === 'string' && /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,[a-z0-9+/=]+$/i.test(uri)) img.src = uri;
-                else img.remove();
+                if (typeof uri === 'string' && /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,[a-z0-9+/=]+$/i.test(uri)) {
+                    img.src = uri;
+                    showsLarger(img);
+                } else {
+                    img.remove();
+                }
             });
             if (!node.toggle) return box;
             const wrap = el('div', { class: 'plugin-markdown-wrap' });

@@ -101,6 +101,22 @@ test('sync after commit syncs when switched on', async ({ page }) => {
     await commit(page);
     await expect.poll(async () => (await calls(page, 'git_sync')).length).toBe(1);
 });
+const commitActions = page => manager(page).locator('.commit-actions');
+const commitState = page => manager(page).locator('.commit-state');
+const cancelCommit = page => manager(page).locator('#btn-cancel-commit');
+test('Processing Commit replaces the commit buttons while the commit is made', async ({ page }) => {
+    await open(page);
+    await expect(manager(page).locator('#toggle-queue')).toBeVisible();
+    await onCommand(page, 'git_commit', () => new Promise(resolve => { window.__finishCommit = () => resolve('Commit successful.'); }));
+    await commit(page);
+    await expect(commitState(page)).toHaveText('Processing Commit');
+    await expect(manager(page).locator('webui-button[label="Commit"]')).toBeHidden();
+    await expect(manager(page).locator('#toggle-queue')).toBeHidden();
+    await expect(cancelCommit(page)).toBeHidden();
+    await page.evaluate(() => window.__finishCommit());
+    await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+    await expect(manager(page).locator('webui-button[label="Commit"]')).toBeVisible();
+});
 test('a commit needs a message', async ({ page }) => {
     await open(page);
     await commit(page, '   ');
@@ -934,6 +950,64 @@ Write-Host 'done'
             await expect.poll(() => alerts(page)).toEqual([[`Repo: ${SCRIPT} failed with exit code 1, so nothing was committed. Its output is in the Terminals panel.`, 'danger']]);
             await page.waitForTimeout(200);
             expect(await calls(page, 'git_commit')).toEqual([]);
+        });
+    });
+    test('Cancel stops the script, and nothing is committed, even when PowerShell exits with 0', async ({ page }) => {
+        await openWith(page, saved);
+        await expect(field(page, 'Version')).toHaveCount(1);
+        await commit(page);
+        await expect(commitState(page)).toHaveText('Running Publish.ps1');
+        await expect(cancelCommit(page)).toHaveAttribute('label', 'Cancel');
+        await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
+        await cancelCommit(page).click();
+        await expect.poll(async () => (await calls(page, 'write_terminal_input')).map(call => call.data)).toEqual(['\x03']);
+        await finish(page, 0);
+        await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
+        await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+        await page.waitForTimeout(200);
+        expect(await calls(page, 'git_commit')).toEqual([]);
+    });
+    test.describe('queue', () => {
+        const repoDropdown = page => manager(page).locator('webui-dropdown[label="Repo"]');
+        /** Commits the root repo with Queue on, whose script then runs, and goes to the libs/api repo. */
+        const startFirst = async page => {
+            await openWith(page, saved, { repos: ['', 'libs/api'] });
+            await expect(field(page, 'Version')).toHaveCount(1);
+            await manager(page).locator('#toggle-queue').click();
+            await expect.poll(() => manager(page).evaluate(el => el._toggleQueue.value)).toBe(true);
+            await commit(page, 'first');
+            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await expect(commitState(page)).toHaveText('Running Publish.ps1');
+            await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
+            await pick(repoDropdown(page), 'libs/api');
+            await expect.poll(() => repoDropdown(page).evaluate(el => el.value)).toBe('libs/api');
+            await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+            await commit(page, 'second');
+            await expect(commitState(page)).toHaveText('Currently Queued');
+            await expect(cancelCommit(page)).toHaveAttribute('label', 'Cancel Queue');
+        };
+
+        test('a queued commit waits for the one before it, so commits run one at a time and in order', async ({ page }) => {
+            await startFirst(page);
+            await page.waitForTimeout(200);
+            expect(await calls(page, 'git_commit')).toEqual([]);
+            await finish(page, 0);
+            await expect.poll(async () => (await calls(page, 'git_commit')).map(call => `${call.repo}:${call.message}`)).toEqual([':first', 'libs/api:second']);
+            await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+        });
+        test('Cancel Queue takes a queued commit out, and the one running still commits', async ({ page }) => {
+            await startFirst(page);
+            await cancelCommit(page).click();
+            await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+            await expect(manager(page).locator('webui-alert').first()).toContainText('taken out of the queue');
+            await finish(page, 0);
+            await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.repo)).toEqual(['']);
+            await page.waitForTimeout(200);
+            expect((await calls(page, 'git_commit')).length).toBe(1);
+        });
+        test('the queue is remembered as on or off', async ({ page }) => {
+            await open(page, {}, { appData: { 'app-git-queue': true } });
+            await expect.poll(() => manager(page).evaluate(el => el._toggleQueue.value)).toBe(true);
         });
     });
     test('a required parameter must be filled in before the script runs', async ({ page }) => {

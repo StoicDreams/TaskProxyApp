@@ -647,7 +647,8 @@
                     term.status = 'Finished';
                     term.exitCode = Number.isInteger(code) ? code : null;
                     term.endedAt = Date.now();
-                    term._resolveFinished?.(term.exitCode);
+                    // A stopped script failed, even when PowerShell exits with 0 after Ctrl+C.
+                    term._resolveFinished?.(term.stopped ? null : term.exitCode);
                     term._resolveFinished = null;
                     webui.setData('app-terminal-refresh', Date.now());
                 }

@@ -138,6 +138,8 @@
             if (t._replaying) return;
             const current = t.current();
             if (!current || current.status !== 'Running' || !current.interactive) return;
+            // Ctrl+C stops the script, as the Stop button does, so it counts as failed however it exits.
+            if (data.includes('\x03')) current.stopped = true;
             webui.proxy.terminal.write(current.id, data, helpers().otherProject(t._projectId)).catch(() => { });
         },
         /**

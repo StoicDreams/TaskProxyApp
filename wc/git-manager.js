@@ -26,10 +26,179 @@
     function currentOrigin() {
         const path = webui.projectData?.path;
         const name = webui.getData('app-current-project')?.display || `${path ?? ''}`.split('/').filter(Boolean).pop() || 'Project';
-        return { path, name, data: webui.projectData };
+        return { path, name, id: webui.projectData?.id, data: webui.projectData };
     }
     function isElsewhere(origin) {
         return webui.projectData?.path !== origin.path;
+    }
+    const isOn = toggle => toggle.value === true || toggle.value === 'true';
+    /** The Git Controllers on the page, so a commit that outlasts one reports to whichever shows its repo. */
+    const liveManagers = new Set();
+    /**
+     * Commits that are waiting or running, by project and repo, so a repo has one at a time. Queued ones also
+     * wait in `commitQueue`, which runs one at a time in the order they were queued. Kept in memory only.
+     */
+    const commitJobs = new Map();
+    const commitQueue = [];
+    let queueRunning = false;
+    const jobKey = (path, repo) => `${path ?? ''}\n${repo}`;
+    const jobFor = (path, repo) => commitJobs.get(jobKey(path, repo));
+    function showJobs() {
+        liveManagers.forEach(t => t.showCommitState());
+    }
+    /** The Git Controller showing the commit's repo, if one is. */
+    function viewFor(job) {
+        if (isElsewhere(job.origin)) return null;
+        for (const t of liveManagers) {
+            if (t.isConnected && t._repos.value === job.repo) return t;
+        }
+        return null;
+    }
+    /** Shows a message in the Git Controller showing the commit's repo, or else as an app alert naming the project. */
+    function report(job, message, type) {
+        const view = viewFor(job);
+        if (view) {
+            view.setAlert(message, type);
+        } else if (type !== 'info') {
+            webui.alert(`${job.origin.name}: ${message}`, type);
+        }
+    }
+    /** The project to name to the backend: none for the open project, which is what it uses by default. */
+    const projectOf = job => isElsewhere(job.origin) ? job.origin.path : undefined;
+    async function runQueue() {
+        if (queueRunning) return;
+        queueRunning = true;
+        try {
+            while (commitQueue.length) {
+                const job = commitQueue.shift();
+                showJobs();
+                await processJob(job);
+            }
+        } finally {
+            queueRunning = false;
+            showJobs();
+        }
+    }
+    /** Runs the commit's before commit script, then commits and syncs. */
+    async function processJob(job) {
+        try {
+            if (job.script && !await runJobScript(job)) return;
+            job.state = 'committing';
+            showJobs();
+            await commitJob(job);
+        } catch (err) {
+            report(job, `Nothing was committed: ${err?.message ?? err}`, 'danger');
+        } finally {
+            commitJobs.delete(job.key);
+            showJobs();
+        }
+    }
+    /** The files changed in the commit's repo, or null when they cannot be read. */
+    async function changedFiles(job, onError) {
+        const changes = await webui.proxy.git.getChanges(job.repo, onError, projectOf(job));
+        if (!changes) return null;
+        return changes.filter(line => line && line.length >= 3).map(line => parseChange(line, job.repo));
+    }
+    /**
+     * Runs the before commit script, with the Terminals panel open to show it, then refreshes the changes it
+     * made. Resolves to whether the commit should go ahead. Scripts run in the open project, so a queued
+     * commit whose project is not open waits for it.
+     */
+    async function runJobScript(job) {
+        const { path, parameters, values } = job.script;
+        if (isElsewhere(job.origin)) {
+            job.state = 'waiting';
+            showJobs();
+            webui.alert(`${job.origin.name}: A queued commit is waiting for this project to be opened, since ${path} runs in it first.`, 'warning');
+            while (isElsewhere(job.origin) && !job.cancelled) await webui.wait(500);
+            if (job.cancelled) return false;
+        }
+        // The files changed before the script runs, so the changes it makes join the commit and no others do.
+        const before = await changedFiles(job, () => { });
+        job.before = new Set((before || []).map(file => file.fileName));
+        job.state = 'script';
+        showJobs();
+        const helpers = webui.proxy.terminalHelpers;
+        helpers.ensureListeners();
+        helpers.getState().activeId = beforeCommitTerminal;
+        // Choices made in the Git Controller are not shown to other files, so the masked copy is the same.
+        const wrapper = buildBeforeCommitScript(path, parameters, values);
+        report(job, `Running ${path} before committing...`, 'info');
+        let finished;
+        try {
+            finished = helpers.runAndWait(beforeCommitTerminal, wrapper);
+            // Started before the panel opens, so the panel shows this script.
+            await webui.wait(50);
+            if (viewFor(job)) document.querySelector('app-terminals')?.openDrawer({ run: true });
+            finished = await finished;
+        } catch (err) {
+            report(job, `${path} could not run, so nothing was committed: ${err?.message ?? err}`, 'danger');
+            return false;
+        }
+        // The script can change files, such as minified copies and version numbers, so show what it changed.
+        const view = viewFor(job);
+        if (view) await view.loadRepoChanges(job.excluded);
+        if (finished !== 0) {
+            const how = finished === null ? 'was stopped' : `failed with exit code ${finished}`;
+            report(job, `${path} ${how}, so nothing was committed. Its output is in the Terminals panel.`, 'danger');
+            return false;
+        }
+        if (view) document.querySelector('webui-drawer.shared')?.classList.remove('open');
+        return true;
+    }
+    /**
+     * Commits the files chosen when the commit was made, and those its script changed, read from the project
+     * it was made in, then syncs when asked.
+     */
+    async function commitJob(job) {
+        const { origin, repo } = job;
+        const files = await changedFiles(job, msg => report(job, `${msg} Nothing was committed.`, 'danger'));
+        if (!files) return;
+        const data = isElsewhere(origin) ? origin.data : webui.projectData;
+        const ignored = new Set(data?.data?._gitIgnoreFiles || []);
+        const names = files
+            .filter(file => !ignored.has(`${file.repo}/${file.fileName}`) && !job.excluded.has(file.fileName))
+            .map(file => file.fileName)
+            .filter(name => job.files.has(name) || (job.before && !job.before.has(name)));
+        if (names.length === 0) {
+            report(job, 'No files are left to commit.', 'warning');
+            return;
+        }
+        const result = await webui.proxy.git.commit(repo, names, job.message, msg => report(job, msg, 'danger'), projectOf(job));
+        if (!result) return;
+        document.dispatchEvent(new CustomEvent('app-git-changes'));
+        forgetMessage(job);
+        if (job.syncAfter) {
+            report(job, 'Commit successful. Syncing with remote...', 'info');
+            let syncError;
+            const synced = await webui.proxy.git.sync(repo, isElsewhere(origin) ? err => { syncError = err; } : msg => report(job, msg, 'danger'), projectOf(job));
+            document.dispatchEvent(new CustomEvent('app-git-changes'));
+            if (synced) {
+                report(job, 'Commit and Sync successful!', 'success');
+            } else if (isElsewhere(origin)) {
+                report(job, `${result} Syncing failed, so sync it from the Git Controller: ${syncError ?? 'no reason was given.'}`, 'danger');
+            }
+        } else {
+            report(job, result, 'success');
+        }
+        viewFor(job)?.loadRepoChanges();
+    }
+    /** Clears the sent message from the project it was written in, unless another has been typed since. */
+    function forgetMessage(job) {
+        const view = viewFor(job);
+        if (view) {
+            if (view._message.value.trim() === job.message) view.clearMessage();
+            return;
+        }
+        const elsewhere = isElsewhere(job.origin);
+        const messages = (elsewhere ? job.origin.data : webui.projectData)?.data?._gitCommitMessages;
+        if (!messages || `${messages[job.repo] ?? ''}`.trim() !== job.message) return;
+        delete messages[job.repo];
+        if (elsewhere) {
+            webui.proxy.saveProjectData(undefined, job.origin.data);
+        } else {
+            webui.proxy.syncProjectData();
+        }
     }
     /**
      * Splits PowerShell text into the parts outside strings and comments, so brackets and commas
@@ -407,6 +576,11 @@
             t._beforeParameters = [];
             t._btnToggleAll = t.template.querySelector('webui-button[label="Toggle All"]');
             t._toggleSync = t.template.querySelector('#toggle-sync');
+            t._toggleQueue = t.template.querySelector('#toggle-queue');
+            t._commitActions = t.template.querySelector('.commit-actions');
+            t._commitState = t.template.querySelector('.commit-state');
+            t._btnCancelCommit = t.template.querySelector('#btn-cancel-commit');
+            t._btnCancelCommit.addEventListener('click', () => t.cancelCommit());
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
             t._btnPull = t.template.querySelector('webui-button[label="Pull"]');
@@ -435,6 +609,7 @@
             const repo = t._repos.value;
             t._messageRepo = repo;
             t._messagePath = webui.projectData.path;
+            t.showCommitState();
             await customElements.whenDefined('webui-input-message');
             t._message.value = (repo !== undefined && getCommitMessages()[repo]) || '';
         },
@@ -562,15 +737,61 @@
             t._beforeSyncTimer = setTimeout(() => webui.proxy.syncProjectData(), messageSyncDelay);
         },
         /**
-         * Runs the repo's before commit script, with the Terminals panel open to show it, then refreshes the
-         * changes it made. Resolves to whether the commit should go ahead.
-         * The user can switch projects while it runs, so from then on it reports through the app's alerts,
-         * and leaves the Git Controller showing the project that is open now.
+         * Checks a commit can be made, then makes it now, or queues it when Queue is on. What it runs, and with
+         * what, is taken now, so changes made while it waits do not change it.
          */
-        async runBeforeCommit(repo, origin, excluded) {
+        async commit() {
+            const t = this;
+            const message = t._message.value.trim();
+            t.setAlert();
+            if (!message) {
+                t.setAlert('You forgot to set your message!');
+                return;
+            }
+            const repo = t._repos.value;
+            if (repo === undefined) {
+                t.setAlert('No repo is set!');
+                return;
+            }
+            const origin = currentOrigin();
+            if (jobFor(origin.path, repo)) return;
+            const files = t._files.filter(item => item.isIncluded).map(item => item.fileName);
+            if (files.length === 0) {
+                t.setAlert('Select at least one file to commit.', 'warning');
+                return;
+            }
+            const script = await t.prepareBeforeCommit(repo);
+            if (script === false) return;
+            // Taken again, since the user can start the same commit while the script prompt was open.
+            if (jobFor(origin.path, repo)) return;
+            const job = {
+                key: jobKey(origin.path, repo),
+                origin,
+                repo,
+                message,
+                files: new Set(files),
+                excluded: new Set(t._files.filter(file => file.state === includeStates.exclude).map(file => file.fileName)),
+                syncAfter: isOn(t._toggleSync),
+                script,
+                state: 'queued',
+            };
+            commitJobs.set(job.key, job);
+            if (isOn(t._toggleQueue)) {
+                commitQueue.push(job);
+                showJobs();
+                runQueue();
+                return;
+            }
+            await processJob(job);
+        },
+        /**
+         * The repo's before commit script and its values, null when it has none, or false when it cannot run,
+         * such as when a required value is missing or the user does not trust the project.
+         */
+        async prepareBeforeCommit(repo) {
             const t = this;
             const path = getBeforeCommit().scripts[repo];
-            if (!path) return true;
+            if (!path) return null;
             const text = await webui.proxy.getProjectFile(path, () => null);
             if (typeof text !== 'string') {
                 t.setAlert(`${path} could not be read, so nothing was committed.`, 'danger');
@@ -584,128 +805,45 @@
                 return false;
             }
             if (!await webui.proxy.confirmProjectScript(text)) return false;
-            const helpers = webui.proxy.terminalHelpers;
-            helpers.ensureListeners();
-            helpers.getState().activeId = beforeCommitTerminal;
-            // Choices made in the Git Controller are not shown to other files, so the masked copy is the same.
-            const wrapper = buildBeforeCommitScript(path, parameters, values);
-            t.setAlert(`Running ${path} before committing...`, 'info');
-            let finished;
-            try {
-                finished = helpers.runAndWait(beforeCommitTerminal, wrapper);
-                // Started before the panel opens, so the panel shows this script.
-                await webui.wait(50);
-                document.querySelector('app-terminals')?.openDrawer({ run: true });
-                finished = await finished;
-            } catch (err) {
-                t.reportFor(origin, `${path} could not run, so nothing was committed: ${err?.message ?? err}`, 'danger');
-                return false;
-            }
-            const moved = isElsewhere(origin);
-            // The script can change files, such as minified copies and version numbers, so show what it changed.
-            if (!moved) await t.loadRepoChanges(excluded);
-            if (finished !== 0) {
-                const how = finished === null ? 'was stopped' : `failed with exit code ${finished}`;
-                t.reportFor(origin, `${path} ${how}, so nothing was committed. Its output is in the Terminals panel.`, 'danger');
-                return false;
-            }
-            if (!moved) document.querySelector('webui-drawer.shared')?.classList.remove('open');
-            return true;
+            return { path, parameters, values };
         },
-        /** Shows a message here, or as an app alert naming the project when another project is open now. */
-        reportFor(origin, message, type) {
-            if (isElsewhere(origin)) {
-                webui.alert(`${origin.name}: ${message}`, type);
-            } else {
-                this.setAlert(message, type);
-            }
-        },
-        async commit() {
+        /** Shows the commit buttons, or what the repo's commit is doing while it waits or runs. */
+        showCommitState() {
             const t = this;
-            let message = t._message.value.trim();
-            t.setAlert();
-            if (!message) {
-                t.setAlert('You forgot to set your message!');
-                return;
-            }
-            let repo = t._repos.value;
-            if (repo === undefined) {
-                t.setAlert('No repo is set!');
-                return;
-            }
-            const includedFiles = () => t._files.filter(item => item.isIncluded).map(item => item.fileName);
-            if (includedFiles().length === 0) {
-                t.setAlert('Select at least one file to commit.', 'warning');
-                return;
-            }
-            // The before commit script can take a while, and the commit belongs to the project it started in.
-            const origin = currentOrigin();
-            const syncAfter = t._toggleSync.value === true || t._toggleSync.value === 'true';
-            const excluded = new Set(t._files.filter(file => file.state === includeStates.exclude).map(file => file.fileName));
-            if (!await t.runBeforeCommit(repo, origin, excluded)) return;
-            if (isElsewhere(origin)) {
-                await t.commitElsewhere(origin, repo, message, excluded, syncAfter);
-                return;
-            }
-            // Taken after the script, which can add or change files.
-            let files = includedFiles();
-            if (files.length === 0) {
-                t.setAlert('No files are left to commit.', 'warning');
-                return;
-            }
-            let result = await webui.proxy.git.commit(repo, files, message, msg => t.setAlert(msg));
-            if (result) {
-                t.setAlert(result, 'success');
-                t.clearMessage();
-                if (syncAfter) {
-                    t.setAlert('Commit successful. Syncing with remote...', 'info');
-                    let syncResult = await webui.proxy.git.sync(repo, msg => t.setAlert(msg));
-                    if (syncResult) {
-                        t.setAlert('Commit and Sync successful!', 'success');
-                    }
-                }
-            }
-            t.loadRepoChanges();
-        },
-        /**
-         * Commits in a project the user switched away from while its before commit script ran. The files are
-         * chosen the way the Git Controller would have shown them, from that project's changes and settings.
-         */
-        async commitElsewhere(origin, repo, message, excluded, syncAfter) {
-            const t = this;
-            const report = (text, type) => t.reportFor(origin, text, type);
-            const changes = await webui.proxy.git.getChanges(repo, msg => report(`${msg} Nothing was committed.`, 'danger'), origin.path);
-            if (!changes) return;
-            const ignored = new Set(origin.data.data?._gitIgnoreFiles || []);
-            const files = changes
-                .filter(line => line && line.length >= 3)
-                .map(line => parseChange(line, repo))
-                .filter(file => !ignored.has(`${file.repo}/${file.fileName}`) && !excluded.has(file.fileName))
-                .map(file => file.fileName);
-            if (files.length === 0) {
-                report('No files are left to commit.', 'warning');
-                return;
-            }
-            const result = await webui.proxy.git.commit(repo, files, message, msg => report(msg, 'danger'), origin.path);
-            if (!result) return;
-            document.dispatchEvent(new CustomEvent('app-git-changes'));
-            const messages = origin.data.data?._gitCommitMessages;
-            if (messages && repo in messages) {
-                delete messages[repo];
-                webui.proxy.saveProjectData(undefined, origin.data);
-            }
-            if (!syncAfter) {
-                report(result, 'success');
-                return;
-            }
-            let syncError;
-            const synced = await webui.proxy.git.sync(repo, err => { syncError = err; }, origin.path);
-            document.dispatchEvent(new CustomEvent('app-git-changes'));
-            if (synced) {
-                report('Commit and Sync successful!', 'success');
+            const repo = t._repos.value;
+            const job = repo === undefined ? null : jobFor(webui.projectData?.path, repo);
+            const state = job ? job.state : 'ready';
+            t._commitActions.dataset.state = state;
+            t._commitState.textContent = {
+                queued: 'Currently Queued',
+                waiting: 'Currently Queued',
+                script: `Running ${job?.script?.path.split('/').pop()}`,
+                committing: 'Processing Commit',
+            }[state] || '';
+            t._btnCancelCommit.setAttribute('label', state === 'script' ? 'Cancel' : 'Cancel Queue');
+            if (state === 'queued') {
+                const ahead = commitQueue.indexOf(job) + (queueRunning ? 1 : 0);
+                t._commitState.title = ahead > 0 ? `${ahead} ahead of it in the queue` : 'Next in the queue';
             } else {
-                report(`${result} Syncing failed, so sync it from the Git Controller: ${syncError ?? 'no reason was given.'}`, 'danger');
+                t._commitState.removeAttribute('title');
             }
+        },
+        /** Takes a queued commit out of the queue, or stops the script a running one waits on. */
+        cancelCommit() {
+            const t = this;
+            const job = jobFor(webui.projectData?.path, t._repos.value);
+            if (!job) return;
+            if (job.state === 'script') {
+                webui.proxy.terminalHelpers.stopScript(beforeCommitTerminal, job.origin.id);
+                return;
+            }
+            if (job.state !== 'queued' && job.state !== 'waiting') return;
+            job.cancelled = true;
+            const index = commitQueue.indexOf(job);
+            if (index !== -1) commitQueue.splice(index, 1);
+            if (job.state === 'queued') commitJobs.delete(job.key);
+            showJobs();
+            t.setAlert('The commit was taken out of the queue, so nothing was committed.', 'info');
         },
         async loadRepos() {
             let t = this;
@@ -1199,6 +1337,8 @@
         },
         connected() {
             const t = this;
+            liveManagers.add(t);
+            t.showCommitState();
             setTimeout(async () => {
                 await whenProxyReady();
                 webui.proxy.projects.runWhenLoaded(() => {
@@ -1547,6 +1687,7 @@
         },
         disconnected() {
             const t = this;
+            liveManagers.delete(t);
             t._resizeObserver?.disconnect();
             t._resizeObserver = null;
             cancelAnimationFrame(t._fitFrame);
@@ -1615,11 +1756,26 @@ pre {
 }
 .commit-actions {
     justify-content: flex-end;
+    flex-wrap: wrap;
 }
-.before-commit {
+/* The script picker fills the row beside the commit buttons, and wraps above them in a narrow window. */
+#before-commit-script {
+    flex: 1 1 18em;
+    min-width: 0;
+}
+.commit-controls {
     display: flex;
-    flex-direction: column;
-    gap: calc(0.5 * var(--padding));
+    align-items: center;
+    gap: var(--padding);
+    margin-left: auto;
+}
+.commit-actions:not([data-state="ready"]) .when-ready,
+.commit-actions[data-state="ready"] .when-busy,
+.commit-actions:not([data-state="queued"]):not([data-state="waiting"]):not([data-state="script"]) .when-cancellable {
+    display: none;
+}
+.commit-state {
+    font-weight: bold;
 }
 .before-commit-params {
     display: flex;
@@ -1864,14 +2020,17 @@ button.revert {
         <div class="commit-panes">
             <div class="commit-side">
                 <webui-input-message theme="title" label="Commit Message" max-height="12em"></webui-input-message>
-                <div class="commit-actions">
-                    <webui-toggle-icon id="toggle-sync" label="Sync after commit" data-bind="app-git-autosync" theme-on="primary"></webui-toggle-icon>
-                    <webui-button theme="primary" label="Commit"></webui-button>
-                </div>
-                <div class="before-commit">
+                <div class="commit-actions" data-state="ready">
                     <webui-dropdown id="before-commit-script" label="Run Before Commit" title="A script in this project to run before each commit. If it fails, nothing is committed."></webui-dropdown>
-                    <div class="before-commit-params"></div>
+                    <div class="commit-controls">
+                        <webui-toggle-icon id="toggle-queue" class="when-ready" label="Queue" data-bind="app-git-queue" theme-on="primary" title="Wait for earlier queued commits, so commits run one at a time and in order"></webui-toggle-icon>
+                        <webui-toggle-icon id="toggle-sync" class="when-ready" label="Sync after commit" data-bind="app-git-autosync" theme-on="primary"></webui-toggle-icon>
+                        <webui-button theme="primary" class="when-ready" label="Commit"></webui-button>
+                        <span class="commit-state when-busy" role="status"></span>
+                        <webui-button theme="danger" class="when-cancellable" id="btn-cancel-commit" label="Cancel Queue"></webui-button>
+                    </div>
                 </div>
+                <div class="before-commit-params"></div>
                 <div class="list-tools">
                     <webui-button theme="info" label="Toggle All" title="Include or exclude every file shown"></webui-button>
                     <input type="search" class="file-filter" placeholder="Filter files" aria-label="Filter files" />
