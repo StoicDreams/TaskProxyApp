@@ -364,7 +364,7 @@ test.describe('script filter', () => {
     test('sits beside the title, and lists what each choice asks for', async ({ page }) => {
         await open(page, { scripts: ['build.ps1', 'test.ps1'] });
         await ready(page);
-        await expect(filter(page).locator('button')).toHaveText(['Live', 'Saved', 'Page', 'Running', 'All Running']);
+        await expect(filter(page).locator('button')).toHaveText(['Live', 'Saved', 'Page', 'Running', 'All Running', 'Finished']);
         await choose(page, 'Saved');
         await expect.poll(() => listed(page)).toEqual(['build.ps1 (Ready)', 'test.ps1 (Ready)']);
         await start(page, 'test.ps1');

@@ -886,8 +886,11 @@ Write-Host 'done'
             // The other project opens its last page, then the user goes to its Git Controller.
             await expect.poll(() => page.evaluate(() => location.pathname)).toBe('/');
             await page.waitForTimeout(100);
-            await page.evaluate(() => webui.navigateTo('/git-controller'));
-            await expect.poll(() => page.evaluate(() => location.pathname)).toBe('/git-controller');
+            // On a busy machine the other project can still be swapping its start page in, which undoes the navigation.
+            await expect(async () => {
+                await page.evaluate(() => webui.navigateTo('/git-controller'));
+                await expect.poll(() => page.evaluate(() => location.pathname), { timeout: 2000 }).toBe('/git-controller');
+            }).toPass({ timeout: 15000 });
             await manager(page).locator('.files button.file').first().waitFor();
         };
         const alerts = page => page.evaluate(() => window.__alerts);
@@ -939,6 +942,33 @@ Write-Host 'done'
             await finish(page, 0);
             await expect.poll(() => alerts(page)).toEqual([['Repo: Commit successful. Syncing failed, so sync it from the Git Controller: Credentials Missing/Invalid', 'danger']]);
             await expect(dialogButton(page, 'Save & Retry')).toHaveCount(0);
+        });
+        test('a queued commit runs its script in its own project, even when another project is open by then', async ({ page }) => {
+            await open(page, {}, {
+                projects,
+                scripts: [SCRIPT],
+                files: { [SCRIPT]: PUBLISH },
+                appData: { 'app-trusted-projects': ['/repo', '/other'], 'app-git-queue': true },
+                data: saved,
+            });
+            await expect(field(page, 'Version')).toHaveCount(1);
+            await commit(page, 'first');
+            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
+            await switchToOther(page);
+            // The other project runs the same script before its commits.
+            await page.evaluate(saved => { webui.projectData.data._gitBeforeCommit = saved._gitBeforeCommit; }, saved);
+            await commit(page, 'second');
+            await expect(commitState(page)).toHaveText('Currently Queued');
+            // Back in the first project, its script finishes, and the next commit's script starts in the other one.
+            await page.evaluate(() => webui.setData('app-current-project', { value: '/repo', display: 'Repo' }));
+            await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/repo');
+            await finish(page, 0);
+            await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.message)).toEqual(['first']);
+            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(2);
+            expect((await calls(page, 'start_script'))[1]).toMatchObject({ terminalId: 'Before Commit', project: '/other' });
+            await page.evaluate(() => window.__backend.emit('terminal-finished', { projectId: 'id-/other', terminalId: 'Before Commit', code: 0 }));
+            await expect.poll(async () => (await calls(page, 'git_commit')).map(call => `${call.message}:${call.project ?? ''}`)).toEqual(['first:', 'second:/other']);
         });
         test('a script that fails after switching says which project it was for, and commits nothing', async ({ page }) => {
             await openBoth(page);
@@ -1004,6 +1034,21 @@ Write-Host 'done'
             await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.repo)).toEqual(['']);
             await page.waitForTimeout(200);
             expect((await calls(page, 'git_commit')).length).toBe(1);
+        });
+        test('the Queue tab lists the running and queued commits, can cancel one, and shows how each ended', async ({ page }) => {
+            await startFirst(page);
+            await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Queue' }).click();
+            const view = manager(page).locator('.queue-view');
+            await expect(manager(page).locator('#tab-queue')).toHaveText('Queue (2)');
+            await expect(view.locator('tbody tr')).toHaveCount(2);
+            await expect(view.locator('tbody tr').nth(0).locator('td')).toHaveText(['Repo', 'Root', 'first', SCRIPT, 'No', 'Running Publish.ps1', /^\s*Cancel\s*$/]);
+            await expect(view.locator('tbody tr').nth(1).locator('.queue-state')).toHaveText('Queued, next');
+            await view.locator('tbody tr').nth(1).locator('webui-button', { hasText: 'Cancel Queue' }).click();
+            await expect(manager(page).locator('#tab-queue')).toHaveText('Queue (1)');
+            await finish(page, 0);
+            await expect(manager(page).locator('#tab-queue')).toHaveText('Queue');
+            await expect(view).toContainText('No commits are queued or running');
+            await expect(view.locator('table').last().locator('.queue-state')).toHaveText(['CommittedCommit successful.', 'CancelledTaken out of the queue.']);
         });
         test('the queue is remembered as on or off', async ({ page }) => {
             await open(page, {}, { appData: { 'app-git-queue': true } });

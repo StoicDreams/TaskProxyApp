@@ -255,6 +255,34 @@ fn script_key(project_id: &str, terminal_id: &str) -> String {
 
 /// The project a command is for: the one named, such as a script still running in a project the user switched
 /// away from, or else the open project.
+/// The id and folder of the project a script runs in: the open one, or another saved project named by its path,
+/// such as one a queued commit was made in.
+fn script_project(
+    (open_id, open_path): (&str, &str),
+    known: &[Project],
+    wanted: Option<&str>,
+) -> Result<(String, String), String> {
+    let normalize = |path: &str| path.replace('\\', "/");
+    let open = || {
+        if open_path.is_empty() {
+            Err(String::from("Project not loaded."))
+        } else {
+            Ok((open_id.to_string(), open_path.to_string()))
+        }
+    };
+    let Some(wanted) = wanted.filter(|wanted| !wanted.is_empty()) else {
+        return open();
+    };
+    if !open_path.is_empty() && normalize(open_path) == normalize(wanted) {
+        return open();
+    }
+    known
+        .iter()
+        .find(|project| normalize(&project.path) == normalize(wanted))
+        .map(|project| (get_hash_code(&project.path), project.path.clone()))
+        .ok_or_else(|| format!("{} is not one of your projects.", wanted))
+}
+
 fn target_project_id(
     project_state: &State<'_, CurrentProject>,
     project_id: Option<String>,
@@ -510,12 +538,14 @@ pub(crate) async fn start_script(
     app_handle: AppHandle,
     state: State<'_, TerminalManager>,
     project_state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
     terminal_id: String,
     script_content: String,
     args: Vec<String>,
     in_separate_window: bool,
     cols: Option<u16>,
     rows: Option<u16>,
+    project: Option<String>,
 ) -> Result<ScriptStarted, String> {
     // Dynamic PowerShell Resolution
     let (installed, executable) = task::spawn_blocking(resolve_pwsh)
@@ -528,10 +558,10 @@ pub(crate) async fn start_script(
         let p_state = project_state
             .lock()
             .map_err(|err| format!("State failure: {}", err))?;
-        if p_state.path.is_empty() {
-            return Err("Project not loaded.".into());
-        }
-        (p_state.id.clone(), p_state.path.clone())
+        let known = projects
+            .lock()
+            .map_err(|err| format!("State failure: {}", err))?;
+        script_project((&p_state.id, &p_state.path), &known, project.as_deref())?
     };
     let key = script_key(&project_id, &terminal_id);
     let mut processes = state.processes.lock().await;
@@ -970,6 +1000,43 @@ pub(crate) async fn shutdown(processes: ProcessMap) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_script_runs_in_the_open_project_or_another_saved_one() {
+        let known = vec![
+            Project {
+                name: "A".into(),
+                path: "/a".into(),
+            },
+            Project {
+                name: "B".into(),
+                path: "C:\\work\\b".into(),
+            },
+        ];
+        let open = ("open-id", "/a");
+        assert_eq!(
+            script_project(open, &known, None),
+            Ok(("open-id".into(), "/a".into()))
+        );
+        assert_eq!(
+            script_project(open, &known, Some("/a")),
+            Ok(("open-id".into(), "/a".into()))
+        );
+        // Another project runs in its own folder, under the id its terminals are kept by.
+        assert_eq!(
+            script_project(open, &known, Some("C:/work/b")),
+            Ok((get_hash_code("C:\\work\\b"), "C:\\work\\b".into()))
+        );
+        assert!(
+            script_project(open, &known, Some("/elsewhere"))
+                .unwrap_err()
+                .contains("not one of your projects")
+        );
+        assert_eq!(
+            script_project(("", ""), &known, None),
+            Err("Project not loaded.".into())
+        );
+    }
 
     #[tokio::test]
     async fn piped_output_keeps_flowing_after_invalid_utf8() {

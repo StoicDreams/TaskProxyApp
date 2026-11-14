@@ -58,7 +58,7 @@
             header.setAttribute('aria-level', '2');
             header.style.alignItems = 'center';
             header.innerHTML = `<span>Terminal Manager</span>
-<webui-switch id="term-filter" style="margin-left: auto;" label="Show scripts" title="Live: the live terminal. Saved: the scripts saved in this project. Page: the scripts run from this project's pages. Running: what is running in this project. All Running: what is running in every project."></webui-switch>`;
+<webui-switch id="term-filter" style="margin-left: auto;" label="Show scripts" title="Live: the live terminal. Saved: the scripts saved in this project. Page: the scripts run from this project's pages. Running: what is running in this project. All Running: what is running in every project. Finished: the runs that have ended, in every project."></webui-switch>`;
             t._filterSwitch = header.querySelector('#term-filter');
             customElements.whenDefined('webui-switch').then(() => {
                 if (typeof t._filterSwitch.setOptions !== 'function') customElements.upgrade(t._filterSwitch);

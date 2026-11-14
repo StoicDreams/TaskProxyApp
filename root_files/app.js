@@ -311,7 +311,8 @@
             }
         }
         terminal = {
-            start: (id, scriptContent, args, inSeparateWindow, size) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow, cols: size?.cols ?? null, rows: size?.rows ?? null }),
+            // project is the path of a saved project to run in, when it is not the open one, as for a queued commit.
+            start: (id, scriptContent, args, inSeparateWindow, size, project) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow, cols: size?.cols ?? null, rows: size?.rows ?? null, ...(project ? { project } : {}) }),
             // projectId names the project a script runs in, when it is not the open one, as in All Running.
             kill: (id, projectId) => tauri.core.invoke('kill_script', projectId ? { terminalId: id, projectId } : { terminalId: id }),
             killAll: () => tauri.core.invoke('kill_all_scripts', {}),
@@ -602,8 +603,10 @@
                 }
                 return await this._executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript);
             },
-            async _executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript) {
-                let state = this.getState();
+            /** `project`, as `{ id, path, name }`, runs it in another saved project, kept with that project's terminals. */
+            async _executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript, project) {
+                const other = project && this.otherProject(project.id) ? project : null;
+                let state = this.getState(other?.id);
                 if (!state.terminals[id]) {
                     state.terminals[id] = this.newTerminal(id, { args: args, isPageScript: !!isPageScript });
                 } else {
@@ -617,25 +620,25 @@
                 state.terminals[id].startedAt = Date.now();
                 state.terminals[id].endedAt = null;
                 // So All Running can name the project a script runs in, after the user switches to another.
-                state.terminals[id].projectId = webui.projectData?.id ?? '';
-                state.terminals[id].projectName = webui.getData('app-current-project')?.display || webui.projectData?.path || '';
+                state.terminals[id].projectId = other ? other.id : webui.projectData?.id ?? '';
+                state.terminals[id].projectName = other ? other.name || other.path : webui.getData('app-current-project')?.display || webui.projectData?.path || '';
                 // Settles with the exit code when this run ends. Made before starting, since a short script can end first.
                 state.terminals[id].finished = new Promise(resolve => state.terminals[id]._resolveFinished = resolve);
                 if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
                     state.allScripts.push(id);
                 }
-                this.clearOutput(id);
+                this.clearOutput(id, other?.id);
                 webui.setData('app-terminal-refresh', Date.now());
                 try {
-                    const started = await webui.proxy.terminal.start(id, scriptContent, args, inSeparateWindow, this.viewSize);
+                    const started = await webui.proxy.terminal.start(id, scriptContent, args, inSeparateWindow, this.viewSize, other?.path);
                     state.terminals[id].interactive = !!started?.interactive;
                     webui.setData('app-terminal-refresh', Date.now());
                     if (inSeparateWindow) {
-                        this._scriptFinished(id);
+                        this._scriptFinished(id, other?.id);
                     }
                     return 'Started';
                 } catch (err) {
-                    this._scriptFinished(id);
+                    this._scriptFinished(id, other?.id);
                     throw err;
                 }
             },
@@ -658,9 +661,13 @@
              * Runs a script now and resolves with its exit code once it ends, or null when it was stopped.
              * Throws when it cannot start, such as when the same terminal is already running a script.
              */
-            async runAndWait(id, scriptContent, displayScript) {
-                const state = this.getState();
-                await this.runScript(id, scriptContent, [], false, false, false, displayScript);
+            async runAndWait(id, scriptContent, displayScript, project) {
+                const other = project && this.otherProject(project.id) ? project : null;
+                const state = this.getState(other?.id);
+                if (state.terminals[id]?.status === 'Running') {
+                    throw 'Script is already running. You can manage it in the Terminal Manager.';
+                }
+                await this._executeScript(id, scriptContent, [], false, false, displayScript, other);
                 return state.terminals[id].finished;
             },
             /** Scripts run in the open project, so another project's queue waits until it reopens. */
@@ -727,9 +734,10 @@
             },
             /**
              * The Terminal Manager's views, for its switch: the live terminal, saved scripts, this project's page
-             * scripts, what is running in this project, and what is running in every project.
+             * scripts, what is running in this project, what is running in every project, and what has finished in
+             * every project.
              */
-            filters: ['Live', 'Saved', 'Page', 'Running', 'All Running'],
+            filters: ['Live', 'Saved', 'Page', 'Running', 'All Running', 'Finished'],
             /** The views that list running scripts, and that a run opens the Terminal Manager on. */
             runningFilters: ['Running', 'All Running'],
             /** The project id to send with a terminal command, which is only needed for a project that is not open. */
@@ -784,6 +792,17 @@
                             if (listed(term, projectId)) add(term.id, `${nameOf(term, projectId)} (${term.status})`, projectId);
                         });
                     }
+                } else if (filter === 'Finished') {
+                    // Every run that has ended, in every project, the latest first, saying whether it failed.
+                    const ended = [];
+                    for (const [projectId, projectState] of terminalStates) {
+                        Object.values(projectState.terminals).forEach(term => {
+                            const run = this.runStatus(term);
+                            if (run && (run.state !== 'Running' || isWatched(term, projectId))) ended.push({ term, projectId, run });
+                        });
+                    }
+                    ended.sort((a, b) => (b.term.endedAt ?? Infinity) - (a.term.endedAt ?? Infinity));
+                    ended.forEach(({ term, projectId, run }) => add(term.id, `${nameOf(term, projectId)} (${run.state})`, projectId));
                 }
                 return options;
             },

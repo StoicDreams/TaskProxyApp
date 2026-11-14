@@ -133,6 +133,43 @@ test.describe('webui.proxy.terminalHelpers', () => {
         expect(await page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('other-project::deploy.ps1'))).toEqual({ id: 'deploy.ps1', projectId: 'other-project' });
         expect(await page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('test.ps1'))).toEqual({ id: 'test.ps1' });
     });
+    test('Finished lists every run that has ended, in every project, the latest first, and which failed', async ({ page }) => {
+        await run(page, 'test.ps1', 'x', [], false, false);
+        const options = await page.evaluate(async () => {
+            const helpers = webui.proxy.terminalHelpers;
+            const other = helpers.getState('other-project');
+            other.terminals['old.ps1'] = helpers.newTerminal('old.ps1', { status: 'Finished', projectName: 'Storefront', startedAt: 1, endedAt: 2, exitCode: 0 });
+            other.terminals['broke.ps1'] = helpers.newTerminal('broke.ps1', { status: 'Finished', projectName: 'Storefront', startedAt: 1, endedAt: 3, exitCode: 1 });
+            other.terminals['never.ps1'] = helpers.newTerminal('never.ps1', { status: 'Ready', projectName: 'Storefront' });
+            return helpers.getDropdownOptions(helpers.getState(), 'Finished', null);
+        });
+        // test.ps1 is still running, and never.ps1 has not run.
+        expect(options.map(option => [option.value, option.display])).toEqual([
+            ['other-project::broke.ps1', 'Storefront: broke.ps1 (Failed)'],
+            ['other-project::old.ps1', 'Storefront: old.ps1 (Finished)'],
+        ]);
+        await page.evaluate(() => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: 'test.ps1', code: 0 }));
+        await expect.poll(() => page.evaluate(async () => {
+            const helpers = webui.proxy.terminalHelpers;
+            return (await helpers.getDropdownOptions(helpers.getState(), 'Finished', null))[0]?.display;
+        })).toBe('test.ps1 (Finished)');
+    });
+    test('runAndWait can run a script in another saved project, kept with that project\'s terminals', async ({ page }) => {
+        await openApp(page, { projects: [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }] });
+        const done = page.evaluate(() => {
+            const helpers = webui.proxy.terminalHelpers;
+            helpers.ensureListeners();
+            return helpers.runAndWait('Before Commit', 'body', undefined, { id: 'id-/other', path: '/other', name: 'Other' });
+        });
+        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+        expect((await calls(page, 'start_script'))[0]).toMatchObject({ terminalId: 'Before Commit', project: '/other' });
+        expect(await page.evaluate(() => {
+            const term = webui.proxy.terminalHelpers.getState('id-/other').terminals['Before Commit'];
+            return [term.status, term.projectName, !!webui.proxy.terminalHelpers.getState().terminals['Before Commit']];
+        })).toEqual(['Running', 'Other', false]);
+        await page.evaluate(() => window.__backend.emit('terminal-finished', { projectId: 'id-/other', terminalId: 'Before Commit', code: 3 }));
+        expect(await done).toBe(3);
+    });
     test('stopping another project\'s script names that project to the backend', async ({ page }) => {
         await page.evaluate(async () => {
             const helpers = webui.proxy.terminalHelpers;
