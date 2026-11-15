@@ -257,6 +257,100 @@ test.describe('tutorials', () => {
         });
     });
 
+    /** Opens the Task Manager, on the given preset, flat, with its guide closed unless asked for. */
+    const openTaskManager = async (page, { filter = 'all', guide = false, tree = false } = {}) => {
+        await clickOn(page, page.locator('app-task-manager'), { after: 1400 });
+        const view = page.locator('webui-drawer.shared .task-manager');
+        await view.locator('tr.tm-row').first().waitFor();
+        await view.locator('.tm-filter').selectOption(filter);
+        if (await view.locator('details.tm-guide').evaluate(el => el.open) !== guide) await view.locator('details.tm-guide > summary').click();
+        if (await view.locator('.tm-tree').getAttribute('aria-pressed') !== `${tree}`) await view.locator('.tm-tree').click();
+        await page.waitForTimeout(600);
+        return view;
+    };
+
+    test('task manager search', async ({ page }) => {
+        await open(page, '/');
+        await loop(page, 'task-manager-search', async () => {
+            const view = await openTaskManager(page);
+            // Something already holds the dev server's port: searching for it finds the server.
+            await typeInto(page, view.locator('.tm-search'), '5173', { delay: 140 });
+            await page.waitForTimeout(900);
+            await clickOn(page, view.locator('tr.tm-row[data-pid="1220"]'), { after: 1600 });
+        });
+    });
+
+    test('task manager tree', async ({ page }) => {
+        await open(page, '/');
+        await loop(page, 'task-manager-tree', async () => {
+            const view = await openTaskManager(page, { filter: 'projects' });
+            await page.waitForTimeout(600);
+            await clickOn(page, view.locator('.tm-tree'), { after: 1400 });
+            await moveTo(page, view.locator('tr.tm-row[data-pid="1230"]'));
+            await page.waitForTimeout(900);
+        });
+    });
+
+    test('task manager filter rules', async ({ page }) => {
+        await open(page, '/');
+        await loop(page, 'task-manager-filter', async () => {
+            const view = await openTaskManager(page, { filter: 'listening' });
+            await clickOn(page, view.locator('details.tm-rules > summary'), { after: 900 });
+            await clickOn(page, view.locator('.tm-rules-body [data-do="copy"]'), { after: 800 });
+            await clickOn(page, view.locator('.tm-rules-body [data-do="add"]'), { after: 600 });
+            const rule = view.locator('.tm-rules-body .tm-rule').nth(1);
+            await moveTo(page, rule.locator('[data-part="field"]'));
+            await rule.locator('[data-part="field"]').selectOption('project');
+            await page.waitForTimeout(500);
+            await typeInto(page, view.locator('.tm-rules-body .tm-rule').nth(1).locator('[data-part="value"]'), 'Acme', { delay: 120 });
+            await page.waitForTimeout(600);
+            await typeInto(page, view.locator('.tm-rules-body [data-part="name"]'), 'Storefront servers', { delay: 60 });
+            await clickOn(page, view.locator('.tm-rules-body [data-do="save"]'), { after: 1400 });
+        });
+    });
+
+    test('task manager stop', async ({ page }) => {
+        await open(page, '/');
+        await loop(page, 'task-manager-stop', async () => {
+            const view = await openTaskManager(page, { filter: 'orphan', guide: true });
+            await clickOn(page, view.locator('tr.tm-row[data-pid="1300"]'), { after: 1000 });
+            await moveTo(page, view.locator('details.tm-guide dl'));
+            await page.waitForTimeout(1200);
+            await clickOn(page, view.locator('tr.tm-details [data-act="stop-tree"]'), { after: 1000 });
+            await moveTo(page, page.getByRole('dialog', { name: 'Stop Process' }).getByRole('button', { name: 'Stop', exact: true }));
+            await page.waitForTimeout(1200);
+        });
+    });
+
+    test('terminal finished runs', async ({ page }) => {
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await open(page, '/script-manager');
+        const manager = page.locator('app-script-manager');
+        await manager.locator('.params-container [data-param="Suite"] input').fill('unit');
+        await scriptOutput(page, testRunOutput);
+        await manager.locator('webui-button[label="Run"]').first().click();
+        await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['.taskproxy/scripts/test.ps1']?.status)).toBe('Finished');
+        await settle(page);
+        await parkMouse(page);
+        await loop(page, 'terminal-finished', async () => {
+            await clickOn(page, page.locator('app-terminals'), { after: 1000 });
+            const filter = page.locator('#term-filter');
+            await filter.waitFor();
+            const finished = filter.getByText('Finished', { exact: true });
+            await clickOn(page, finished, { after: 1200 });
+            await expect(page.locator('#term-status')).toContainText('Finished', { timeout: 10000 });
+            await page.waitForTimeout(800);
+        });
+    });
+
+    test('git file preview', async ({ page }) => {
+        await openGit(page);
+        await loop(page, 'git-file-preview', async () => {
+            await clickOn(page, git(page).locator('.files button.file[title="README.md"]'), { after: 1200 });
+            await clickOn(page, git(page).locator('.render-toggle button[data-mode="preview"]'), { after: 1800 });
+        });
+    });
+
     test('settings', async ({ page }) => {
         await open(page, '/');
         const updates = page.locator('app-update-manager');
