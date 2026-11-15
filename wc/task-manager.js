@@ -90,6 +90,7 @@
             pace: paces.some(pace => pace.ms === value.pace) ? value.pace : 2000,
             sort: value.sort && sortValue[value.sort.key] ? value.sort : null,
             tree: value.tree !== false,
+            guide: value.guide !== false,
             custom: validFilter(value.custom) || { match: 'all', rules: [] },
             saved: Array.isArray(value.saved) ? value.saved.map(validFilter).filter(filter => filter?.name) : [],
         };
@@ -212,7 +213,7 @@
             const t = this;
             t.body.innerHTML = `
 <style>
-.task-manager { display: flex; flex-direction: column; gap: calc(0.5 * var(--padding)); height: 100%; min-height: 0; }
+.task-manager { display: flex; flex-direction: column; gap: calc(0.5 * var(--padding)); height: 100%; min-height: 0; container-type: inline-size; }
 .task-manager .tm-tools { display: flex; flex-wrap: wrap; gap: calc(0.5 * var(--padding)); align-items: center; }
 .task-manager select, .task-manager input, .task-manager button { font: inherit; color: var(--color-background-offset); background: var(--color-background); border: 1px solid var(--color-background-offset); border-radius: var(--corners); padding: 2px 6px; }
 .task-manager button { cursor: pointer; }
@@ -225,9 +226,16 @@
 .task-manager .tm-message { padding: 4px 8px; border-radius: var(--corners); background: var(--color-info); color: var(--color-info-offset); }
 .task-manager .tm-message.error { background: var(--color-danger, #c33); color: #fff; }
 .task-manager details.tm-rules > summary { cursor: pointer; }
+.task-manager details.tm-guide { flex: 0 0 auto; max-height: 35%; overflow: auto; font-size: 0.85em; }
+.task-manager details.tm-guide > summary { cursor: pointer; }
+.task-manager details.tm-guide dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 8px; margin: 4px 0; }
+.task-manager details.tm-guide dt { font-weight: bold; }
+.task-manager details.tm-guide dd { margin: 0; }
+.task-manager details.tm-guide p { margin: 4px 0 0; }
+@container (max-width: 420px) { .task-manager details.tm-guide dl { grid-template-columns: 1fr; } .task-manager details.tm-guide dd { margin-bottom: 4px; } }
 .task-manager .tm-rule { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
 .task-manager .tm-rule input { flex: 1 1 8em; min-width: 4em; }
-.task-manager .tm-table-wrap { flex: 1 1 auto; min-height: 8em; overflow: auto; border: 1px solid var(--color-background-offset); border-radius: var(--corners); container-type: inline-size; }
+.task-manager .tm-table-wrap { flex: 1 1 auto; min-height: 8em; overflow: auto; overflow-anchor: none; border: 1px solid var(--color-background-offset); border-radius: var(--corners); container-type: inline-size; }
 @container (max-width: 620px) { .task-manager .c-project { display: none; } }
 @container (max-width: 500px) { .task-manager .c-age { display: none; } }
 .task-manager .tm-details td { padding: 0; }
@@ -273,6 +281,20 @@
             <tbody></tbody>
         </table>
     </div>
+    <details class="tm-guide">
+        <summary>How stopping works</summary>
+        <dl>
+            <dt>Stop</dt>
+            <dd>Asks only this process to stop, as Ctrl+C would, so it can clean up. What it started may keep running.</dd>
+            <dt>Stop with children</dt>
+            <dd>Asks it and everything under it to stop, the deepest first. The number counts all of them.</dd>
+            <dt>Force close</dt>
+            <dd>Ends only this process at once, with no clean up. What it started keeps running.</dd>
+            <dt>Force close with children</dt>
+            <dd>Ends it and everything under it at once, the deepest first, with no clean up.</dd>
+        </dl>
+        <p>Try Stop first. A process left running after what started it ended shows as Orphaned. Rest the pointer on a button for more.</p>
+    </details>
 </div>`;
             const $ = selector => t.body.querySelector(selector);
             t.filterSelect = $('.tm-filter');
@@ -281,6 +303,8 @@
             t.treeBox = $('.tm-tree');
             t.rulesBody = $('.tm-rules-body');
             t.rulesDetails = $('.tm-rules');
+            t.guide = $('.tm-guide');
+            t.guide.open = t.settings.guide;
             t.message = $('.tm-message');
             t.summary = $('.tm-summary');
             t.tbody = $('tbody');
@@ -309,6 +333,12 @@
             t.rulesDetails.querySelector('summary').addEventListener('click', ev => {
                 ev.preventDefault();
                 t.rulesDetails.open = !t.rulesDetails.open;
+            });
+            t.guide.querySelector('summary').addEventListener('click', ev => {
+                ev.preventDefault();
+                t.guide.open = !t.guide.open;
+                t.settings.guide = t.guide.open;
+                t.save();
             });
             $('.tm-refresh').addEventListener('click', () => t.refresh());
             $('thead').addEventListener('click', ev => {
@@ -568,20 +598,29 @@
         draw() {
             const t = this;
             if (!t.list) return;
+            // A refresh keeps the list where it was scrolled to, and one scrolled to its end stays there. This is saved
+            // before anything changes, since WebKit moved the list when the header and summary were written together.
+            const wrap = t.tbody.closest('.tm-table-wrap');
+            const scrollTop = wrap.scrollTop;
+            const atEnd = scrollTop > 0 && scrollTop + wrap.clientHeight >= wrap.scrollHeight - 2;
             const rows = t.shown();
             const now = (t.readAt || Date.now()) / 1000;
             const { key, desc } = t.sort();
             t.body.querySelectorAll('thead [data-sort]').forEach(button => {
                 const column = columns.find(column => column.key === button.dataset.sort);
                 const active = column.key === key;
-                button.textContent = column.label + (active ? (desc ? ' ▾' : ' ▴') : '');
-                button.closest('th').setAttribute('aria-sort', active ? (desc ? 'descending' : 'ascending') : 'none');
+                const label = column.label + (active ? (desc ? ' ▾' : ' ▴') : '');
+                const sorted = active ? (desc ? 'descending' : 'ascending') : 'none';
+                if (button.textContent !== label) button.textContent = label;
+                const th = button.closest('th');
+                if (th.getAttribute('aria-sort') !== sorted) th.setAttribute('aria-sort', sorted);
             });
             const list = t.list;
             const pace = t.settings.pace ? '' : ' Paused.';
             const total = t.processes.length;
             const count = rows.length === total ? `${total} processes.` : `${rows.length} of ${total} processes match.`;
-            t.summary.textContent = `${count} CPU ${formatCpu(list.cpu)}, memory ${formatBytes(list.memoryUsed)} of ${formatBytes(list.memoryTotal)}.${pace}`;
+            const summary = `${count} CPU ${formatCpu(list.cpu)}, memory ${formatBytes(list.memoryUsed)} of ${formatBytes(list.memoryTotal)}.${pace}`;
+            if (t.summary.textContent !== summary) t.summary.textContent = summary;
             let html = '';
             rows.slice(0, rowLimit).forEach(({ p, depth }) => {
                 const badges = Object.entries(kinds)
@@ -607,14 +646,12 @@
                 html = t.detailsHtml(selected, now, true) + html;
             }
             t.patchRows(html);
+            const restored = atEnd ? wrap.scrollHeight : scrollTop;
+            if (wrap.scrollTop !== restored) wrap.scrollTop = restored;
         }
-        /** Swaps in only the rows that changed, so a refresh keeps the list where it was scrolled to. */
+        /** Swaps in only the rows that changed, leaving the rest of the list as it is. */
         patchRows(html) {
             const t = this;
-            const scrolled = [];
-            for (let el = t.tbody.parentElement; el; el = el.parentElement || el.getRootNode()?.host) {
-                if (el.scrollTop || el.scrollLeft) scrolled.push([el, el.scrollTop, el.scrollLeft]);
-            }
             const fresh = document.createElement('tbody');
             fresh.innerHTML = html;
             const next = [...fresh.children];
@@ -625,16 +662,25 @@
                 else if (current.outerHTML !== row.outerHTML) current.replaceWith(row);
             });
             old.slice(next.length).forEach(row => row.remove());
-            scrolled.forEach(([el, top, left]) => {
-                if (el.scrollTop !== top) el.scrollTop = top;
-                if (el.scrollLeft !== left) el.scrollLeft = left;
-            });
         }
         detailsHtml(p, now, outside) {
             const t = this;
             const parent = t.byPid.get(p.parent);
             const children = t.processes.filter(child => child.parent === p.pid);
             const all = t.descendants(p.pid);
+            const one = all.length === 1;
+            const under = `${all.length} process${one ? '' : 'es'} under it`;
+            // What each button does, and what it leaves alone, shown when the pointer rests on it.
+            const tips = {
+                stop: all.length
+                    ? `Asks only this process to stop, as Ctrl+C or closing its window would, so it can save and clean up. The ${under} ${one ? 'is' : 'are'} not asked: many programs stop their own children, but some leave them running. It may take a moment to stop, or not stop at all.`
+                    : 'Asks this process to stop, as Ctrl+C or closing its window would, so it can save and clean up. It may take a moment to stop, or not stop at all.',
+                stopTree: `Asks this process and the ${under} (what it started, and what those started) to stop, the deepest first, so each can save and clean up. Any of them may take a moment to stop, or not stop at all.`,
+                kill: all.length
+                    ? `Ends only this process at once. It cannot save or clean up, and the ${under} ${one ? 'keeps' : 'keep'} running.`
+                    : 'Ends this process at once. It cannot save or clean up.',
+                killTree: `Ends this process and the ${under} (what it started, and what those started) at once, the deepest first. None of them can save or clean up.`,
+            };
             const link = q => `<span class="tm-link" data-select="${q.pid}">${escape(q.name)} (${q.pid})</span>`;
             const kindsText = Object.values(kinds).filter(kind => kind.has(p)).map(kind => kind.label).join(', ');
             const started = new Date(p.started * 1000).toLocaleString();
@@ -651,10 +697,10 @@
                     ${children.length ? `<dt>It started</dt><dd>${children.map(link).join(', ')}${all.length > children.length ? `, and ${all.length - children.length} below them` : ''}</dd>` : ''}
                 </dl>
                 <div class="tm-actions">
-                    <button type="button" data-act="stop" title="Ask it to stop, as Ctrl+C or closing its window would">Stop</button>
-                    ${all.length ? `<button type="button" data-act="stop-tree" title="Ask it and everything it started to stop">Stop with ${all.length} started by it</button>` : ''}
-                    <button type="button" class="danger" data-act="kill" title="End it at once, without letting it clean up">Force close</button>
-                    ${all.length ? `<button type="button" class="danger" data-act="kill-tree" title="End it and everything it started at once">Force close with ${all.length} started by it</button>` : ''}
+                    <button type="button" data-act="stop" title="${escape(tips.stop)}">Stop</button>
+                    ${all.length ? `<button type="button" data-act="stop-tree" title="${escape(tips.stopTree)}">Stop with children (${all.length})</button>` : ''}
+                    <button type="button" class="danger" data-act="kill" title="${escape(tips.kill)}">Force close</button>
+                    ${all.length ? `<button type="button" class="danger" data-act="kill-tree" title="${escape(tips.killTree)}">Force close with children (${all.length})</button>` : ''}
                     <button type="button" data-act="copy" title="Copy the command">Copy command</button>
                 </div>
             </div></td></tr>`;

@@ -125,7 +125,11 @@ test('a process shows its details, and stopping it with what it started asks fir
     await expect(details).toContainText('/repo/web (Repo)');
     await expect(details.locator('[data-select="100"]')).toHaveText('systemd (100)');
     await expect(details.locator('[data-select="510"]')).toHaveText('esbuild (510)');
-    await details.getByRole('button', { name: 'Stop with 1 started by it' }).click();
+    // Each button says what it does, and what it leaves alone.
+    await expect(details.getByRole('button', { name: 'Stop', exact: true })).toHaveAttribute('title', /Asks only this process to stop.*The 1 process under it is not asked/);
+    await expect(details.getByRole('button', { name: 'Force close', exact: true })).toHaveAttribute('title', /Ends only this process at once.*the 1 process under it keeps running/);
+    await expect(details.getByRole('button', { name: 'Force close with children (1)' })).toHaveAttribute('title', /Ends this process and the 1 process under it/);
+    await details.getByRole('button', { name: 'Stop with children (1)' }).click();
     await expect(dialogButton(page, 'Stop')).toBeVisible();
     expect(await calls(page, 'stop_process')).toEqual([]);
     await dialogButton(page, 'Stop').click();
@@ -193,4 +197,67 @@ test('a refresh keeps the list where it was scrolled to, and only redraws the ro
     await expect(row(page, 1005).locator('.c-cpu')).not.toHaveText('0%');
     expect(await wrap.evaluate(el => el.scrollTop)).toBe(400);
     expect(await kept.evaluate(el => el.isConnected)).toBe(true);
+});
+
+test('processes that start between reads keep the list where it was scrolled to, and a list scrolled to its end stays there', async ({ page }) => {
+    const many = Array.from({ length: 120 }, (_, i) => proc(1000 + i, 400, `worker-${i}`, { terminal: true }));
+    await open(page, { processes: [...processes, ...many] });
+    // Each of the first reads finds two more processes cargo started.
+    await page.evaluate(() => {
+        const list = webui.proxy.taskManager.list;
+        let reads = 0;
+        webui.proxy.taskManager.list = async (...args) => {
+            const result = await list(...args);
+            reads++;
+            const extra = Array.from({ length: Math.min(reads, 6) * 2 }, (_, i) => ({ ...result.processes.find(p => p.pid === 1000), pid: 900 + i, name: `new-${i}` }));
+            result.processes.push(...extra);
+            return result;
+        };
+    });
+    const wrap = view(page).locator('.tm-table-wrap');
+    const reads = async () => (await calls(page, 'list_processes')).length;
+    await view(page).locator('.tm-pace').selectOption('1000');
+    await expect.poll(() => wrap.evaluate(el => el.scrollHeight > el.clientHeight + 600)).toBe(true);
+    await wrap.evaluate(el => { el.scrollTop = 600; });
+    const before = await reads();
+    await expect.poll(reads, { timeout: 5000 }).toBeGreaterThan(before + 1);
+    await expect.poll(() => view(page).locator('tr.tm-row[data-pid="902"]').count()).toBe(1);
+    expect(await wrap.evaluate(el => el.scrollTop)).toBe(600);
+    await wrap.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    const end = await reads();
+    await expect.poll(reads, { timeout: 5000 }).toBeGreaterThan(end + 1);
+    expect(await wrap.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(2);
+});
+
+test('a refresh leaves the header as it is, since WebKit moved the list when the header and summary were rewritten together', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+        window.__headerChanges = 0;
+        new MutationObserver(records => { window.__headerChanges += records.length; })
+            .observe(document.querySelector('webui-drawer.shared .task-manager thead'), { subtree: true, childList: true, characterData: true, attributes: true });
+    });
+    await view(page).locator('.tm-pace').selectOption('1000');
+    const reads = (await calls(page, 'list_processes')).length;
+    await expect.poll(async () => (await calls(page, 'list_processes')).length, { timeout: 5000 }).toBeGreaterThan(reads + 1);
+    expect(await page.evaluate(() => window.__headerChanges)).toBe(0);
+    // Sorting still changes it.
+    await view(page).locator('[data-sort="cpu"]').click();
+    await expect(view(page).locator('th[aria-sort="descending"]')).toHaveText('CPU ▾');
+});
+
+test('a guide below the list says what each way of stopping does, and stays closed once closed', async ({ page }) => {
+    await open(page);
+    const guide = view(page).locator('details.tm-guide');
+    await expect(guide).toHaveAttribute('open', '');
+    await expect(guide.locator('dt')).toHaveText(['Stop', 'Stop with children', 'Force close', 'Force close with children']);
+    await expect(guide).toContainText('What it started keeps running.');
+    // The drawer stops the default action of clicks, so the guide opens and closes in code.
+    await guide.locator('summary').click();
+    await expect(guide).not.toHaveAttribute('open');
+    await expect.poll(() => page.evaluate(() => webui.getData('app-task-manager')?.guide)).toBe(false);
+    await page.evaluate(() => document.querySelector('app-plugins-drawer').open());
+    await expect(page.locator('webui-drawer.shared app-plugin-manager')).toHaveCount(1);
+    await page.evaluate(() => document.querySelector('app-task-manager').open());
+    await expect(view(page).locator('details.tm-guide')).toHaveCount(1);
+    await expect(view(page).locator('details.tm-guide')).not.toHaveAttribute('open');
 });
