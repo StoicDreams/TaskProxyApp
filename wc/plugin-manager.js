@@ -192,7 +192,7 @@
             toggle.addEventListener('click', async () => {
                 if (await webui.proxy.plugins.setEnabled(plugin.id, !plugin.enabled)) t.load();
             });
-            const remove = button('Remove', 'danger', 'trash-can');
+            const remove = button('Remove', 'danger', 'trash');
             remove.addEventListener('click', () => {
                 webui.dialog.confirm(`Remove ${escape(manifest?.name || plugin.id)}, with its settings and saved data?`, async () => {
                     if (await webui.proxy.plugins.remove(plugin.id)) {

@@ -564,7 +564,7 @@
             + `<button type="button" class="file" title="${path}"><span class="change-type">${details.change}</span> <strong class="name">${webui.escapeForHTML(details.name)}</strong>`
             + (details.folder ? ` <span class="folder">${webui.escapeForHTML(details.folder)}</span>` : '')
             + `</button>`
-            + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}"><webui-icon icon="${isNew ? 'trash-can' : 'undo'}"></webui-icon></button>`
+            + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}"><webui-icon icon="${isNew ? 'trash' : 'undo'}"></webui-icon></button>`
             + `</div>`;
     }
     // How often the Repo dropdown asks again about CI runs that have not finished.

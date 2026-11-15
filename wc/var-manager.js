@@ -216,11 +216,11 @@
             if (scope === 'Project') {
                 createIconBtn('globe', 'Copy Value to Global Scope', 'info', copyToGlob);
                 createIconBtn('eraser', 'Clear Value', 'warning', clearValue);
-                createIconBtn('trash-can', 'Delete Variable', 'danger', deleteVar);
+                createIconBtn('trash', 'Delete Variable', 'danger', deleteVar);
             }
             if (scope === 'Global') {
                 createIconBtn('eraser', 'Clear Value', 'warning', clearValue);
-                createIconBtn('trash-can', 'Delete Variable', 'danger', deleteVar);
+                createIconBtn('trash', 'Delete Variable', 'danger', deleteVar);
             }
             createIconBtn('copy', 'Copy Value to Clipboard', 'info', copyToClip);
             wrap.appendChild(actionsFlex);
