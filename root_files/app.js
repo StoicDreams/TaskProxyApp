@@ -310,6 +310,18 @@
                 }
             }
         }
+        /** The Task Manager: the user's own processes, read only while it is open. */
+        taskManager = {
+            /** Lists processes, with the ports each listens on when `ports` is set, which takes longer to read. */
+            list: (ports, errHandler) => tauri.core.invoke('list_processes', { ports: !!ports }).catch(errHandler ?? defaultErrHandler),
+            /**
+             * Asks a process to stop, or with `force` ends it at once, and with `children` everything it started.
+             * `started` names the run, so a process that ended and whose pid was reused is never stopped.
+             */
+            stop: (pid, started, children, force) => tauri.core.invoke('stop_process', { pid, started, children: !!children, force: !!force }),
+            /** Lets go of the process list while the Task Manager is closed. */
+            close: () => tauri.core.invoke('close_task_manager', {}).catch(() => { }),
+        }
         terminal = {
             // project is the path of a saved project to run in, when it is not the open one, as for a queued commit.
             start: (id, scriptContent, args, inSeparateWindow, size, project) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow, cols: size?.cols ?? null, rows: size?.rows ?? null, ...(project ? { project } : {}) }),

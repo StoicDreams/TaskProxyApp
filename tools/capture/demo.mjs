@@ -290,6 +290,35 @@ const navDiff = unifiedDiff('src/nav.json', navBefore, navAfter);
 export const PROJECT = { name: 'Acme Storefront', path: '/home/sam/code/acme-storefront' };
 
 /** Backend state for openApp, describing the demo project. */
+/**
+ * The Task Manager's processes: a dev server in an editor's terminal, a Storybook server left running after its
+ * terminal closed, and the usual desktop processes around them.
+ */
+export function demoProcesses() {
+    const now = Math.floor(Date.now() / 1000);
+    const MB = 1024 * 1024;
+    const home = '/home/sam';
+    const proc = (pid, parent, name, extra = {}) => ({
+        pid, parent, name, command: name, exe: `/usr/bin/${name}`, folder: home, started: now - 5400, cpu: 0.1, memory: 40 * MB,
+        status: 'Sleeping', ports: [], terminal: false, orphan: false, taskProxy: false, project: null, ...extra,
+    });
+    const storefront = `${home}/code/acme-storefront`;
+    const design = `${home}/code/design-system`;
+    return [
+        proc(1000, null, 'systemd', { command: '/usr/lib/systemd/systemd --user', exe: '/usr/lib/systemd/systemd', started: now - 30000 }),
+        proc(1100, 1000, 'pipewire', { started: now - 29900, memory: 18 * MB }),
+        proc(1150, 1000, 'firefox', { cpu: 3.2, memory: 1450 * MB, started: now - 20000 }),
+        proc(1200, 1000, 'code', { command: 'code', cpu: 1.8, memory: 620 * MB, folder: storefront, project: 'Acme Storefront', started: now - 9000 }),
+        proc(1210, 1200, 'bash', { folder: storefront, project: 'Acme Storefront', started: now - 8900 }),
+        proc(1220, 1210, 'node', { command: 'node node_modules/.bin/vite --port 5173', folder: storefront, project: 'Acme Storefront', terminal: true, ports: [5173], cpu: 0.6, memory: 210 * MB, started: now - 8800 }),
+        proc(1230, 1220, 'esbuild', { command: 'esbuild --service=0.24.0 --ping', folder: storefront, project: 'Acme Storefront', terminal: true, memory: 24 * MB, started: now - 8790 }),
+        proc(1300, 1000, 'node', { command: 'node node_modules/.bin/storybook dev -p 6006', folder: design, project: 'Design System', terminal: true, orphan: true, ports: [6006], cpu: 4.1, memory: 540 * MB, started: now - 26000 }),
+        proc(1310, 1300, 'esbuild', { command: 'esbuild --service=0.24.0 --ping', folder: design, project: 'Design System', terminal: true, orphan: false, memory: 22 * MB, started: now - 25990 }),
+        proc(1400, 1000, 'Task Proxy', { exe: '/opt/task-proxy/task-proxy', taskProxy: true, cpu: 0.8, memory: 310 * MB, started: now - 7000 }),
+        proc(1410, 1400, 'pwsh', { command: 'pwsh -NoLogo -File PowerShell/RunTests.ps1', folder: storefront, project: 'Acme Storefront', taskProxy: true, cpu: 9.5, memory: 160 * MB, started: now - 40 }),
+    ];
+}
+
 export function demoState(overrides = {}) {
     const navigation = [
         { name: 'Team Onboarding', icon: 'circle_user-plus|theme:primary|backing|inverted', url: `/${pages.onboarding}`, children: null },
@@ -361,6 +390,7 @@ export function demoState(overrides = {}) {
             currentBranch: 'feature/cart-discounts',
             status: { hasUpstream: true, upstreamName: 'origin/feature/cart-discounts', ahead: 2, behind: 1, remoteUrl: 'https://github.com/acme/storefront.git' },
         },
+        processes: demoProcesses(),
         ...overrides,
     };
     return state;

@@ -394,7 +394,7 @@
 <style type="text/css">
 :host { display:inline-flex; cursor:pointer; padding:1px; align-items:center; justify-content:center; }
 </style>
-<webui-icon icon="circle_terminal|theme:black|fill"></webui-icon>
+<webui-icon icon="circle_terminal|theme:black|fill|backing|bordered"></webui-icon>
 `
     });
 }

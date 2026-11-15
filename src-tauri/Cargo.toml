@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.127"
+version = "0.1.128"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -66,6 +66,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 minisign-verify = "0.3"
 # Runs plugins. Without its own HTTP and file access, so a plugin only reaches Task Proxy through its host calls.
 extism = { version = "1.41.0", default-features = false, features = ["wasmtime-default-features"] }
+# The Task Manager: processes on Linux, macOS, and Windows, read only for what it shows.
+sysinfo = { version = "0.40", default-features = false, features = ["system", "user"] }
+# The ports each process listens on, for the Task Manager.
+listeners = "0.6"
 
 [dev-dependencies]
 tempfile = "3"

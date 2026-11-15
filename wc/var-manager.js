@@ -551,7 +551,7 @@
         },
         disconnected() { },
         shadowTemplate: `
-<webui-icon icon="dollar|theme:tertiary"></webui-icon>
+<webui-icon icon="circle_dollar|theme:tertiary|fill|backing|bordered"></webui-icon>
 <style type="text/css">
 :host {
     display:inline-flex;

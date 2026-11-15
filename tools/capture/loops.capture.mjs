@@ -241,6 +241,22 @@ test.describe('tutorials', () => {
         });
     });
 
+    test('task manager', async ({ page }) => {
+        await open(page, '/');
+        await loop(page, 'task-manager', async () => {
+            await clickOn(page, page.locator('app-task-manager'), { after: 1400 });
+            const view = page.locator('webui-drawer.shared .task-manager');
+            await view.locator('tr.tm-row').first().waitFor();
+            // The Storybook server outlived its terminal: Orphaned finds it, and its details say what started it.
+            await moveTo(page, view.locator('.tm-filter'));
+            await view.locator('.tm-filter').selectOption('orphan');
+            await page.waitForTimeout(900);
+            await clickOn(page, view.locator('tr.tm-row[data-pid="1300"]'), { after: 1200 });
+            await moveTo(page, view.locator('tr.tm-details [data-act="stop-tree"]'));
+            await page.waitForTimeout(800);
+        });
+    });
+
     test('settings', async ({ page }) => {
         await open(page, '/');
         const updates = page.locator('app-update-manager');

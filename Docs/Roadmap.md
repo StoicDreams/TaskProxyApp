@@ -20,28 +20,13 @@ Still to decide:
 - **More contribution points:** a drawer panel, commands, and hooks such as before and after commit.
 - **Projects asking for plugins:** a `.taskproxy/plugins.json` listing the plugins a project wants, which the app offers to install.
 
-### Next plugin: Task Manager
+### Task Manager, built in
 
-A plugin listing every running task, background processes included, drafted as plugin spec 0.1.4 in TaskProxyPlugins' `spec/0.1.md` (section 10), so a stuck one can be found and closed from Task Proxy. It comes from a real case: a `trunk serve` outlived the `cargo tauri dev` that started it, held port 1426 and blocked every later dev run, and Ctrl+C didn't stop the new runs.
+The Task Manager was planned as a plugin, drafted as plugin spec 0.1.4. It was built into the app instead, as a header drawer between Terminals and the alerts (`wc/task-manager.js`, `services/task_manager.rs`), since processes belong to the whole machine rather than a project, and stopping any of the user's processes is too much to hand to plugin code. The spec draft stays for a plugin that ever needs processes.
 
-- **What it shows:**
-  - a table of processes with their name, command line, folder, parent, start time or age, CPU and memory, and the ports they listen on
-  - filters by text, by project folder (the open project's processes first), and by orphans, meaning processes whose parent has exited and that are now owned by init or `systemd --user`
-  - a process's child processes beside it
-  - which process holds a port, such as 1426
-- **Closing processes:**
-  - Stop sends SIGTERM, or closes the process on Windows.
-  - Force close sends SIGKILL, after a confirmation that names the process.
-  - Either can close a process and its children together.
-  - Both are host actions that run only after the user clicks, as `git.createBranch` does.
-- **Groundwork in the app:**
-  - New host calls to list processes and to stop or kill one, each behind a new manifest permission such as `processes: ["list", "stop"]`, checked in `CallContext::handle` and added to the SDK's `host.rs`.
-  - The plugin can only reach the user's own processes, never system ones.
-  - The `sysinfo` crate works on Linux, macOS, and Windows, and listening ports come from `/proc/net` or a crate such as `listeners`.
-  - Test the refusals with the test plugin.
-- **To decide:**
-  - Plugins show only in projects set up for them, but processes belong to the whole machine. One option is turning it on per project and filtering to that project by default. Another is a kind of plugin that shows in every project once turned on, which would need its own rule.
-  - Whether it also lists the scripts Task Proxy runs, beside the Terminal Manager's All Running view.
+Still to decide:
+
+- **Scripts that outlive Task Proxy:** a choice to run a script detached, with its output in a log file, which Task Proxy finds again and follows on its next start, and lists in the Task Manager.
 
 ### Groundwork
 

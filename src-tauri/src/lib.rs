@@ -51,7 +51,8 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(TaskProxyData::new())))
         .manage(Arc::new(Mutex::new(ProjectData::new())))
         .manage(Arc::new(Mutex::new(crate::services::EmojiState::default())))
-        .manage(crate::services::terminal_controller::TerminalManager::default());
+        .manage(crate::services::terminal_controller::TerminalManager::default())
+        .manage(crate::services::task_manager::TaskManagerState::default());
 
     // Save data on close
     builder = builder.on_window_event(|window, event| match event {
@@ -212,6 +213,9 @@ pub fn run() {
             services::terminal_controller::write_terminal_input,
             services::terminal_controller::resize_terminal,
             services::terminal_controller::kill_all_scripts,
+            services::task_manager::list_processes,
+            services::task_manager::stop_process,
+            services::task_manager::close_task_manager,
             services::terminal_controller::get_powershell_status,
             services::terminal_controller::auto_install_powershell,
             services::updates::get_version,

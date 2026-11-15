@@ -33,6 +33,9 @@
  * - pickedFolder: the folder the folder picker returns, or null for none. pluginFolder: { manifest } it holds.
  * - branchCards: what plugin_branch_info returns, as [{ id, name, card }].
  * - pluginNotifications: what plugin_notifications returns, as [{ id, name, items }].
+ * - processes: what list_processes lists, as [{ pid, parent, name, command, exe, folder, started, cpu, memory, status,
+ *   ports, terminal, orphan, taskProxy, project }]. stop_process removes a process, and its children when asked,
+ *   unless stopErrors: { pid: message } names it.
  *
  * Other projects in `projects` start with empty data. Saved and synced project data is kept by path,
  * as the backend does, so switching projects and back returns what was saved.
@@ -46,6 +49,7 @@ function setup(state) {
     const project = state.project === null ? null : (state.project || { name: 'Repo', path: '/repo' });
     const files = { ...(state.files || {}) };
     const binaryFiles = { ...(state.binaryFiles || {}) };
+    let processes = JSON.parse(JSON.stringify(state.processes || []));
     const git = {
         repos: [''], changes: [], lineStats: [], branches: [{ name: 'main', isCurrent: true, updatedDate: '2026-01-01' }], currentBranch: 'main',
         status: { hasUpstream: true, upstreamName: 'origin/main', ahead: 0, behind: 0, remoteUrl: 'https://example.com/repo.git' },
@@ -133,6 +137,24 @@ function setup(state) {
             resize_terminal: () => null,
             kill_script: () => 'Process killed',
             kill_all_scripts: () => 'All processes killed',
+            list_processes: ({ ports }) => ({
+                processes: processes.map(process => ({ ...process, ports: ports ? process.ports || [] : [] })),
+                cpuCount: 8, cpu: 12.5, memoryTotal: 16 * 1024 ** 3, memoryUsed: 6 * 1024 ** 3, portsRead: !!ports,
+            }),
+            stop_process: ({ pid, children }) => {
+                const error = (state.stopErrors || {})[pid];
+                if (error) throw error;
+                const gone = new Set([pid]);
+                for (let grew = children; grew;) {
+                    grew = false;
+                    processes.forEach(process => {
+                        if (!gone.has(process.pid) && gone.has(process.parent)) { gone.add(process.pid); grew = true; }
+                    });
+                }
+                processes = processes.filter(process => !gone.has(process.pid));
+                return `Asked to stop ${pid}.`;
+            },
+            close_task_manager: () => null,
             get_powershell_status: () => state.powershell || { installed: true, executable: 'pwsh', canAutoInstall: false, installCommand: '', instructions: '' },
             auto_install_powershell: () => 'PowerShell installed successfully.',
             init_emoji_search: () => 'Initialized',
