@@ -58,19 +58,6 @@ pub(crate) async fn get_app_data(
 }
 
 #[tauri::command]
-pub(crate) fn sync_app_data(
-    state: State<SharedAppData>,
-    data: TaskProxyData,
-) -> Result<String, String> {
-    let mut app_data = state
-        .lock()
-        .map_err(|err| format!("sync_app_data State failure: {}", err))?;
-    let data = data;
-    *app_data = data.clone();
-    Ok(String::from("App Data Synced"))
-}
-
-#[tauri::command]
 pub(crate) async fn save_app_data(
     app_handle: AppHandle,
     state: State<'_, SharedAppData>,

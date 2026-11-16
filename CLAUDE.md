@@ -113,7 +113,7 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 
 - **Rust structs define what persists.** `ProjectData` and `TaskProxyData` drop unknown fields during deserialization, so a new top-level property on `webui.projectData` silently vanishes unless you add it to `datatypes.rs`. Arbitrary per-project values belong in `webui.projectData.data`.
 - Variable definitions are strings in the form `key|type|default`.
-- Rust state is a copy of JS state: `sync_*` commands update memory only, and `save_*` commands also write to disk. `background.rs` autosaves on an interval, and `lib.rs` saves on window close.
+- Rust state is a copy of JS state, kept current with patches (`services/shared_data.rs`): `syncAppData` and `syncProjectData` send only what changed since they last sent, Rust passes each patch to every other screen as `data-changed`, and `save_*` commands write the whole copy to disk. Keys each screen keeps for itself are `screenKeys` in `app.js`. `background.rs` autosaves on an interval, and `lib.rs` saves on window close. In the mock backend, `appData` and `savedProjects` are Rust's copies, and `otherScreen` sends a change as another screen would.
 - `Navigation.json` and `Variables.json` can change underneath the app through git. `projects.rs` compares against a baseline of what it last read or wrote, skips writing unchanged data, and reports a conflict rather than overwriting a file that changed.
 - Encrypted files are never overwritten if the current key can't read them. They move aside as `<name>.unreadable` and are restored if that key is entered again. Changing the key re-encrypts every `.enc` file.
 

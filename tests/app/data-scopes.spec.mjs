@@ -68,7 +68,7 @@ test('app state changes reach the backend, and variables do not', async ({ page 
         webui.setData('app-smoke', { a: 1 });
         webui.setData('not_app_state', 'x');
     });
-    await expect.poll(() => page.evaluate(() => window.__backend.calls.filter(call => call.command === 'sync_app_data').some(call => call.args.data.data['app-smoke']?.a === 1))).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-smoke']?.a === 1)).toBe(true);
     expect(await page.evaluate(() => webui.taskProxyData.data.not_app_state)).toBeUndefined();
 });
 test('global variables are not copied into page data at startup, where they would hide project values', async ({ page }) => {

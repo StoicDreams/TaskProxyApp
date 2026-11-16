@@ -202,15 +202,16 @@ The desktop benefits from this as well: terminals and commits no longer depend o
 - **Missing credentials:** the job fails and says so. The token prompt stays on the desktop, at the next manual git action.
 - **Tests:** `CommitStore` and choosing the files are tested in Rust. Running a whole job needs a Tauri app, so the mock backend runs jobs the same way for the UI tests. A Rust test against a temporary repository waits for a Tauri test runtime.
 
-**App and project data as patches.**
-- **New commands:** `patch_app_data({rev, set, remove})` and `patch_project_data` replace whole-object syncs.
-  - Rust applies each patch, raises the revision, and sends `data-changed` to every other screen.
-  - That screen applies it and calls `setData`.
+**App and project data as patches.** `services/shared_data.rs`. *Done.*
+- **Commands:** `patch_app_data(patch, screen)` and `patch_project_data(id, patch, screen)` replace the whole-object syncs. A patch is `{set, remove, fields}`: values set and removed in `data`, and other fields, such as `variables` and `navigation`, given whole.
+  - `syncAppData` and `syncProjectData` in `app.js` keep their names and work out the patch from what they last sent, so the components didn't change.
+  - Rust applies each patch, raises the revision, and sends `data-changed` to every screen. The screen that sent it ignores its own, and the others apply it and call `setData`.
+  - A patch for a project that is no longer open is dropped.
 - **Shared and per-screen keys:**
-  - Keys for one screen only are never shared: `page-path`, `page-title`, `page-subtitle`, `session-*`, and drawer and layout state. They're listed in one place in `app.js`.
+  - Keys for one screen only are never applied from another: `page-path`, `page-title`, `page-subtitle`, `session-*`, `app-nav-routes`, the Terminal Manager's view and the home page state. They're listed in `screenKeys` in `app.js`. Rust keeps them like the rest, so the desktop opens where it was.
   - `app-current-project` is shared.
-- **Saving:** `save_*`, autosave, and save on close don't change.
-- `app-trusted-projects` is checked in Rust when a page script runs.
+- **Saving:** `save_*`, autosave, and save on close don't change. A save still sends the window's whole copy, which has every other screen's changes applied.
+- **Moved to 1.3:** checking `app-trusted-projects` in Rust when a page script runs, which belongs with filling in page scripts in Rust.
 
 ### 1.3 Secrets stay on the desktop
 

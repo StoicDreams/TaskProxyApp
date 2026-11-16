@@ -39,7 +39,7 @@ test('typing a project value updates the project and its environment', async ({ 
     await page.locator('#var-project-list webui-input-text input').fill('typed');
     expect(await page.evaluate(() => webui.getProjectData('one'))).toBe('typed');
     expect(await page.evaluate(() => webui.projectData.data._environments[0].variables.one)).toBe('typed');
-    await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1).data.data.one).toBe('typed');
+    await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data.one)).toBe('typed');
 });
 test('typing a global value writes to disk once, after a pause', async ({ page }) => {
     await openApp(page, { appVariables: ['two|text|'] });
@@ -51,7 +51,7 @@ test('typing a global value writes to disk once, after a pause', async ({ page }
     await expect.poll(async () => (await calls(page, 'save_app_data')).length).toBe(before + 1);
     expect((await calls(page, 'save_app_data')).at(-1).data.data.two).toBe('abcdef');
     // The backend's copy stays current between saves, in case the app closes.
-    expect((await calls(page, 'sync_app_data')).at(-1).data.data.two).toBe('abcdef');
+    expect(await page.evaluate(() => window.__backend.appData.data.two)).toBe('abcdef');
 });
 test('adding a variable defines it, and duplicates are refused', async ({ page }) => {
     await openApp(page);

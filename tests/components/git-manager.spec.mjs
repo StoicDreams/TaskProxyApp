@@ -182,7 +182,7 @@ test('marking a file ignored is stored with the project', async ({ page }) => {
     await open(page);
     await include(page, 'a.txt').selectOption('2');
     expect(await page.evaluate(() => webui.projectData.data._gitIgnoreFiles)).toEqual(['/a.txt']);
-    await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data.data._gitIgnoreFiles).toEqual(['/a.txt']);
+    await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data._gitIgnoreFiles)).toEqual(['/a.txt']);
 });
 test('markup in a file name is shown as text', async ({ page }) => {
     const name = 'x<img src=q onerror="window.__xss=1">.txt';
@@ -452,7 +452,7 @@ test.describe('commit message memory', () => {
     test('the message is sent to the backend, so it survives a restart', async ({ page }) => {
         await open(page);
         await typeMessage(page, 'saved for later');
-        await expect.poll(async () => (await calls(page, 'sync_project_data')).some(call => call.data.data._gitCommitMessages?.[''] === 'saved for later')).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.__backend.savedProjects['/repo'].data._gitCommitMessages?.[''])).toBe('saved for later');
     });
     test('a message saved earlier is shown when the page opens', async ({ page }) => {
         await open(page, {}, { data: { _gitCommitMessages: { '': 'from last time' } } });
@@ -834,7 +834,7 @@ Write-Host 'done'
         await pick(field(page, 'Version'), 'major');
         await field(page, 'SkipMinify').click();
         await field(page, 'Note').locator('input').fill('hello');
-        await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data?.data?._gitBeforeCommit).toEqual({
+        await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data._gitBeforeCommit)).toEqual({
             scripts: { '': SCRIPT },
             values: { [SCRIPT]: { Version: 'major', SkipMinify: true, Note: 'hello', Tags: '', Count: '', Check: true } },
         });
@@ -852,7 +852,7 @@ Write-Host 'done'
         await expect(field(page, 'Version')).toHaveCount(1);
         await pick(manager(page).locator('#before-commit-script'), '');
         await expect(manager(page).locator('.before-commit-params [data-param]')).toHaveCount(0);
-        await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data?.data?._gitBeforeCommit?.scripts).toEqual({});
+        await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data._gitBeforeCommit?.scripts)).toEqual({});
         await commit(page);
         await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
         expect(await calls(page, 'spawn_script')).toEqual([]);

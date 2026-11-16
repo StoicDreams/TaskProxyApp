@@ -10,6 +10,85 @@
     // Output kept per terminal, by characters, so switching terminals can replay it.
     const maxTerminalOutput = 2 * 1024 * 1024;
     const terminalStates = new Map();
+    /** This screen, so it can ignore its own changes when Rust sends them to every screen. */
+    const screenId = crypto.randomUUID();
+    /** What Rust last had of app and project data, so a sync sends only what changed since. */
+    const syncedCopy = { app: null, project: null };
+    const isAppKey = key => key.startsWith('app-') || key.startsWith('session-') || ['page-path', 'page-title', 'page-subtitle'].includes(key);
+    /**
+     * App state each screen keeps for itself, such as the page it shows and how its panels are set. Rust keeps and
+     * saves them like the rest, but a screen ignores another screen's.
+     */
+    const screenKeys = ['page-path', 'page-title', 'page-subtitle', 'app-nav-routes', 'app-terminals-filter', 'app-terminal-refresh', 'app-terminal-cleared', 'app-home-state'];
+    const isScreenKey = key => screenKeys.includes(key) || key.startsWith('session-');
+    const copyOf = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    /** What changed from `before` to `after`: values set and removed in their `data`, and other fields given whole. */
+    function patchFrom(before, after, skipFields = []) {
+        const set = {}, remove = [], fields = {};
+        const was = before?.data || {}, now = after?.data || {};
+        Object.entries(now).forEach(([key, value]) => { if (value !== undefined && !same(value, was[key])) set[key] = copyOf(value); });
+        Object.keys(was).forEach(key => { if (now[key] === undefined) remove.push(key); });
+        Object.entries(after || {}).forEach(([key, value]) => {
+            if (key !== 'data' && !skipFields.includes(key) && !same(value, before?.[key])) fields[key] = copyOf(value);
+        });
+        return Object.keys(set).length || remove.length || Object.keys(fields).length ? { set, remove, fields } : null;
+    }
+    function applyPatch(target, patch) {
+        target.data ??= {};
+        (patch.remove || []).forEach(key => delete target.data[key]);
+        Object.entries(patch.set || {}).forEach(([key, value]) => { target.data[key] = copyOf(value); });
+        Object.entries(patch.fields || {}).forEach(([key, value]) => {
+            if (!['data', 'id', 'path'].includes(key)) target[key] = copyOf(value);
+        });
+    }
+    /**
+     * Sends what changed in app data or the open project's since the last sync, which Rust passes to every other
+     * screen. What was sent counts as synced at once, so changes made meanwhile go in the next patch.
+     */
+    function sendPatch(scope, data, errHandler) {
+        const isProject = scope === 'project';
+        const base = isProject ? (syncedCopy.project?.id === data.id ? syncedCopy.project : null) : syncedCopy.app;
+        const patch = patchFrom(base, data, isProject ? ['id', 'path'] : []);
+        if (!patch) return Promise.resolve(isProject ? 'Project data synced' : 'App Data Synced');
+        const sent = copyOf(data);
+        syncedCopy[scope] = sent;
+        const sending = isProject
+            ? tauri.core.invoke('patch_project_data', { id: data.id, patch, screen: screenId })
+            : tauri.core.invoke('patch_app_data', { patch, screen: screenId });
+        return sending
+            .then(() => isProject ? 'Project data synced' : 'App Data Synced')
+            .catch(err => {
+                // Sent again with the next sync.
+                if (syncedCopy[scope] === sent) syncedCopy[scope] = base;
+                return errHandler(err);
+            });
+    }
+    /** Applies a change another screen made, which Rust sent to every screen. */
+    function applyDataChange(change) {
+        if (!change || change.screen === screenId) return;
+        if (change.scope === 'app') {
+            if (!webui.taskProxyData) return;
+            if (syncedCopy.app) applyPatch(syncedCopy.app, change);
+            const shared = {
+                set: Object.fromEntries(Object.entries(change.set || {}).filter(([key]) => !isScreenKey(key))),
+                remove: (change.remove || []).filter(key => !isScreenKey(key)),
+                fields: change.fields,
+            };
+            applyPatch(webui.taskProxyData, shared);
+            // App state shows through webui data, as it does when the app starts.
+            Object.entries(shared.set).forEach(([key, value]) => {
+                if (isAppKey(key) && !ignoreAppDataFields.includes(key)) webui.setData(key, copyOf(value));
+            });
+            shared.remove.forEach(key => { if (isAppKey(key)) webui.setData(key, undefined); });
+        } else if (change.scope === 'project') {
+            if (!webui.projectData?.id || webui.projectData.id !== change.id) return;
+            applyPatch(webui.projectData, change);
+            if (syncedCopy.project?.id === change.id) applyPatch(syncedCopy.project, change);
+            if (change.fields?.navigation) webui.setData('app-nav-routes', webui.projectData.navigation);
+        }
+        document.dispatchEvent(new CustomEvent('app-data-changed', { detail: change }));
+    }
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
@@ -479,12 +558,14 @@
         }
         saveAppData(errHandler) {
             errHandler ??= defaultErrHandler;
+            syncedCopy.app = copyOf(webui.taskProxyData);
             return tauri.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(errHandler);
         }
-        /** Update the backend's copy without writing to disk, for changes that happen often. */
+        /** Update the backend's copy, and every other screen's, without writing to disk, for changes that happen often. */
         syncAppData(errHandler) {
             errHandler ??= defaultErrHandler;
-            return tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(errHandler);
+            if (!webui.taskProxyData) return;
+            return sendPatch('app', webui.taskProxyData, errHandler);
         }
         /** Saves the open project, or data, a project that is no longer open, without making it the open one. */
         saveProjectData(errHandler, data) {
@@ -497,6 +578,7 @@
                 return;
             }
             webui.setData('app-nav-routes', webui.projectData.navigation);
+            syncedCopy.project = copyOf(webui.projectData);
             return tauri.core.invoke('save_project_data', { data: webui.projectData }).catch(errHandler);
         }
         initEmojiSearch(supportedEmojis, errHandler) {
@@ -525,6 +607,11 @@
             if (!reloaded || webui.projectData.id !== projectId) return;
             webui.projectData.navigation = reloaded.navigation;
             webui.projectData.variables = reloaded.variables;
+            // Rust read these, so it has them already.
+            if (syncedCopy.project?.id === projectId) {
+                syncedCopy.project.navigation = copyOf(reloaded.navigation);
+                syncedCopy.project.variables = copyOf(reloaded.variables);
+            }
             webui.setData('app-nav-routes', reloaded.navigation);
         }
         /** Page scripts come from the repository, so ask before running any from a new project. */
@@ -550,12 +637,13 @@
                 });
             });
         }
+        /** Update the backend's copy of the open project, and every other screen's, without writing to disk. */
         syncProjectData(errHandler) {
             errHandler ??= defaultErrHandler;
             if (!webui.projectData || !webui.projectData.id) {
                 return;
             }
-            return tauri.core.invoke('sync_project_data', { data: webui.projectData }).catch(errHandler);
+            return sendPatch('project', webui.projectData, errHandler);
         }
         terminalHelpers = {
             _listenersAttached: false,
@@ -883,6 +971,8 @@
         let version = await webui.proxy.getVersion();
         if (version) data.data['app-version'] = `v${version}`;
         webui.taskProxyData = data;
+        syncedCopy.app = copyOf(data);
+        tauri.event.listen('data-changed', event => applyDataChange(event.payload));
         // Terminal state used to be stored here, along with all of its output.
         let keysDeleted = 'app-terminal-state' in webui.taskProxyData.data;
         delete webui.taskProxyData.data['app-terminal-state'];
@@ -1076,6 +1166,7 @@
             // Selecting a project that failed to load tries again.
             if (!projectData) cache.currentProjectPath = null;
             webui.projectData = projectData || { id: null, path: null, currentPage: '/', navigation: [], data: {} };
+            syncedCopy.project = projectData ? copyOf(projectData) : null;
             if (webui.projectData && webui.projectData.path) {
                 webui.projectData.path = webui.projectData.path.replace(/\\/g, '/');
             }
@@ -1279,7 +1370,7 @@
         }
     }
     async function syncAppData() {
-        await tauri.core.invoke('sync_app_data', { data: webui.taskProxyData }).catch(msg => webui.alert(msg));
+        if (webui.taskProxyData) await sendPatch('app', webui.taskProxyData, msg => webui.alert(msg));
     }
     async function runWhenWebUIReady(action) {
         // Only waiting for the framework retries. Repeating the action would stack up its side effects.

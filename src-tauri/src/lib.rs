@@ -54,6 +54,7 @@ pub fn run() {
         .manage(crate::services::terminal_controller::TerminalManager::default())
         .manage(crate::services::runs::Runs::default())
         .manage(crate::services::commit_queue::CommitQueue::default())
+        .manage(crate::services::shared_data::DataRevs::default())
         .manage(crate::services::task_manager::TaskManagerState::default());
 
     // Save data on close
@@ -163,7 +164,6 @@ pub fn run() {
             appdata::has_securitykey,
             appdata::save_app_data,
             appdata::set_securitykey,
-            appdata::sync_app_data,
             services::emojis::init_emoji_search,
             services::emojis::search_emojis,
             services::git_controller::get_git_changes,
@@ -212,7 +212,6 @@ pub fn run() {
             services::projects::reload_project_files,
             services::projects::save_project_file,
             services::projects::search_project_files,
-            services::projects::sync_project_data,
             services::script_controller::get_scripts,
             services::runs::run_script,
             services::runs::get_runs,
@@ -225,6 +224,8 @@ pub fn run() {
             services::commit_queue::commit_enqueue,
             services::commit_queue::commit_jobs,
             services::commit_queue::commit_cancel,
+            services::shared_data::patch_app_data,
+            services::shared_data::patch_project_data,
             services::terminal_controller::write_terminal_input,
             services::terminal_controller::resize_terminal,
             services::task_manager::list_processes,

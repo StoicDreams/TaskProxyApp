@@ -220,21 +220,6 @@ pub(crate) async fn get_project_data(
     Ok(data)
 }
 
-#[tauri::command]
-pub(crate) fn sync_project_data(
-    state: State<CurrentProject>,
-    data: ProjectData,
-) -> Result<String, String> {
-    let mut project_state = state
-        .lock()
-        .map_err(|err| format!("sync_project_data State failure: {}", err))?;
-    // A late sync from the previous project must not replace the one now open.
-    if project_state.id == data.id {
-        *project_state = data;
-    }
-    Ok(String::from("Project data synced"))
-}
-
 fn current_project_path(
     state: &State<'_, CurrentProject>,
     context: &str,

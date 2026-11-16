@@ -49,6 +49,10 @@
  *   it out for signed out. myfi_sign_in_wait waits until a test calls window.__backend.myfi.approve(account) or
  *   .end(reason), or the app cancels. myfiStartError: why myfi_sign_in_start fails, when it should.
  *
+ * App and project data change through patches, as services/shared_data.rs applies them: window.__backend.appData
+ * is the backend's copy of app data, and savedProjects[path] its copy of each project. Each patch is sent to every
+ * screen as data-changed. window.__backend.otherScreen(scope, patch) sends one as if another screen made it.
+ *
  * Other projects in `projects` start with empty data. Saved and synced project data is kept by path,
  * as the backend does, so switching projects and back returns what was saved.
  */
@@ -329,8 +333,24 @@ function setup(state) {
             this.waiting = null;
         },
     };
+    // The backend's copy of app data, made when the app first reads it.
+    let appData = null;
+    let dataRev = 0;
+    const applyDataPatch = (target, patch) => {
+        target.data ??= {};
+        (patch.remove || []).forEach(key => delete target.data[key]);
+        Object.entries(patch.set || {}).forEach(([key, value]) => { target.data[key] = copy(value); });
+        Object.entries(patch.fields || {}).forEach(([key, value]) => { if (!['data', 'id', 'path'].includes(key)) target[key] = copy(value); });
+    };
     const backend = {
         calls: [],
+        get appData() { return appData; },
+        /** Another screen changes app or project data: `patch` is { set, remove, fields }. */
+        otherScreen(scope, patch) {
+            if (scope === 'app') applyDataPatch(appData, patch);
+            else applyDataPatch(savedProjects[openProject.path], patch);
+            emitEvent('data-changed', { scope, id: scope === 'app' ? '' : openProject.id, rev: ++dataRev, screen: 'other-screen', set: {}, remove: [], fields: {}, ...patch });
+        },
         myfi,
         runs,
         commits,
@@ -340,7 +360,7 @@ function setup(state) {
         savedProjects,
         emit: emitEvent,
         handlers: {
-            get_app_data: () => ({
+            get_app_data: () => appData ? copy(appData) : copy(appData = {
                 isSaved: true, saveIntervalMinutes: 20, variables: state.appVariables || [],
                 data: {
                     ...(state.newInstall ? {} : { 'app-env-page-enabled': true, 'app-env-project-enabled': true, 'app-env-global-enabled': true }),
@@ -348,20 +368,32 @@ function setup(state) {
                     ...(state.appData || {}),
                 },
             }),
+            patch_app_data: ({ patch, screen }) => {
+                applyDataPatch(appData, patch);
+                emitEvent('data-changed', { scope: 'app', id: '', rev: ++dataRev, screen, set: {}, remove: [], fields: {}, ...copy(patch) });
+                return dataRev;
+            },
+            patch_project_data: ({ id, patch, screen }) => {
+                const saved = openProject && savedProjects[openProject.path];
+                if (!saved || saved.id !== id) return 0;
+                applyDataPatch(saved, patch);
+                emitEvent('data-changed', { scope: 'project', id, rev: ++dataRev, screen, set: {}, remove: [], fields: {}, ...copy(patch) });
+                return dataRev;
+            },
             get_version: () => '1.2.3',
             has_securitykey: () => state.hasKey !== false,
             set_securitykey: () => 'Security Key Saved!',
             delete_securitykey: () => 'Security Key Deleted!',
-            sync_app_data: () => 'App Data Synced',
-            save_app_data: () => 'app data saved',
+            save_app_data: ({ data } = {}) => { if (data) appData = copy(data); return 'app data saved'; },
             load_projects: () => state.projects || (project ? [project] : []),
             get_projects: () => state.projects || (project ? [project] : []),
             get_project_data: args => {
-                const loaded = loadProject(args);
+                // A copy, as the window's changes reach the backend only through patches and saves.
+                const found = loadProject(args);
+                const loaded = found ? copy(found) : found;
                 openProject = loaded;
                 return loaded;
             },
-            sync_project_data: ({ data } = {}) => { storeProject(data); return 'Project data synced'; },
             save_project_data: ({ data } = {}) => { storeProject(data); return 'Project data saved'; },
             clear_current_project: () => { openProject = null; return 'Project closed'; },
             reload_project_files: () => projectData,

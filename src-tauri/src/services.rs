@@ -7,6 +7,7 @@ pub(crate) mod myfi;
 pub(crate) mod projects;
 pub(crate) mod runs;
 pub(crate) mod script_controller;
+pub(crate) mod shared_data;
 pub(crate) mod task_manager;
 pub(crate) mod terminal_controller;
 pub(crate) mod updates;
