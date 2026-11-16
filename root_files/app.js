@@ -614,6 +614,16 @@
             }
             webui.setData('app-nav-routes', reloaded.navigation);
         }
+        /** A page script filled with its values, masked, for showing. `pageValues` are those typed or set on the page. */
+        pageScriptPreview(script, pageValues, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('page_script_preview', { script, pageValues: pageValues || {} }).catch(errHandler);
+        }
+        /** Runs a page script in the open project, filled with its values by Rust. Resolves to its run. */
+        runPageScript(terminalId, script, pageValues, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('run_page_script', { terminalId, script, pageValues: pageValues || {} }).catch(errHandler);
+        }
         /** Page scripts come from the repository, so ask before running any from a new project. */
         confirmProjectScript(script) {
             const path = webui.projectData?.path;
@@ -629,8 +639,11 @@
                     confirm: 'Trust Project & Run',
                     cancel: 'Cancel',
                     onconfirm: () => {
-                        webui.setData('app-trusted-projects', [...trusted, path]);
-                        resolve(true);
+                        const nowTrusted = [...trusted, path];
+                        webui.setData('app-trusted-projects', nowTrusted);
+                        // Rust checks trust before it runs a page script, so it must have this first.
+                        webui.taskProxyData.data['app-trusted-projects'] = nowTrusted;
+                        resolve(Promise.resolve(webui.proxy.syncAppData()).then(() => true, () => true));
                         return true;
                     },
                     oncancel: () => resolve(false)

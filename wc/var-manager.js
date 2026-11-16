@@ -83,6 +83,11 @@
         container.innerHTML = 'Variable Manager';
         return container;
     }
+    /**
+     * Whether a value is set but kept on the desktop. A remote device is sent `{ $secret: true }` in place of each
+     * secret, so it can set one but never read it back.
+     */
+    const isKeptSecret = value => !!value && typeof value === 'object' && value.$secret === true;
     function renderVariableList(container, scope, variables, isReadOnly, refreshCallback) {
         container.innerHTML = '';
         if (!variables || variables.length === 0) {
@@ -93,7 +98,14 @@
             const wrap = webui.create('webui-grid', { columns: '1fr 2fr max-content', gap: 'var(--padding)', style: 'margin-bottom: 0.5rem; align-items: center;' });
             wrap.appendChild(webui.create('span', { text: v.key }));
             // The key beside it is plain text, so the input is named for screen readers.
-            const input = webui.create('webui-input-text', { value: v.value || '', 'aria-label': `${scope} value of ${v.key}` });
+            const kept = isKeptSecret(v.value);
+            const input = webui.create('webui-input-text', { value: kept ? '' : v.value || '', 'aria-label': `${scope} value of ${v.key}` });
+            if (kept) {
+                // Typing replaces the value. Leaving the field empty keeps it.
+                input.setAttribute('placeholder', 'Set. Type to replace it.');
+                input.setAttribute('title', 'This value is kept on the desktop. Type to replace it.');
+                input.dataset.kept = 'true';
+            }
             // Setting this attribute to false would still disable the input.
             if (isReadOnly) input.setAttribute('disabled', 'true');
             if (!isReadOnly) {
@@ -131,7 +143,14 @@
                 makeButton(iconEl, `${title}: ${v.key}`);
                 actionsFlex.appendChild(iconEl);
             };
+            // A value kept on the desktop can only be copied there.
+            const keptHere = () => {
+                if (!kept || input.value) return false;
+                webui.alert(`${v.key} is kept on the desktop, so copy it there.`, 'info');
+                return true;
+            };
             const copyToProj = () => {
+                if (keptHere()) return;
                 webui.setProjectData(v.key, input.value);
                 webui.setData(v.key, input.value);
                 if (!webui.projectData.variables) webui.projectData.variables = [];
@@ -153,6 +172,7 @@
                 if (refreshCallback) refreshCallback();
             };
             const copyToGlob = () => {
+                if (keptHere()) return;
                 webui.setGlobalData(v.key, input.value);
                 webui.setData(v.key, input.value);
                 if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
@@ -207,6 +227,7 @@
                 });
             };
             const copyToClip = () => {
+                if (keptHere()) return;
                 webui.copyToClipboard(input.value);
             };
             if (scope === 'Page') {

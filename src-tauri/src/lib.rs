@@ -230,6 +230,8 @@ pub fn run() {
             services::commit_queue::commit_cancel,
             services::shared_data::patch_app_data,
             services::shared_data::patch_project_data,
+            services::page_scripts::page_script_preview,
+            services::page_scripts::run_page_script,
             services::terminal_controller::write_terminal_input,
             services::terminal_controller::resize_terminal,
             services::task_manager::list_processes,

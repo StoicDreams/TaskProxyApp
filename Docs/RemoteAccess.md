@@ -215,16 +215,19 @@ The desktop benefits from this as well: terminals and commits no longer depend o
 
 ### 1.3 Secrets stay on the desktop
 
-- **Redaction:** for a remote device, `get_app_data`, `get_project_data` and the plugin settings commands replace each secret value with `{"$secret": true}`.
-  - That covers variables defined as `key|secret|...`, `git_pat`, `github_pat`, and plugin sign-ins.
-  - `webui.getVariable` already ignores objects, so a redacted value can't be injected by mistake.
-  - `wc/var-manager.js` shows "Set" with a write-only field.
-- **Filling in page scripts moves to Rust:**
-  - `run_page_script {page, index, pageValues}` reads `.taskproxy/pages/<uuid>.md`, finds the PowerShell block at that index, and fills in project and global values.
-  - `page_script_preview` returns the masked text.
-  - `injectVariableValues`, its regexes, and the page's variable list are ported, with every JS case copied into Rust tests.
-  - The desktop uses the same commands, so there is one implementation.
-- **A test:** call every remotely allowed command that returns data, with secrets set, and fail if any secret appears in any response.
+*Done, apart from the sweep test, which needs the gateway's command table (1.4).*
+
+- **Redaction** (`services/secrets.rs`): what a remote device is sent replaces each secret value with `{"$secret": true}`. The gateway calls `redact_app_data` and `redact_project_data` for every device.
+  - Secret values are every global variable (the Variables panel already treats them all as secret), project variables defined as `key|secret|...` in the project's values and in each environment in `_environments`, and `git_pat` and `github_pat` wherever they are set.
+  - Plugin settings marked secret were already never sent to the window by `plugin_settings`.
+  - A patch that carries the marker keeps the real value (`restore_markers`, applied in `shared_data.rs`), so a device that sends back what it was shown cannot overwrite a secret. Environments are matched by name.
+  - `wc/var-manager.js` shows a kept value as an empty field with "Set. Type to replace it.", and won't copy it to another scope or the clipboard.
+- **Filling in page scripts is in Rust** (`services/page_scripts.rs`):
+  - `page_script_preview(script, pageValues)` returns the masked copy, for the code blocks and the trust prompt.
+  - `run_page_script(terminalId, script, pageValues)` checks `app-trusted-projects`, fills in the real values, and starts the run with the masked copy shown.
+  - The window sends the script's text, since a page can be run before its edits are saved, and the values typed or set on the page. Rust adds the project's and global values, so the window never needs a secret to run a script. A page value that is the marker is skipped, so the real value applies.
+  - `injectVariableValues`, its regexes, Web UI's `toSnake`, and the scope switches are ported, with every case from the page handler's tests in Rust tests. The desktop uses the same commands, so there is one implementation.
+- **A test:** call every remotely allowed command that returns data, with secrets set, and fail if any secret appears in any response. `secrets.rs` checks the redaction itself now; the sweep over every command comes with the gateway's command table.
 
 ### 1.4 Remote gateway: `src-tauri/src/remote/`
 

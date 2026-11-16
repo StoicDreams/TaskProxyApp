@@ -234,6 +234,29 @@ test.describe('page scripts', () => {
         await page.locator('app-page-handler webui-input-text[label="Version"] input').fill('2.1.0');
         expect(await runScript(page)).toContain("$Version = '2.1.0'");
     });
+    test('the window sends the script and its page values, never the project\'s or global values', async ({ page }) => {
+        await openPage(page, '<webui-input-text label="Version" data-bind="Version"></webui-input-text>\n\n' + scriptPage("$Version = '1.0.0'\n$token = 'x'"),
+            { data: { token: 'PROJECT-SECRET-VALUE' }, variables: ['token|secret|'] });
+        await page.locator('app-page-handler webui-input-text[label="Version"] input').fill('2.1.0');
+        await runScript(page);
+        const sent = (await calls(page, 'run_page_script')).at(-1);
+        expect(sent.script.trim()).toBe("$Version = '1.0.0'\n$token = 'x'");
+        expect(sent.pageValues).toEqual({ Version: '2.1.0' });
+        expect(JSON.stringify(sent)).not.toContain('PROJECT-SECRET-VALUE');
+        // Rust filled it in.
+        expect((await calls(page, 'spawn_script')).at(-1).scriptContent).toContain("$token = 'PROJECT-SECRET-VALUE'");
+    });
+    test('the backend refuses a project that is not trusted, even when the prompt is skipped', async ({ page }) => {
+        await openPage(page, scriptPage('Write-Host a'));
+        const error = await page.evaluate(() => webui.proxy.runPageScript('Repo_T_x', 'Write-Host a', {}, err => `${err}`));
+        expect(error).toContain('not trusted');
+        expect(await calls(page, 'spawn_script')).toEqual([]);
+    });
+    test('trusting a project reaches the backend before the script runs', async ({ page }) => {
+        await openPage(page, scriptPage('Write-Host a'));
+        await runScript(page);
+        expect(await page.evaluate(() => window.__backend.appData.data['app-trusted-projects'])).toEqual(['/repo']);
+    });
     test.describe('a dropdown of project files', () => {
         // The layout of a page that picks a solution, as in the page help's app-files example.
         const filesPage = (files = 'page-solutions') => [

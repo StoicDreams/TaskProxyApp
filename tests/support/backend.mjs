@@ -49,6 +49,9 @@
  *   it out for signed out. myfi_sign_in_wait waits until a test calls window.__backend.myfi.approve(account) or
  *   .end(reason), or the app cancels. myfiStartError: why myfi_sign_in_start fails, when it should.
  *
+ * Page scripts are filled as services/page_scripts.rs fills them, from the page values the window sends, then the
+ * backend's copies of the project's and global values. run_page_script refuses a project that appData does not trust.
+ *
  * App and project data change through patches, as services/shared_data.rs applies them: window.__backend.appData
  * is the backend's copy of app data, and savedProjects[path] its copy of each project. Each patch is sent to every
  * screen as data-changed. window.__backend.otherScreen(scope, patch) sends one as if another screen made it.
@@ -342,6 +345,59 @@ function setup(state) {
         Object.entries(patch.set || {}).forEach(([key, value]) => { target.data[key] = copy(value); });
         Object.entries(patch.fields || {}).forEach(([key, value]) => { if (!['data', 'id', 'path'].includes(key)) target[key] = copy(value); });
     };
+    // Filling page scripts, as services/page_scripts.rs does. Rust's tests hold the cases.
+    const pageScripts = {
+        toSnake: (text, sep) => text.trim().replace(/[A-Z]/g, c => `${sep}${c.toLowerCase()}`).replace(/[-_ ]+/g, sep),
+        neverFilled(name) {
+            return ['git_pat', 'github_pat'].includes(name) || /^(app|session|page)-/.test(this.toSnake(name, '-'));
+        },
+        enabled: (global, key) => !(key in global) || !!global[key],
+        lookup(name, page, project, global) {
+            if (this.neverFilled(name)) return undefined;
+            const isMarker = value => !!value && typeof value === 'object' && value.$secret === true;
+            if (this.enabled(global, 'app-env-page-enabled') && name in page && !isMarker(page[name])) return page[name];
+            if (this.enabled(global, 'app-env-project-enabled') && name in project) return project[name];
+            return this.enabled(global, 'app-env-global-enabled') ? global[name] : undefined;
+        },
+        variables(script) {
+            const names = [];
+            for (const match of script.matchAll(/\$([a-zA-Z_][a-zA-Z0-9_]*)/g)) {
+                if (['null', 'true', 'false', '_'].includes(match[1].toLowerCase()) || names.includes(match[1])) continue;
+                names.push(match[1]);
+            }
+            return names;
+        },
+        fill(script, pageValues, masked) {
+            const project = savedProjects[openProject?.path]?.data || {};
+            const global = appData?.data || {};
+            let filled = script;
+            this.variables(script).forEach(name => {
+                const raw = this.lookup(name, pageValues || {}, project, global);
+                if (raw === undefined || raw === null || raw === '' || typeof raw === 'object') return;
+                const val = String(raw);
+                const quoted = new RegExp(`(\\$${name}\\s*=\\s*)('(?:[^']|'')*'|"(?:[^"\`]|\`[\\s\\S]|"")*")`, 'gi');
+                const unquoted = new RegExp(`(\\$${name}\\s*=\\s*)([^'"\\s][^\\n\\r]*)`, 'gi');
+                filled = filled.replace(quoted, (match, prefix, old) => {
+                    const quote = old[0];
+                    let text = val;
+                    if (masked) {
+                        if (text.length > 6) text = `${text.substring(0, 3)}***${text.substring(text.length - 3)}`;
+                    } else if (quote === "'") {
+                        text = text.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&');
+                    } else {
+                        text = text.replace(/[`$"\u201C\u201D\u201E]/g, '`$&');
+                    }
+                    return `${prefix}${quote}${text}${quote}`;
+                });
+                filled = filled.replace(unquoted, (match, prefix) => {
+                    if (val.trim() !== '' && Number.isFinite(Number(val))) return `${prefix}${Number(val)}`;
+                    if (val.toLowerCase() === 'true' || val.toLowerCase() === 'false') return `${prefix}$${val.toLowerCase()}`;
+                    return masked ? `${prefix}[INVALID TYPE]` : match;
+                });
+            });
+            return filled;
+        },
+    };
     const backend = {
         calls: [],
         get appData() { return appData; },
@@ -441,6 +497,23 @@ function setup(state) {
                 return commits.shown(job);
             },
             commit_jobs: () => commits.snapshot(),
+            page_script_preview: ({ script, pageValues }) => pageScripts.fill(script, pageValues, true),
+            run_page_script: async ({ terminalId, script, pageValues }) => {
+                if (!openProject) throw 'Project not loaded.';
+                if (!(appData?.data?.['app-trusted-projects'] || []).includes(openProject.path)) {
+                    throw 'This project is not trusted to run its scripts yet.';
+                }
+                const target = runs.target();
+                if (runs.project(target.projectId).terminals[terminalId]?.info.status === 'Running') {
+                    throw 'Script is already running. You can manage it in the Terminal Manager.';
+                }
+                const args = {
+                    terminalId, scriptContent: pageScripts.fill(script, pageValues, false), args: [], inSeparateWindow: false,
+                    isPageScript: true, displayScript: pageScripts.fill(script, pageValues, true),
+                };
+                const entry = runs.begin(target, args);
+                return runs.launch(target, args, entry);
+            },
             commit_cancel: ({ id }) => {
                 const job = commits.jobs.find(item => item.id === id);
                 if (!job) return false;

@@ -168,3 +168,33 @@ test.describe('environments', () => {
         expect(await page.evaluate(() => window.__xss)).toBeUndefined();
     });
 });
+
+test.describe('values kept on the desktop', () => {
+    // A remote device is sent { $secret: true } in place of each secret value.
+    const kept = { $secret: true };
+    test('show as set, with an empty field that replaces them', async ({ page }) => {
+        await openApp(page, { data: { db_password: kept }, variables: ['db_password|secret|'], appData: { api_key: kept }, appVariables: ['api_key|secret|'] });
+        await open(page);
+        for (const list of ['#var-project-list', '#var-global-list']) {
+            const field = page.locator(`${list} webui-input-text`).first();
+            await expect(field.locator('input')).toHaveValue('');
+            await expect(field).toHaveAttribute('placeholder', 'Set. Type to replace it.');
+        }
+        expect(await page.locator('app-var-manager, webui-drawer.shared').first().evaluate(() => document.body.innerText)).not.toContain('[object Object]');
+        await page.locator('#var-project-list webui-input-text input').fill('new password');
+        expect(await page.evaluate(() => webui.getProjectData('db_password'))).toBe('new password');
+    });
+    test('cannot be copied to another scope or the clipboard from here', async ({ page }) => {
+        await openApp(page, { data: { db_password: kept }, variables: ['db_password|secret|'] });
+        await open(page);
+        await page.evaluate(() => {
+            window.__copied = [];
+            webui.copyToClipboard = text => window.__copied.push(text);
+        });
+        await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').first().click();
+        await page.locator('#var-project-list webui-icon[title="Copy Value to Clipboard"]').first().click();
+        await page.waitForTimeout(100);
+        expect(await page.evaluate(() => webui.getGlobalData('db_password'))).toBeUndefined();
+        expect(await page.evaluate(() => window.__copied)).toEqual([]);
+    });
+});

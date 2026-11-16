@@ -27,7 +27,8 @@
         if (pageHelp.parentNode !== comp) comp.prepend(pageHelp);
     }
     const variableKeyNames = new Map();
-    const variableRegexes = new Map();
+    /** Counts preview updates, so a slow answer cannot replace a newer one. */
+    let previewRound = 0;
     webui.currentPageVariables = [];
     let onTitleClick = () => {
         // Set after opening, because markup in a dialog's content is processed before it renders.
@@ -368,52 +369,17 @@
         updateScriptPreviews();
         injectPlayButtons();
     }
-    function getVariableRegexes(varName) {
-        if (!variableRegexes.has(varName)) {
-            const name = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            variableRegexes.set(varName, [
-                new RegExp(`(\\$${name}\\s*=\\s*)('(?:[^']|'')*'|"(?:[^"\`]|\`[\\s\\S]|"")*")`, 'gi'),
-                new RegExp(`(\\$${name}\\s*=\\s*)([^'"\\s][^\\n\\r]*)`, 'gi')
-            ]);
-        }
-        return variableRegexes.get(varName);
-    }
-    function injectVariableValues(scriptContent, forPreview) {
-        let updatedScript = scriptContent;
-        webui.currentPageVariables.forEach(varName => {
-            let rawValue = webui.getVariable(varName);
-            if (rawValue === undefined || rawValue === null || rawValue === '' || typeof rawValue === 'object') {
-                return;
-            }
-            let val = String(rawValue);
-            let [stringRegex, nonStringRegex] = getVariableRegexes(varName);
-            updatedScript = updatedScript.replace(stringRegex, (match, prefix, oldString) => {
-                const quote = oldString[0];
-                let formattedVal = val;
-                if (forPreview) {
-                    if (formattedVal.length > 6) {
-                        formattedVal = `${formattedVal.substring(0, 3)}***${formattedVal.substring(formattedVal.length - 3)}`;
-                    }
-                } else if (quote === "'") {
-                    // PowerShell also accepts typographic quotes as string delimiters.
-                    formattedVal = formattedVal.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&');
-                } else {
-                    formattedVal = formattedVal.replace(/[`$"\u201C\u201D\u201E]/g, '`$&');
-                }
-                return `${prefix}${quote}${formattedVal}${quote}`;
-            });
-            updatedScript = updatedScript.replace(nonStringRegex, (match, prefix, oldContent) => {
-                if (val.trim() !== '' && Number.isFinite(Number(val))) {
-                    return `${prefix}${Number(val)}`;
-                } else if (val.toLowerCase() === 'true' || val.toLowerCase() === 'false') {
-                    return `${prefix}$${val.toLowerCase()}`;
-                } else if (forPreview) {
-                    return `${prefix}[INVALID TYPE]`;
-                }
-                return match;
-            });
+    /**
+     * The values typed or set on this page for a script's variables. Rust fills the script with these, then the
+     * project's and global values, so this window never needs secret values to run it.
+     */
+    function pageValuesFor(scriptMeta) {
+        const values = {};
+        scriptMeta.variables.forEach(name => {
+            const value = webui.getNestedData(name, window.appData);
+            if (value !== undefined) values[name] = value;
         });
-        return updatedScript;
+        return values;
     }
     const scriptLanguages = ['powershell', 'pwsh', 'ps1'];
     function findAllWebuiCodes() {
@@ -430,12 +396,14 @@
         });
         return codes;
     }
+    /** Shows each script with its values filled in and masked, as Rust fills them. */
     function updateScriptPreviews() {
-        let codes = findAllWebuiCodes();
-        codes.forEach((codeEl, index) => {
-            let scriptMeta = pageScripts[index];
+        const round = ++previewRound;
+        findAllWebuiCodes().forEach(async (codeEl, index) => {
+            const scriptMeta = pageScripts[index];
             if (!scriptMeta) return;
-            codeEl.value = injectVariableValues(scriptMeta.content, true);
+            const masked = await webui.proxy.pageScriptPreview(scriptMeta.content, pageValuesFor(scriptMeta), () => { });
+            if (round === previewRound && typeof masked === 'string') codeEl.value = masked;
         });
     }
     function injectPlayButtons() {
@@ -473,8 +441,9 @@
         });
     }
     async function runPageScript(scriptMeta) {
-        let executableContent = injectVariableValues(scriptMeta.content, false);
-        let maskedContent = injectVariableValues(scriptMeta.content, true);
+        const pageValues = pageValuesFor(scriptMeta);
+        const maskedContent = await webui.proxy.pageScriptPreview(scriptMeta.content, pageValues);
+        if (typeof maskedContent !== 'string') return;
         if (!await webui.proxy.confirmProjectScript(maskedContent)) return;
         let projProject = webui.getData('app-current-project');
         let projName = projProject ? projProject.display : 'Project';
@@ -496,21 +465,12 @@
         state.activeId = totalName;
         webui.proxy.terminalHelpers.ensureListeners();
         await new Promise(r => setTimeout(r, 200));
-        try {
-            let result = await webui.proxy.terminalHelpers.runScript(
-                totalName,
-                executableContent,
-                [],
-                false,
-                false,
-                true,
-                maskedContent
-            );
-            // Opened on a running view, so the script that just started is listed.
-            document.querySelector('app-terminals')?.openDrawer({ run: true });
-        } catch (err) {
-            webui.alert(err, 'warning');
-        }
+        // Rust fills in the values and runs it, showing the masked copy in the Terminal Manager.
+        const run = await webui.proxy.runPageScript(totalName, scriptMeta.content, pageValues, err => webui.alert(err, 'warning'));
+        if (!run) return;
+        webui.proxy.terminalHelpers.applyRun(run);
+        // Opened on a running view, so the script that just started is listed.
+        document.querySelector('app-terminals')?.openDrawer({ run: true });
     }
     // Tags with no closing tag, which can never open a multi-line component.
     const voidTags = ['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr'];
