@@ -16,6 +16,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
+use tokio::sync::oneshot;
 
 /// Output kept for each terminal, as the window keeps it, so switching terminals or reconnecting can replay it.
 const MAX_OUTPUT: usize = 2 * 1024 * 1024;
@@ -208,6 +209,8 @@ pub(crate) struct RunStore {
     rev: u64,
     next_run: u64,
     projects: HashMap<String, ProjectRuns>,
+    /// Those waiting for a run to end, by run number, such as a commit waiting on its script.
+    waiters: HashMap<u64, Vec<oneshot::Sender<RunInfo>>>,
 }
 
 fn now_ms() -> u64 {
@@ -371,7 +374,32 @@ impl RunStore {
         entry.info.rev = rev;
         let info = entry.info.clone();
         self.rev = rev;
+        for waiter in self.waiters.remove(&run).unwrap_or_default() {
+            let _ = waiter.send(info.clone());
+        }
         Some(info)
+    }
+
+    /// Resolves with run `run` once it ends, or straight away when it already has.
+    pub fn wait(
+        &mut self,
+        project_id: &str,
+        terminal_id: &str,
+        run: u64,
+    ) -> oneshot::Receiver<RunInfo> {
+        let (sender, receiver) = oneshot::channel();
+        match self
+            .info(project_id, terminal_id)
+            .filter(|info| info.run == run)
+        {
+            Some(info) if info.status == RunStatus::Finished => {
+                let _ = sender.send(info);
+            }
+            Some(_) => self.waiters.entry(run).or_default().push(sender),
+            // A run that is gone cannot end, so the receiver reports it closed.
+            None => {}
+        }
+        receiver
     }
 
     /// The next queued script for a project, marked running, once nothing runs there.
@@ -676,9 +704,9 @@ async fn run_queued(app: AppHandle, project_id: String) {
 }
 
 /// The project a run is for: the open one, or the saved project at `project` (a path).
-fn run_target(
-    project_state: &State<'_, CurrentProject>,
-    projects: &State<'_, SharedProjects>,
+pub(crate) fn run_target(
+    project_state: &CurrentProject,
+    projects: &SharedProjects,
     project: Option<&str>,
 ) -> Result<RunTarget, String> {
     let open = project_state
@@ -775,6 +803,28 @@ pub(crate) async fn run_script(
     }
 }
 
+/// Runs a script now, in the project `target` names, and resolves with the run once it ends.
+pub(crate) async fn run_and_wait(
+    app: &AppHandle,
+    target: &RunTarget,
+    request: &RunRequest,
+) -> Result<RunInfo, String> {
+    let runs = app.state::<Runs>();
+    let (info, ended) = {
+        let mut store = runs.lock()?;
+        let Begun::Started(info) = store.start(target, request, false, now_ms())? else {
+            return Err(ALREADY_RUNNING.into());
+        };
+        let ended = store.wait(&target.project_id, &info.id, info.run);
+        (*info, ended)
+    };
+    emit_changed(app, &info);
+    launch(app, target, request, info).await?;
+    ended
+        .await
+        .map_err(|_| String::from("The script's terminal was removed before it ended."))
+}
+
 /// Every terminal that has run, in every project. Output comes from `get_run_output`.
 #[tauri::command]
 pub(crate) fn get_runs(runs: State<'_, Runs>) -> Result<Vec<RunInfo>, String> {
@@ -807,12 +857,23 @@ pub(crate) fn stop_run(
     project_id: Option<String>,
 ) -> Result<(), String> {
     let project_id = target_id(&project_state, project_id)?;
-    let Some(info) = runs.lock()?.mark_stopped(&project_id, &terminal_id) else {
+    stop(&app_handle, &runs, &manager, &project_id, &terminal_id)
+}
+
+/// Asks a run to stop, as `stop_run` does.
+pub(crate) fn stop(
+    app_handle: &AppHandle,
+    runs: &Runs,
+    manager: &TerminalManager,
+    project_id: &str,
+    terminal_id: &str,
+) -> Result<(), String> {
+    let Some(info) = runs.lock()?.mark_stopped(project_id, terminal_id) else {
         return Ok(());
     };
-    emit_changed(&app_handle, &info);
+    emit_changed(app_handle, &info);
     let processes = manager.processes.clone();
-    let key = script_key(&project_id, &terminal_id);
+    let key = script_key(project_id, terminal_id);
     let app = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         let still_running = || {
@@ -1249,6 +1310,20 @@ mod tests {
             .collect();
         left.sort();
         assert_eq!(left, ["p/file.ps1", "p/running", "q/elsewhere"]);
+    }
+
+    #[tokio::test]
+    async fn waiting_resolves_when_the_run_ends_or_at_once_if_it_has() {
+        let mut store = RunStore::default();
+        let a = started(store.start(&target("p"), &request("a.ps1"), false, 0));
+        let waiting = store.wait("p", "a.ps1", a.run);
+        store.finish("p", "a.ps1", a.run, Some(2), 1);
+        assert_eq!(waiting.await.unwrap().exit_code, Some(2));
+        let again = store.wait("p", "a.ps1", a.run);
+        assert_eq!(again.await.unwrap().exit_code, Some(2));
+        // An earlier run is gone once the terminal runs again.
+        started(store.start(&target("p"), &request("a.ps1"), false, 2));
+        assert!(store.wait("p", "a.ps1", a.run).await.is_err());
     }
 
     #[test]

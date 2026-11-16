@@ -53,6 +53,7 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(crate::services::EmojiState::default())))
         .manage(crate::services::terminal_controller::TerminalManager::default())
         .manage(crate::services::runs::Runs::default())
+        .manage(crate::services::commit_queue::CommitQueue::default())
         .manage(crate::services::task_manager::TaskManagerState::default());
 
     // Save data on close
@@ -174,7 +175,6 @@ pub fn run() {
             services::git_controller::get_git_change_stats,
             services::git_controller::get_git_file_diff,
             services::git_controller::get_git_repos,
-            services::git_controller::git_commit,
             services::git_controller::git_pull,
             services::git_controller::git_pull_overwrite,
             services::git_controller::git_push,
@@ -222,6 +222,9 @@ pub fn run() {
             services::runs::clear_run_output,
             services::runs::remove_run,
             services::runs::remove_finished_page_scripts,
+            services::commit_queue::commit_enqueue,
+            services::commit_queue::commit_jobs,
+            services::commit_queue::commit_cancel,
             services::terminal_controller::write_terminal_input,
             services::terminal_controller::resize_terminal,
             services::task_manager::list_processes,

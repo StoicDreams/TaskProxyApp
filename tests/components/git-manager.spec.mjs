@@ -117,6 +117,40 @@ test('Processing Commit replaces the commit buttons while the commit is made', a
     await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
     await expect(manager(page).locator('webui-button[label="Commit"]')).toBeVisible();
 });
+test.describe('commits Rust runs', () => {
+    const enqueue = (page, args = {}) => page.evaluate(args => window.__backend.handlers.commit_enqueue({
+        repo: '', message: 'from the phone', files: ['a.txt'], excluded: [], ignored: [], syncAfter: false, script: null, queue: false, ...args,
+    }), args);
+    test('a commit made on another screen shows here, and so does how it ended', async ({ page }) => {
+        await open(page);
+        await onCommand(page, 'git_commit', () => new Promise(resolve => { window.__finishCommit = () => resolve('Commit successful.'); }));
+        await enqueue(page);
+        await expect(commitState(page)).toHaveText('Processing Commit');
+        await expect(manager(page).locator('#tab-queue')).toHaveText('Queue (1)');
+        await page.evaluate(() => window.__finishCommit());
+        await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+        await expect(manager(page).locator('webui-alert').first()).toContainText('Commit successful.');
+        expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt'], message: 'from the phone' });
+    });
+    test('a Git Controller that opens while a commit runs shows it', async ({ page }) => {
+        await openApp(page, { git: { changes: ['M  a.txt'] }, files: { 'a.txt': 'one' } });
+        await onCommand(page, 'git_commit', () => new Promise(() => { }));
+        await enqueue(page);
+        await page.evaluate(() => webui.navigateTo('/git-controller'));
+        await manager(page).locator('.files button.file').first().waitFor();
+        await expect(commitState(page)).toHaveText('Processing Commit');
+        await expect(manager(page).locator('webui-button[label="Commit"]')).toBeHidden();
+    });
+    test('the commit is sent with what Rust needs to run it', async ({ page }) => {
+        await open(page, {}, { data: { _gitIgnoreFiles: ['/b.txt'] } });
+        await include(page, 'c.txt').selectOption('0');
+        await commit(page);
+        await expect.poll(async () => (await calls(page, 'commit_enqueue')).length).toBe(1);
+        expect((await calls(page, 'commit_enqueue'))[0]).toEqual({
+            project: '/repo', repo: '', message: 'msg', files: ['a.txt'], excluded: ['c.txt'], ignored: ['/b.txt'], syncAfter: false, script: null, queue: false,
+        });
+    });
+});
 test('a commit needs a message', async ({ page }) => {
     await open(page);
     await commit(page, '   ');
@@ -990,7 +1024,9 @@ Write-Host 'done'
         await expect(cancelCommit(page)).toHaveAttribute('label', 'Cancel');
         await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
         await cancelCommit(page).click();
-        await expect.poll(() => calls(page, 'stop_run')).toEqual([{ terminalId: 'Before Commit' }]);
+        await expect.poll(async () => (await calls(page, 'commit_cancel')).length).toBe(1);
+        // Rust stops the script the commit waits on, which marks the run stopped.
+        await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['Before Commit']?.stopped)).toBe(true);
         await finish(page, 0);
         await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
         await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');

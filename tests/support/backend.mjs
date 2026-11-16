@@ -25,6 +25,9 @@
  *   recorded as a `spawn_script` call, and spawn_script's handler says how it starts, or throws when it cannot.
  *   Tests play a script with window.__backend.runs.write({ projectId, terminalId, data }) and .end({ projectId,
  *   terminalId, code }). Stopping only marks a run stopped, so a test ends it as the script would.
+ * - Commits are run as services/commit_queue.rs runs them: the script through the runs above, then the commit, then
+ *   a sync when asked. Each git step is recorded as the call the window made before Rust ran commits: get_git_changes,
+ *   git_commit, and git_sync, naming `project` only when it is not the open project, and their handlers answer it.
  * - runs: runs the backend already has when the window loads, as after a reload, as [{ terminalId, project (a path),
  *   output: [batches], code }]. A run with a code has ended.
  * - catalog: what plugin_catalog returns, or leave it out for a catalog that cannot be reached.
@@ -168,7 +171,9 @@ function setup(state) {
             projectId = this.id(projectId);
             const entry = this.project(projectId).terminals[terminalId];
             if (entry?.info.status === 'Running') {
-                this.update(entry, { status: 'Finished', exitCode: Number.isInteger(code) ? code : null, endedAt: Date.now() });
+                const info = this.update(entry, { status: 'Finished', exitCode: Number.isInteger(code) ? code : null, endedAt: Date.now() });
+                (this.waiters[info.run] || []).forEach(resolve => resolve(info));
+                delete this.waiters[info.run];
             }
             this.runQueued(projectId);
         },
@@ -183,6 +188,125 @@ function setup(state) {
         stop(projectId, terminalId) {
             const entry = this.project(projectId).terminals[terminalId];
             if (entry?.info.status === 'Running') this.update(entry, { stopped: true });
+        },
+        waiters: {},
+        /** Runs a script now and resolves with its run once it ends, as run_and_wait does. */
+        async runAndWait(target, args) {
+            if (this.project(target.projectId).terminals[args.terminalId]?.info.status === 'Running') {
+                throw 'Script is already running. You can manage it in the Terminal Manager.';
+            }
+            const entry = this.begin(target, args);
+            const ended = new Promise(resolve => (this.waiters[entry.info.run] ??= []).push(resolve));
+            await this.launch(target, args, entry);
+            return ended;
+        },
+    };
+    // Commit jobs, as services/commit_queue.rs runs them.
+    const commits = {
+        rev: 0,
+        next: 0,
+        jobs: [],
+        queue: [],
+        busy: false,
+        finished: [],
+        shown(job) {
+            const shown = copy(job);
+            if (shown.script) delete shown.script.content;
+            return shown;
+        },
+        snapshot() {
+            const active = this.jobs.filter(job => !this.queue.includes(job.id)).map(job => this.shown(job));
+            this.queue.forEach((id, index) => {
+                const job = this.jobs.find(item => item.id === id);
+                if (job) active.push({ ...this.shown(job), place: index + 1, ahead: index + (this.busy ? 1 : 0) });
+            });
+            return { rev: this.rev, active, finished: this.finished.map(job => this.shown(job)) };
+        },
+        emit() {
+            this.rev++;
+            emitEvent('commit-jobs-changed', this.snapshot());
+        },
+        set(job, fields) {
+            Object.assign(job, fields);
+            this.emit();
+        },
+        step(command, args) {
+            backend.calls.push({ command, args: copy(args) });
+            return backend.handlers[command](args);
+        },
+        projectArg(job) { return job.projectPath !== openProject?.path ? { project: job.projectPath } : {}; },
+        changeName(line) {
+            if (!line || line.length < 3) return null;
+            const name = line.substring(3).trim();
+            return line.substring(0, 2).includes('R') && name.includes(' -> ') ? name.split(' -> ')[1] : name;
+        },
+        async changes(job) {
+            const lines = await this.step('get_git_changes', { path: job.repo, ...this.projectArg(job) });
+            return (lines || []).map(line => this.changeName(line)).filter(Boolean);
+        },
+        outcome: (state, text, theme) => ({ state, text, theme }),
+        async run(job) {
+            let before = null;
+            if (job.script) {
+                this.set(job, { state: 'script', note: { text: `Running ${job.script.path} before committing...`, theme: 'info' } });
+                before = await this.changes(job).catch(() => null);
+                const target = runs.target(job.projectPath);
+                let ended;
+                try {
+                    ended = await runs.runAndWait(target, { terminalId: 'Before Commit', scriptContent: job.script.content, args: [], inSeparateWindow: false, ...this.projectArg(job) });
+                } catch (err) {
+                    return [this.outcome('Failed', `${job.script.path} could not run, so nothing was committed: ${err}`, 'danger'), false];
+                }
+                if (ended.stopped || ended.exitCode !== 0) {
+                    const how = !ended.stopped && Number.isInteger(ended.exitCode) ? `failed with exit code ${ended.exitCode}` : 'was stopped';
+                    return [this.outcome('Failed', `${job.script.path} ${how}, so nothing was committed. Its output is in the Terminals panel.`, 'danger'), false];
+                }
+            }
+            this.set(job, { state: 'committing' });
+            let changed;
+            try {
+                changed = await this.changes(job);
+            } catch (err) {
+                return [this.outcome('Failed', `${err} Nothing was committed.`, 'danger'), false];
+            }
+            const files = changed.filter(name => !job.ignored.includes(`${job.repo}/${name}`) && !job.excluded.includes(name))
+                .filter(name => job.files.includes(name) || (before && !before.includes(name)));
+            if (!files.length) return [this.outcome('Failed', 'No files are left to commit.', 'warning'), false];
+            let result;
+            try {
+                result = await this.step('git_commit', { repo: job.repo, files, message: job.message, ...this.projectArg(job) });
+            } catch (err) {
+                return [this.outcome('Failed', `${err}`, 'danger'), false];
+            }
+            if (!job.syncAfter) return [this.outcome('Committed', result, 'success'), true];
+            this.set(job, { note: { text: 'Commit successful. Syncing with remote...', theme: 'info' } });
+            try {
+                await this.step('git_sync', { repo: job.repo, ...this.projectArg(job) });
+                return [this.outcome('Committed', 'Commit and Sync successful!', 'success'), true];
+            } catch (err) {
+                return [this.outcome('Committed, not synced', `${result} Syncing failed, so sync it from the Git Controller: ${err}`, 'danger'), true];
+            }
+        },
+        finish(job, outcome, committed) {
+            this.jobs = this.jobs.filter(item => item !== job);
+            this.queue = this.queue.filter(id => id !== job.id);
+            Object.assign(job, { state: 'finished', outcome, committed, endedAt: Date.now(), place: null, ahead: null });
+            this.finished.unshift(job);
+            this.finished.length = Math.min(this.finished.length, 20);
+            this.emit();
+        },
+        async process(job) {
+            const [outcome, committed] = await this.run(job);
+            this.finish(job, outcome, committed);
+        },
+        async work() {
+            while (!this.busy && this.queue.length) {
+                this.busy = true;
+                const job = this.jobs.find(item => item.id === this.queue.shift());
+                this.emit();
+                if (job) await this.process(job);
+                this.busy = false;
+            }
         },
     };
     for (const run of state.runs || []) {
@@ -209,6 +333,7 @@ function setup(state) {
         calls: [],
         myfi,
         runs,
+        commits,
         files,
         git,
         projectData,
@@ -265,6 +390,36 @@ function setup(state) {
                 return state.projectFiles || [];
             },
             get_scripts: () => state.scripts || [],
+            commit_enqueue: args => {
+                const target = runs.target(args.project);
+                if (commits.jobs.some(job => job.projectPath === target.projectPath && job.repo === args.repo)) {
+                    throw 'This repo already has a commit waiting or running.';
+                }
+                const job = {
+                    id: `job-${++commits.next}`, ...target, repo: args.repo, message: `${args.message}`.trim(), files: args.files,
+                    excluded: args.excluded || [], ignored: args.ignored || [], syncAfter: !!args.syncAfter, script: args.script ? copy(args.script) : null,
+                    state: 'queued', queued: !!args.queue, place: null, ahead: null, note: null, outcome: null, committed: false,
+                    createdAt: Date.now(), endedAt: null,
+                };
+                commits.jobs.push(job);
+                if (args.queue) commits.queue.push(job.id);
+                commits.emit();
+                if (args.queue) commits.work();
+                else commits.process(job);
+                return commits.shown(job);
+            },
+            commit_jobs: () => commits.snapshot(),
+            commit_cancel: ({ id }) => {
+                const job = commits.jobs.find(item => item.id === id);
+                if (!job) return false;
+                if (job.state === 'script') {
+                    runs.stop(job.projectId, 'Before Commit');
+                    return true;
+                }
+                if (job.state !== 'queued' || !commits.queue.includes(id)) return false;
+                commits.finish(job, commits.outcome('Cancelled', 'Taken out of the queue.', 'info'), false);
+                return true;
+            },
             // Not a command: how the backend starts a script for run_script. Throw for a script that cannot start.
             spawn_script: () => ({ message: 'Script started', interactive: state.interactive !== false }),
             run_script: async args => {

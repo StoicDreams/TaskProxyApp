@@ -1,4 +1,5 @@
 pub(crate) mod ci_status;
+pub(crate) mod commit_queue;
 pub(crate) mod emojis;
 pub(crate) mod file_server;
 pub(crate) mod git_controller;

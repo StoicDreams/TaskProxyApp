@@ -184,22 +184,23 @@ The desktop benefits from this as well: terminals and commits no longer depend o
 - **Events:** `run-changed`, with a revision so a screen keeps the newest, and `terminal-data` with the run and batch number.
 - **The components:** `terminalHelpers` keeps its API (`getState`, `runScript`, `runAndWait`, `getDropdownOptions`, `runStatus`) over its copy of the Rust runs, which it loads at startup. `wc/terminals.js` only lost clearing the queue, which Rust does.
 
-**Commit jobs:** a new `services/commit_queue.rs`.
+**Commit jobs:** `services/commit_queue.rs`. *Done.*
 - **A job holds:**
-  - the project path and repo
+  - the project and repo
   - the message
-  - the files, and the files excluded
+  - the files chosen, the files left out, and the project's ignored files
   - whether to sync after
-  - its Run Before Commit script, as a path plus the values filled in
+  - its Run Before Commit script, as a path plus the PowerShell the window built from the values filled in
 - **The steps:**
-  1. Run the script through `runs.rs`.
-  2. Commit, then sync, through the plain functions behind `git_commit` and `git_sync`.
+  1. Read the changed files, then run the script through `runs.rs` in the `Before Commit` terminal of the job's project, and wait for it.
+  2. Commit the chosen files and those the script changed, then sync when asked, through `git_commit` and `git_sync`, called from Rust. `git_commit` is no longer a command, so a commit always runs as a job.
   3. Keep the last 20 finished jobs.
+- Jobs made with Queue on run one at a time, in order. Others start straight away.
 - **Commands:** `commit_enqueue`, `commit_jobs`, `commit_cancel`.
-- **Event:** `commit-jobs-changed`.
-- `wc/git-manager.js` keeps its UI and `readScriptParameters`.
+- **Event:** `commit-jobs-changed`, with a revision so a screen keeps the newest. Each job carries a note on what it is doing, and how it ended, which the window reports as it did before.
+- `wc/git-manager.js` keeps its UI, `readScriptParameters` and `buildBeforeCommitScript`, and loads the jobs when it opens.
 - **Missing credentials:** the job fails and says so. The token prompt stays on the desktop, at the next manual git action.
-- **Tests:** against temporary repositories, including a script that fails and one that is stopped.
+- **Tests:** `CommitStore` and choosing the files are tested in Rust. Running a whole job needs a Tauri app, so the mock backend runs jobs the same way for the UI tests. A Rust test against a temporary repository waits for a Tauri test runtime.
 
 **App and project data as patches.**
 - **New commands:** `patch_app_data({rev, set, remove})` and `patch_project_data` replace whole-object syncs.

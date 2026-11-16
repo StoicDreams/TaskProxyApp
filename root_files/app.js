@@ -203,8 +203,14 @@
             }
         }
         git = {
-            // project is the path of the project to commit in, when it is not the open one.
-            commit: (repo, files, message, err, project) => invokeGit('git_commit', project ? { repo, files, message, project } : { repo, files, message }, err),
+            /**
+             * Makes a commit, which Rust runs: its Run Before Commit script, the commit, then a sync when asked. `args`
+             * are { project, repo, message, files, excluded, ignored, syncAfter, script: { path, content }, queue }.
+             */
+            commitEnqueue: (args, errHandler) => tauri.core.invoke('commit_enqueue', args).catch(errHandler ?? defaultErrHandler),
+            commitJobs: () => tauri.core.invoke('commit_jobs', {}),
+            commitCancel: (id) => tauri.core.invoke('commit_cancel', { id }),
+            onCommitJobs: (callback) => tauri.event.listen('commit-jobs-changed', callback),
             getChanges: (path, err, project) => invokeGit('get_git_changes', project ? { path, project } : { path }, err),
             getChangeStats: (repo, err) => invokeGit('get_git_change_stats', { repo }, err),
             getFileDiff: (repo, file, err) => invokeGit('get_git_file_diff', { repo, file }, err),

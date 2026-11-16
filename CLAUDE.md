@@ -133,6 +133,8 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 
 `git_controller.rs` uses `git2` (libgit2) rather than the git CLI, authenticating over HTTPS with a PAT stored as the `git_pat` or `github_pat` variable (project scope first, then global). Checkouts that move between commits use `checkout_commit_safely`, which refuses to overwrite uncommitted work; only explicit revert and force-pull actions use `force()`. File paths passed to libgit2 are patterns, so use `escape_pathspec` or `disable_pathspec_match`. Validate paths from the UI with `safe_relative_path`.
 
+Commits run in Rust as jobs (`services/commit_queue.rs`): the Run Before Commit script through `runs.rs`, then the commit, then a sync when asked, so a commit finishes whatever happens to the window. `git_commit` is called from there, not from the window. The Git Controller sends `commit_enqueue` and shows each job from `commit-jobs-changed`. In the mock backend, jobs record their git steps as `get_git_changes`, `git_commit` and `git_sync` calls.
+
 ### Plugins
 
 Plugins such as Jira are WebAssembly in the separate TaskProxyPlugins repo (`../TaskProxyPlugins`), run by `src-tauri/src/plugins/` with Extism, and drawn by `wc/plugin-page.js`. `Docs/Plugins.md` covers the permission model, the catalog, and signing.
