@@ -1,8 +1,8 @@
 use crate::prelude::*;
+use crate::services::runs::{self, RunRequest, RunTarget};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::process::Stdio;
-use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command as AsyncCommand;
 use tokio::sync::{mpsc, oneshot};
@@ -70,28 +70,12 @@ impl Drop for TempFileCleanup {
     }
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TerminalData {
-    project_id: String,
-    terminal_id: String,
-    data: String,
-}
-
 #[derive(Clone, Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScriptStarted {
     message: String,
     /// Whether the script runs in a pseudo-terminal, so it can take input and redraw its output.
-    interactive: bool,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TerminalFinished {
-    project_id: String,
-    terminal_id: String,
-    code: Option<i32>,
+    pub interactive: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -249,15 +233,13 @@ pub(crate) async fn auto_install_powershell() -> Result<String, String> {
     }
 }
 
-fn script_key(project_id: &str, terminal_id: &str) -> String {
+pub(crate) fn script_key(project_id: &str, terminal_id: &str) -> String {
     format!("{}\0{}", project_id, terminal_id)
 }
 
-/// The project a command is for: the one named, such as a script still running in a project the user switched
-/// away from, or else the open project.
 /// The id and folder of the project a script runs in: the open one, or another saved project named by its path,
 /// such as one a queued commit was made in.
-fn script_project(
+pub(crate) fn script_project(
     (open_id, open_path): (&str, &str),
     known: &[Project],
     wanted: Option<&str>,
@@ -407,21 +389,16 @@ async fn batch_output<F: Fn(String)>(mut chunks: mpsc::UnboundedReceiver<Vec<u8>
     }
 }
 
+/// Sends a run's output to the run store, which keeps it and passes it to every screen.
 async fn emit_output(
     app: AppHandle,
     project_id: String,
     terminal_id: String,
+    run: u64,
     chunks: mpsc::UnboundedReceiver<Vec<u8>>,
 ) {
     batch_output(chunks, |data| {
-        let _ = app.emit(
-            "terminal-data",
-            TerminalData {
-                project_id: project_id.clone(),
-                terminal_id: terminal_id.clone(),
-                data,
-            },
-        );
+        runs::output(&app, &project_id, &terminal_id, run, data);
     })
     .await;
 }
@@ -533,20 +510,20 @@ pub(crate) fn remove_stale_temp_scripts(app_handle: &AppHandle) {
 
 // Tauri fills these in from the frontend and from app state, so they cannot be grouped.
 #[allow(clippy::too_many_arguments)]
-#[tauri::command]
-pub(crate) async fn start_script(
-    app_handle: AppHandle,
-    state: State<'_, TerminalManager>,
-    project_state: State<'_, CurrentProject>,
-    projects: State<'_, SharedProjects>,
-    terminal_id: String,
-    script_content: String,
-    args: Vec<String>,
-    in_separate_window: bool,
-    cols: Option<u16>,
-    rows: Option<u16>,
-    project: Option<String>,
+/// Starts the script for run `run`, which the run store has marked running. Its output and its end go to the
+/// run store. Use `runs::run_script`, which keeps the store and the queue, rather than this.
+pub(crate) async fn spawn_script(
+    app_handle: &AppHandle,
+    processes: &ProcessMap,
+    target: &RunTarget,
+    run: u64,
+    request: &RunRequest,
 ) -> Result<ScriptStarted, String> {
+    let terminal_id = request.terminal_id.clone();
+    let script_content = &request.script_content;
+    let args = request.args.clone();
+    let in_separate_window = request.in_separate_window;
+    let (cols, rows) = (request.cols, request.rows);
     // Dynamic PowerShell Resolution
     let (installed, executable) = task::spawn_blocking(resolve_pwsh)
         .await
@@ -554,17 +531,11 @@ pub(crate) async fn start_script(
     if !installed {
         return Err("PowerShell is not installed on this system.".into());
     }
-    let (project_id, project_path) = {
-        let p_state = project_state
-            .lock()
-            .map_err(|err| format!("State failure: {}", err))?;
-        let known = projects
-            .lock()
-            .map_err(|err| format!("State failure: {}", err))?;
-        script_project((&p_state.id, &p_state.path), &known, project.as_deref())?
-    };
+    let project_id = target.project_id.clone();
+    let project_path = target.project_path.clone();
     let key = script_key(&project_id, &terminal_id);
-    let mut processes = state.processes.lock().await;
+    let state_arc = processes.clone();
+    let mut processes = processes.lock().await;
     if processes.contains_key(&key) {
         return Err("Script is already running in this terminal.".into());
     }
@@ -580,7 +551,7 @@ pub(crate) async fn start_script(
     let script_path = if is_existing_file {
         candidate_path
     } else {
-        let temp_dir = temp_script_dir(&app_handle)?;
+        let temp_dir = temp_script_dir(app_handle)?;
         let temp_path = if terminal_id == "live" {
             temp_dir.join(format!("taskproxy_live_{}.ps1", Uuid::now_v7().simple()))
         } else {
@@ -605,7 +576,7 @@ pub(crate) async fn start_script(
                 file_name
             ))
         };
-        write_private_file(&temp_path, &script_content)
+        write_private_file(&temp_path, script_content)
             .map_err(|e| format!("Failed to write temp script: {}", e))?;
         temp_cleanup = Some(TempFileCleanup(temp_path.clone()));
         temp_path
@@ -740,13 +711,13 @@ pub(crate) async fn start_script(
     };
     let interactive = pty.is_some();
     let app_wait = app_handle.clone();
-    let state_arc = state.processes.clone();
     let key_wait = key.clone();
     let (kill_tx, kill_rx) = oneshot::channel::<()>();
     let mut flusher = tokio::spawn(emit_output(
         app_handle.clone(),
         project_id.clone(),
         terminal_id.clone(),
+        run,
         chunk_rx,
     ));
     let (handle, control) = if let Some(PtyProcess {
@@ -780,14 +751,7 @@ pub(crate) async fn start_script(
             }
             state_arc.lock().await.remove(&key_wait);
             let code = status.and_then(|s| s.signal().is_none().then(|| s.exit_code() as i32));
-            let _ = app_wait.emit(
-                "terminal-finished",
-                TerminalFinished {
-                    project_id,
-                    terminal_id,
-                    code,
-                },
-            );
+            runs::finished(&app_wait, &project_id, &terminal_id, run, code);
         });
         (handle, Some(control))
     } else {
@@ -831,13 +795,12 @@ pub(crate) async fn start_script(
                 flusher.abort();
             }
             state_arc.lock().await.remove(&key_wait);
-            let _ = app_wait.emit(
-                "terminal-finished",
-                TerminalFinished {
-                    project_id,
-                    terminal_id,
-                    code: status.and_then(|s| s.code()),
-                },
+            runs::finished(
+                &app_wait,
+                &project_id,
+                &terminal_id,
+                run,
+                status.and_then(|s| s.code()),
             );
         });
         (handle, None)
@@ -856,16 +819,10 @@ pub(crate) async fn start_script(
     })
 }
 
-async fn running_pty(
-    state: &State<'_, TerminalManager>,
-    project_state: &State<'_, CurrentProject>,
-    terminal_id: &str,
-    project_id: Option<String>,
-) -> Result<Arc<PtyControl>, String> {
-    let key = script_key(&target_project_id(project_state, project_id)?, terminal_id);
-    let processes = state.processes.lock().await;
+async fn running_pty(processes: &ProcessMap, key: &str) -> Result<Arc<PtyControl>, String> {
+    let processes = processes.lock().await;
     let script = processes
-        .get(&key)
+        .get(key)
         .ok_or("No running process found for this terminal")?;
     script
         .pty
@@ -876,13 +833,31 @@ async fn running_pty(
 /// Sends typed input, including control keys such as Ctrl+C, to a running script.
 #[tauri::command]
 pub(crate) async fn write_terminal_input(
+    app_handle: AppHandle,
     terminal_id: String,
     data: String,
     project_id: Option<String>,
     state: State<'_, TerminalManager>,
     project_state: State<'_, CurrentProject>,
 ) -> Result<(), String> {
-    let control = running_pty(&state, &project_state, &terminal_id, project_id).await?;
+    let project_id = target_project_id(&project_state, project_id)?;
+    let key = script_key(&project_id, &terminal_id);
+    // Ctrl+C stops the script, as the Stop button does, so it counts as failed however it exits.
+    let stops = data.contains('\x03');
+    send_input(&state.processes, &key, data).await?;
+    if stops {
+        runs::stopped_by_input(&app_handle, &project_id, &terminal_id);
+    }
+    Ok(())
+}
+
+/// Sends input to the script running under `key`, failing when it does not run in a terminal.
+pub(crate) async fn send_input(
+    processes: &ProcessMap,
+    key: &str,
+    data: String,
+) -> Result<(), String> {
+    let control = running_pty(processes, key).await?;
     task::spawn_blocking(move || {
         let mut writer = control.writer.lock().map_err(|e| e.to_string())?;
         let writer = writer.as_mut().ok_or("The script has finished.")?;
@@ -908,7 +883,11 @@ pub(crate) async fn resize_terminal(
     if cols == 0 || rows == 0 {
         return Ok(());
     }
-    let control = running_pty(&state, &project_state, &terminal_id, project_id).await?;
+    let key = script_key(
+        &target_project_id(&project_state, project_id)?,
+        &terminal_id,
+    );
+    let control = running_pty(&state.processes, &key).await?;
     let master = control.master.lock().map_err(|e| e.to_string())?;
     if let Some(master) = master.as_ref() {
         master
@@ -945,39 +924,27 @@ fn request_kill(script: &mut RunningScript) {
     }
 }
 
-#[tauri::command]
-pub(crate) async fn kill_script(
-    terminal_id: String,
-    project_id: Option<String>,
-    state: State<'_, TerminalManager>,
-    project_state: State<'_, CurrentProject>,
-) -> Result<String, String> {
-    let key = script_key(
-        &target_project_id(&project_state, project_id)?,
-        &terminal_id,
-    );
-    let mut processes = state.processes.lock().await;
-    if let Some(script) = processes.get_mut(&key) {
-        request_kill(script);
-        Ok("Process killed".into())
-    } else {
-        Err("No running process found for this terminal".into())
+/// Forces the script running under `key` to end, with everything it started. Returns whether one was running.
+pub(crate) async fn force_stop(processes: &ProcessMap, key: &str) -> bool {
+    let mut processes = processes.lock().await;
+    match processes.get_mut(key) {
+        Some(script) => {
+            request_kill(script);
+            true
+        }
+        None => false,
     }
 }
 
-#[tauri::command]
-pub(crate) async fn kill_all_scripts(
-    state: State<'_, TerminalManager>,
-    project_state: State<'_, CurrentProject>,
-) -> Result<String, String> {
-    let prefix = script_key(&current_project_id(&project_state)?, "");
-    let mut processes = state.processes.lock().await;
+/// Forces every script running in a project to end.
+pub(crate) async fn force_stop_project(processes: &ProcessMap, project_id: &str) {
+    let prefix = script_key(project_id, "");
+    let mut processes = processes.lock().await;
     for (key, script) in processes.iter_mut() {
         if key.starts_with(&prefix) {
             request_kill(script);
         }
     }
-    Ok("All processes killed".into())
 }
 
 /// Stop every script and wait for each to clean up its temp file.

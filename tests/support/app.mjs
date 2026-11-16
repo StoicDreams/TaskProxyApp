@@ -219,6 +219,16 @@ export function onCommand(page, command, handler) {
     }, { command, source: handler.toString() });
 }
 
+/** A script the backend runs writes output: `{ projectId, terminalId, data }`, with projectId the open project's by default. */
+export function runOutput(page, payload) {
+    return page.evaluate(payload => window.__backend.runs.write(payload), payload);
+}
+
+/** A script the backend runs ends: `{ projectId, terminalId, code }`, and the next queued one starts. */
+export function runEnds(page, payload) {
+    return page.evaluate(payload => window.__backend.runs.end(payload), payload);
+}
+
 /** Send an event from the backend to the app. */
 export function emit(page, name, payload) {
     return page.evaluate(({ name, payload }) => window.__backend.emit(name, payload), { name, payload });

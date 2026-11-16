@@ -181,8 +181,7 @@
                     await webui.proxy.terminalHelpers.stopScript(t.viewState().activeId, t._viewProject);
                 });
                 btnKillAll.addEventListener('click', async () => {
-                    // Clear the queue first, so finishing scripts do not start the next one.
-                    webui.proxy.terminalHelpers.getState().queue = [];
+                    // Rust forgets the project's queue first, so finishing scripts do not start the next one.
                     await webui.proxy.terminal.killAll().catch(err => webui.alert(err));
                 });
                 container.querySelector('#btn-select-all').addEventListener('click', async () => {

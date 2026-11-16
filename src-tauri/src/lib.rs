@@ -52,6 +52,7 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(ProjectData::new())))
         .manage(Arc::new(Mutex::new(crate::services::EmojiState::default())))
         .manage(crate::services::terminal_controller::TerminalManager::default())
+        .manage(crate::services::runs::Runs::default())
         .manage(crate::services::task_manager::TaskManagerState::default());
 
     // Save data on close
@@ -213,11 +214,16 @@ pub fn run() {
             services::projects::search_project_files,
             services::projects::sync_project_data,
             services::script_controller::get_scripts,
-            services::terminal_controller::start_script,
-            services::terminal_controller::kill_script,
+            services::runs::run_script,
+            services::runs::get_runs,
+            services::runs::get_run_output,
+            services::runs::stop_run,
+            services::runs::kill_all_scripts,
+            services::runs::clear_run_output,
+            services::runs::remove_run,
+            services::runs::remove_finished_page_scripts,
             services::terminal_controller::write_terminal_input,
             services::terminal_controller::resize_terminal,
-            services::terminal_controller::kill_all_scripts,
             services::task_manager::list_processes,
             services::task_manager::stop_process,
             services::task_manager::close_task_manager,

@@ -781,7 +781,7 @@ Write-Host 'done'
         await dropdown.locator('button').first().click();
         await dropdown.locator(`[role="option"][data-value="${value}"]`).click();
     };
-    const finish = (page, code) => page.evaluate(code => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: 'Before Commit', code }), code);
+    const finish = (page, code) => page.evaluate(code => window.__backend.runs.end({ projectId: 'project-id', terminalId: 'Before Commit', code }), code);
 
     test('a chosen script shows a field for each of its parameters, and the choices are remembered', async ({ page }) => {
         await openWith(page);
@@ -821,15 +821,15 @@ Write-Host 'done'
         await expect.poll(async () => (await calls(page, 'sync_project_data')).at(-1)?.data?.data?._gitBeforeCommit?.scripts).toEqual({});
         await commit(page);
         await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
-        expect(await calls(page, 'start_script')).toEqual([]);
+        expect(await calls(page, 'spawn_script')).toEqual([]);
     });
     test('commit runs the script first in the Terminals panel, then commits what it changed once it succeeds', async ({ page }) => {
         await openWith(page, saved);
         await expect(field(page, 'Version')).toHaveCount(1);
         await include(page, 'b.txt').selectOption('0');
         await commit(page);
-        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
-        const started = (await calls(page, 'start_script'))[0];
+        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
+        const started = (await calls(page, 'spawn_script'))[0];
         expect(started.terminalId).toBe('Before Commit');
         expect(started.scriptContent).toBe(WRAPPER);
         await expect(drawerOpen(page)).toHaveCount(1);
@@ -848,7 +848,7 @@ Write-Host 'done'
         await openWith(page, saved);
         await expect(field(page, 'Version')).toHaveCount(1);
         await commit(page);
-        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
         await finish(page, 1);
         await expect(manager(page).locator('webui-alert').first()).toContainText(`${SCRIPT} failed with exit code 1, so nothing was committed`);
         await page.waitForTimeout(200);
@@ -861,7 +861,7 @@ Write-Host 'done'
         await openWith(page, saved);
         await expect(field(page, 'Version')).toHaveCount(1);
         await commit(page);
-        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
         await finish(page, null);
         await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
         expect(await calls(page, 'git_commit')).toEqual([]);
@@ -901,7 +901,7 @@ Write-Host 'done'
             await include(page, 'b.txt').selectOption('0');
             await manager(page).evaluate(el => { el._toggleSync.value = true; });
             await commit(page);
-            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await switchToOther(page);
             await page.evaluate(() => window.__backend.git.changes.push(' M a.min.txt'));
             await finish(page, 0);
@@ -925,7 +925,7 @@ Write-Host 'done'
             await expect(field(page, 'Version')).toHaveCount(1);
             await manager(page).evaluate(el => { el._toggleSync.value = false; });
             await commit(page);
-            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await switchToOther(page);
             await finish(page, 0);
             await expect.poll(() => alerts(page)).toEqual([['Repo: Commit successful.', 'success']]);
@@ -936,7 +936,7 @@ Write-Host 'done'
             await expect(field(page, 'Version')).toHaveCount(1);
             await manager(page).evaluate(el => { el._toggleSync.value = true; });
             await commit(page);
-            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await switchToOther(page);
             await onCommand(page, 'git_sync', () => { throw 'Credentials Missing/Invalid'; });
             await finish(page, 0);
@@ -953,7 +953,7 @@ Write-Host 'done'
             });
             await expect(field(page, 'Version')).toHaveCount(1);
             await commit(page, 'first');
-            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
             await switchToOther(page);
             // The other project runs the same script before its commits.
@@ -965,16 +965,16 @@ Write-Host 'done'
             await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/repo');
             await finish(page, 0);
             await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.message)).toEqual(['first']);
-            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(2);
-            expect((await calls(page, 'start_script'))[1]).toMatchObject({ terminalId: 'Before Commit', project: '/other' });
-            await page.evaluate(() => window.__backend.emit('terminal-finished', { projectId: 'id-/other', terminalId: 'Before Commit', code: 0 }));
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(2);
+            expect((await calls(page, 'spawn_script'))[1]).toMatchObject({ terminalId: 'Before Commit', project: '/other' });
+            await page.evaluate(() => window.__backend.runs.end({ projectId: 'id-/other', terminalId: 'Before Commit', code: 0 }));
             await expect.poll(async () => (await calls(page, 'git_commit')).map(call => `${call.message}:${call.project ?? ''}`)).toEqual(['first:', 'second:/other']);
         });
         test('a script that fails after switching says which project it was for, and commits nothing', async ({ page }) => {
             await openBoth(page);
             await expect(field(page, 'Version')).toHaveCount(1);
             await commit(page);
-            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await switchToOther(page);
             await finish(page, 1);
             await expect.poll(() => alerts(page)).toEqual([[`Repo: ${SCRIPT} failed with exit code 1, so nothing was committed. Its output is in the Terminals panel.`, 'danger']]);
@@ -990,7 +990,7 @@ Write-Host 'done'
         await expect(cancelCommit(page)).toHaveAttribute('label', 'Cancel');
         await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
         await cancelCommit(page).click();
-        await expect.poll(async () => (await calls(page, 'write_terminal_input')).map(call => call.data)).toEqual(['\x03']);
+        await expect.poll(() => calls(page, 'stop_run')).toEqual([{ terminalId: 'Before Commit' }]);
         await finish(page, 0);
         await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
         await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
@@ -1006,7 +1006,7 @@ Write-Host 'done'
             await manager(page).locator('#toggle-queue').click();
             await expect.poll(() => manager(page).evaluate(el => el._toggleQueue.value)).toBe(true);
             await commit(page, 'first');
-            await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await expect(commitState(page)).toHaveText('Running Publish.ps1');
             await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
             await pick(repoDropdown(page), 'libs/api');
@@ -1060,7 +1060,7 @@ Write-Host 'done'
         await expect(field(page, 'Version')).toHaveCount(1);
         await commit(page);
         await expect(manager(page).locator('webui-alert').first()).toContainText(`Fill in Note for ${SCRIPT}`);
-        expect(await calls(page, 'start_script')).toEqual([]);
+        expect(await calls(page, 'spawn_script')).toEqual([]);
         expect(await calls(page, 'git_commit')).toEqual([]);
     });
     test('a script from a project that is not trusted yet asks first', async ({ page }) => {
@@ -1070,7 +1070,7 @@ Write-Host 'done'
         await expect(dialogButton(page, 'Trust Project & Run')).toBeVisible();
         await dialogButton(page, 'Cancel').click();
         await page.waitForTimeout(100);
-        expect(await calls(page, 'start_script')).toEqual([]);
+        expect(await calls(page, 'spawn_script')).toEqual([]);
         expect(await calls(page, 'git_commit')).toEqual([]);
     });
 });

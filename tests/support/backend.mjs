@@ -21,6 +21,12 @@
  * - hasKey: whether a security key exists. Defaults to true.
  * - newInstall: leave out the saved settings an existing install has.
  * - interactive: whether scripts start in a terminal that takes input. Defaults to true.
+ *   Script runs are kept as services/runs.rs keeps them, with the queue and output. Each script that starts is
+ *   recorded as a `spawn_script` call, and spawn_script's handler says how it starts, or throws when it cannot.
+ *   Tests play a script with window.__backend.runs.write({ projectId, terminalId, data }) and .end({ projectId,
+ *   terminalId, code }). Stopping only marks a run stopped, so a test ends it as the script would.
+ * - runs: runs the backend already has when the window loads, as after a reload, as [{ terminalId, project (a path),
+ *   output: [batches], code }]. A run with a code has ended.
  * - catalog: what plugin_catalog returns, or leave it out for a catalog that cannot be reached.
  *   catalogManifests: { id: manifest } for what plugin_install_catalog installs.
  * - plugins: what plugin_list returns, as [{ id, version, enabled, signed, manifest }].
@@ -81,6 +87,111 @@ function setup(state) {
         return [id, { hasProject: true, signIn: used ? 'sign-in-1' : null, settings: view, signIns: used ? [{ id: 'sign-in-1', label: 'Saved sign-in', projects: 1 }] : [] }];
     }));
     const listeners = {};
+    const copy = value => JSON.parse(JSON.stringify(value));
+    // The open project, as the backend's CurrentProject, which get_project_data changes.
+    let openProject = projectData;
+    const emitEvent = (name, payload) => (listeners[name] || []).forEach(listener => listener({ payload }));
+    // Script runs, as services/runs.rs keeps them.
+    const runs = {
+        rev: 0,
+        next: 0,
+        projects: {},
+        // Batch numbers for output to a terminal the backend never ran, which tests still send.
+        unknownSeq: {},
+        project(id) { return this.projects[id] ??= { terminals: {}, queue: [] }; },
+        target(path) {
+            if (!path || path === openProject?.path) {
+                if (!openProject) throw 'Project not loaded.';
+                const saved = (state.projects || (project ? [project] : [])).find(item => item.path === openProject.path);
+                return { projectId: openProject.id, projectPath: openProject.path, projectName: saved?.name || openProject.path };
+            }
+            const saved = (state.projects || []).find(item => item.path === path);
+            if (!saved) throw `${path} is not one of your projects.`;
+            return { projectId: `id-${path}`, projectPath: path, projectName: saved.name || path };
+        },
+        id(projectId) { return projectId || openProject?.id || ''; },
+        changed(entry) { emitEvent('run-changed', { projectId: entry.info.projectId, terminalId: entry.info.id, run: copy(entry.info) }); },
+        update(entry, fields) {
+            Object.assign(entry.info, fields, { rev: ++this.rev });
+            this.changed(entry);
+            return copy(entry.info);
+        },
+        running(projectId) { return Object.values(this.project(projectId).terminals).filter(entry => entry.info.status === 'Running'); },
+        begin(target, args) {
+            const id = args.terminalId;
+            const cleared = this.project(target.projectId).terminals[id]?.info.cleared ?? 0;
+            const entry = {
+                info: {
+                    id, name: id === 'live' ? 'Live Command' : id, ...target, status: 'Running', exitCode: null, stopped: false,
+                    startedAt: Date.now(), endedAt: null, isPageScript: !!args.isPageScript, isLive: id === 'live',
+                    script: args.displayScript ?? args.scriptContent, args: args.args || [], interactive: false,
+                    run: ++this.next, rev: ++this.rev, cleared,
+                },
+                output: [],
+                seq: 0,
+            };
+            this.project(target.projectId).terminals[id] = entry;
+            this.changed(entry);
+            return entry;
+        },
+        async launch(target, args, entry) {
+            backend.calls.push({ command: 'spawn_script', args: copy({ ...args, project: args.project }) });
+            let started;
+            try {
+                started = await backend.handlers.spawn_script(args);
+            } catch (err) {
+                this.write({ projectId: target.projectId, terminalId: entry.info.id, data: `\x1b[31m${err}\x1b[0m\r\n` });
+                this.end({ projectId: target.projectId, terminalId: entry.info.id, code: null });
+                throw err;
+            }
+            if (args.inSeparateWindow) {
+                this.end({ projectId: target.projectId, terminalId: entry.info.id, code: null });
+                return copy(entry.info);
+            }
+            return this.update(entry, { interactive: !!started?.interactive });
+        },
+        /** A script writes output. */
+        write({ projectId, terminalId, data }) {
+            projectId = this.id(projectId);
+            const entry = this.project(projectId).terminals[terminalId];
+            if (!entry) {
+                const key = `${projectId}\0${terminalId}`;
+                this.unknownSeq[key] = (this.unknownSeq[key] || 0) + 1;
+                emitEvent('terminal-data', { projectId, terminalId, run: 0, seq: this.unknownSeq[key], data });
+                return;
+            }
+            entry.output.push([++entry.seq, data]);
+            emitEvent('terminal-data', { projectId, terminalId, run: entry.info.run, seq: entry.seq, data });
+        },
+        /** A script ends, with its exit code or null, and the next queued script in its project starts. */
+        end({ projectId, terminalId, code }) {
+            projectId = this.id(projectId);
+            const entry = this.project(projectId).terminals[terminalId];
+            if (entry?.info.status === 'Running') {
+                this.update(entry, { status: 'Finished', exitCode: Number.isInteger(code) ? code : null, endedAt: Date.now() });
+            }
+            this.runQueued(projectId);
+        },
+        runQueued(projectId) {
+            const projectRuns = this.project(projectId);
+            if (this.running(projectId).length) return;
+            const next = projectRuns.queue.shift();
+            if (!next) return;
+            const entry = this.begin(next.target, next.args);
+            this.launch(next.target, next.args, entry).catch(() => { });
+        },
+        stop(projectId, terminalId) {
+            const entry = this.project(projectId).terminals[terminalId];
+            if (entry?.info.status === 'Running') this.update(entry, { stopped: true });
+        },
+    };
+    for (const run of state.runs || []) {
+        const target = runs.target(run.project);
+        const entry = runs.begin(target, { terminalId: run.terminalId, scriptContent: run.script || '', args: [] });
+        (run.output || []).forEach(data => entry.output.push([++entry.seq, data]));
+        entry.info.interactive = true;
+        if ('code' in run) Object.assign(entry.info, { status: 'Finished', exitCode: run.code, endedAt: Date.now() });
+    }
     const myfi = {
         account: state.myfi?.account ? { offline: false, ...state.myfi.account } : null,
         waiting: null,
@@ -97,11 +208,12 @@ function setup(state) {
     const backend = {
         calls: [],
         myfi,
+        runs,
         files,
         git,
         projectData,
         savedProjects,
-        emit(name, payload) { (listeners[name] || []).forEach(listener => listener({ payload })); },
+        emit: emitEvent,
         handlers: {
             get_app_data: () => ({
                 isSaved: true, saveIntervalMinutes: 20, variables: state.appVariables || [],
@@ -119,10 +231,14 @@ function setup(state) {
             save_app_data: () => 'app data saved',
             load_projects: () => state.projects || (project ? [project] : []),
             get_projects: () => state.projects || (project ? [project] : []),
-            get_project_data: loadProject,
+            get_project_data: args => {
+                const loaded = loadProject(args);
+                openProject = loaded;
+                return loaded;
+            },
             sync_project_data: ({ data } = {}) => { storeProject(data); return 'Project data synced'; },
             save_project_data: ({ data } = {}) => { storeProject(data); return 'Project data saved'; },
-            clear_current_project: () => 'Project closed',
+            clear_current_project: () => { openProject = null; return 'Project closed'; },
             reload_project_files: () => projectData,
             rename_project: () => 'Project Successfully Renamed',
             remove_project: () => 'Project Successfully Removed',
@@ -149,11 +265,68 @@ function setup(state) {
                 return state.projectFiles || [];
             },
             get_scripts: () => state.scripts || [],
-            start_script: () => ({ message: 'Script started', interactive: state.interactive !== false }),
-            write_terminal_input: () => null,
+            // Not a command: how the backend starts a script for run_script. Throw for a script that cannot start.
+            spawn_script: () => ({ message: 'Script started', interactive: state.interactive !== false }),
+            run_script: async args => {
+                const target = runs.target(args.project);
+                const projectRuns = runs.project(target.projectId);
+                if (projectRuns.terminals[args.terminalId]?.info.status === 'Running') {
+                    throw 'Script is already running. You can manage it in the Terminal Manager.';
+                }
+                if (args.queue && runs.running(target.projectId).length) {
+                    projectRuns.queue.push({ target, args: copy(args) });
+                    return { result: 'Queued', run: null };
+                }
+                const entry = runs.begin(target, args);
+                return { result: 'Started', run: await runs.launch(target, args, entry) };
+            },
+            get_runs: () => Object.values(runs.projects).flatMap(item => Object.values(item.terminals).map(entry => copy(entry.info))),
+            get_run_output: ({ terminalId, projectId, run, since }) => {
+                const entry = runs.project(runs.id(projectId)).terminals[terminalId];
+                if (!entry) return null;
+                const from = run === entry.info.run && Number.isInteger(since) ? since : null;
+                const first = entry.output[0]?.[0] ?? entry.seq + 1;
+                const reset = from === null || from + 1 < first;
+                const data = entry.output.filter(([seq]) => reset || seq > from).map(([, text]) => text).join('');
+                return { run: entry.info.run, seq: entry.seq, data, reset };
+            },
+            stop_run: ({ terminalId, projectId }) => { runs.stop(runs.id(projectId), terminalId); return null; },
+            write_terminal_input: ({ terminalId, data, projectId }) => {
+                if (`${data}`.includes('\x03')) runs.stop(runs.id(projectId), terminalId);
+                return null;
+            },
             resize_terminal: () => null,
-            kill_script: () => 'Process killed',
-            kill_all_scripts: () => 'All processes killed',
+            kill_all_scripts: () => {
+                const projectId = runs.id();
+                runs.project(projectId).queue = [];
+                runs.running(projectId).forEach(entry => runs.stop(projectId, entry.info.id));
+                return 'All processes killed';
+            },
+            clear_run_output: ({ terminalId, projectId }) => {
+                const entry = runs.project(runs.id(projectId)).terminals[terminalId];
+                if (!entry) return null;
+                entry.output = [];
+                runs.update(entry, { cleared: entry.info.cleared + 1 });
+                return null;
+            },
+            remove_run: ({ terminalId, projectId }) => {
+                projectId = runs.id(projectId);
+                const entry = runs.project(projectId).terminals[terminalId];
+                if (!entry || terminalId === 'live' || entry.info.status === 'Running') return false;
+                delete runs.project(projectId).terminals[terminalId];
+                emitEvent('run-changed', { projectId, terminalId, run: null });
+                return true;
+            },
+            remove_finished_page_scripts: () => {
+                const projectId = runs.id();
+                const terminals = runs.project(projectId).terminals;
+                const ids = Object.keys(terminals).filter(id => terminals[id].info.isPageScript && terminals[id].info.status !== 'Running');
+                ids.forEach(id => {
+                    delete terminals[id];
+                    emitEvent('run-changed', { projectId, terminalId: id, run: null });
+                });
+                return ids.length;
+            },
             list_processes: ({ ports }) => ({
                 processes: processes.map(process => ({ ...process, ports: ports ? process.ports || [] : [] })),
                 cpuCount: 8, cpu: 12.5, memoryTotal: 16 * 1024 ** 3, memoryUsed: 6 * 1024 ** 3, portsRead: !!ports,

@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, emit, onCommand } from '../support/app.mjs';
+import { test, expect, openApp, calls, onCommand, runOutput, runEnds } from '../support/app.mjs';
 
 const open = async (page, state = {}) => {
     await openApp(page, state);
@@ -12,7 +12,7 @@ const ready = async page => {
 };
 // What the terminal shows, read from its buffer rather than the screen, so it includes scrolled out lines.
 const screen = page => page.evaluate(() => document.querySelector('#term-console').getScreenText());
-const output = (page, terminalId, data) => emit(page, 'terminal-data', { projectId: 'project-id', terminalId, data });
+const output = (page, terminalId, data) => runOutput(page, { projectId: 'project-id', terminalId, data });
 const placeholder = page => page.locator('#term-console .placeholder');
 const start = async (page, id) => {
     await page.evaluate(id => webui.proxy.terminalHelpers.runScript(id, 'body', [], false, false), id);
@@ -68,47 +68,28 @@ test('output for another terminal is kept for later', async ({ page }) => {
     await page.evaluate(() => document.querySelector('app-terminals').switchTerminal('b.ps1'));
     await expect.poll(() => screen(page)).toContain('FOR B');
 });
-test('stop sends Ctrl+C, and a script that ends from it is not forced', async ({ page }) => {
-    await open(page);
-    await ready(page);
-    await onCommand(page, 'write_terminal_input', args => {
-        if (args.data === '\x03') setTimeout(() => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: args.terminalId, code: 1 }), 50);
-        return null;
-    });
-    await start(page, 'a.ps1');
-    await page.locator('#btn-kill').click();
-    await expect.poll(async () => (await calls(page, 'write_terminal_input')).map(call => call.data)).toEqual(['\x03']);
-    await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].status)).toBe('Finished');
-    await page.waitForTimeout(3200);
-    expect(await calls(page, 'kill_script')).toEqual([]);
-});
-test('stop forces a script that ignores Ctrl+C to end after a few seconds', async ({ page }) => {
+test('stop asks the backend to stop the script, which then shows it failed', async ({ page }) => {
+    // Sending Ctrl+C, and forcing a script that ignores it, happen in Rust (stop_sequence in services/runs.rs).
     await open(page);
     await ready(page);
     await start(page, 'a.ps1');
     await page.locator('#btn-kill').click();
-    await expect.poll(async () => (await calls(page, 'write_terminal_input')).length).toBe(1);
-    expect(await calls(page, 'kill_script')).toEqual([]);
-    // The grace period is a few seconds, and timers run late on a busy machine, so allow well beyond it.
-    await expect.poll(async () => (await calls(page, 'kill_script')).length, { timeout: 15000 }).toBe(1);
-    expect((await calls(page, 'kill_script'))[0]).toEqual({ terminalId: 'a.ps1' });
+    await expect.poll(() => calls(page, 'stop_run')).toEqual([{ terminalId: 'a.ps1' }]);
+    await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].stopped)).toBe(true);
+    await runEnds(page, { terminalId: 'a.ps1', code: 0 });
+    await expect(page.locator('#term-status')).toHaveText(/^Failed /);
+    await expect.poll(() => page.locator('#btn-kill').evaluate(el => el.disabled)).toBeTruthy();
 });
-test('stop ends a script without a terminal straight away', async ({ page }) => {
-    await open(page, { interactive: false });
-    await ready(page);
-    await start(page, 'a.ps1');
-    await page.locator('#btn-kill').click();
-    await expect.poll(async () => (await calls(page, 'kill_script')).length).toBe(1);
-    expect(await calls(page, 'write_terminal_input')).toEqual([]);
-});
-test('kill all also clears the queue', async ({ page }) => {
+test('kill all also forgets the queue', async ({ page }) => {
     await open(page);
     await ready(page);
-    await start(page, 'a.ps1');
+    await page.evaluate(() => webui.proxy.terminalHelpers.runScript('a.ps1', 'x', [], false, true));
     await page.evaluate(() => webui.proxy.terminalHelpers.runScript('b.ps1', 'x', [], false, true));
     await page.locator('#btn-kill-all').click();
     await expect.poll(async () => (await calls(page, 'kill_all_scripts')).length).toBe(1);
-    expect(await page.evaluate(() => webui.proxy.terminalHelpers.getState().queue)).toEqual([]);
+    await runEnds(page, { terminalId: 'a.ps1', code: null });
+    await page.waitForTimeout(200);
+    expect((await calls(page, 'spawn_script')).map(call => call.terminalId)).toEqual(['a.ps1']);
 });
 test('clear empties the console', async ({ page }) => {
     await open(page);
@@ -196,7 +177,7 @@ test('finishing a script updates the kill button', async ({ page }) => {
     await start(page, 'a.ps1');
     const disabled = () => page.locator('#btn-kill').evaluate(el => el.disabled);
     await expect.poll(disabled).toBeFalsy();
-    await emit(page, 'terminal-finished', { projectId: 'project-id', terminalId: 'a.ps1', code: 0 });
+    await runEnds(page, { projectId: 'project-id', terminalId: 'a.ps1', code: 0 });
     await expect.poll(disabled).toBeTruthy();
 });
 test('markup in a script name is shown as text', async ({ page }) => {
@@ -223,7 +204,7 @@ test.describe('page scripts', () => {
         await expect(page.locator('#term-runner .read-only-note')).toBeVisible();
         await page.locator('#term-runner').evaluate(el => el._btnRun.click());
         await page.waitForTimeout(100);
-        expect(await calls(page, 'start_script')).toHaveLength(1);
+        expect(await calls(page, 'spawn_script')).toHaveLength(1);
     });
     test('file scripts can still be run from here', async ({ page }) => {
         await open(page);
@@ -239,7 +220,7 @@ test.describe('page scripts', () => {
         await ready(page);
         await runPageScript(page, 'p1');
         await expect.poll(() => page.locator('#btn-remove-script').evaluate(el => el.disabled)).toBeTruthy();
-        await emit(page, 'terminal-finished', { projectId: 'project-id', terminalId: 'p1', code: 0 });
+        await runEnds(page, { projectId: 'project-id', terminalId: 'p1', code: 0 });
         await expect.poll(() => page.locator('#btn-remove-script').evaluate(el => el.disabled)).toBeFalsy();
         await page.locator('#btn-remove-script').click();
         await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals.p1)).toBeUndefined();
@@ -252,7 +233,7 @@ test.describe('page scripts', () => {
         await expect(page.locator('#btn-remove-finished')).toBeHidden();
         for (const id of ['p1', 'p2']) {
             await runPageScript(page, id);
-            await emit(page, 'terminal-finished', { projectId: 'project-id', terminalId: id, code: 0 });
+            await runEnds(page, { projectId: 'project-id', terminalId: id, code: 0 });
         }
         await expect(page.locator('#btn-remove-finished')).toBeVisible();
         await page.locator('#btn-remove-finished').click();
@@ -281,7 +262,7 @@ test('terminal updates that arrive before the app has set up its backend are ign
 
 test.describe('run status', () => {
     const status = page => page.locator('#term-status');
-    const finish = (page, terminalId, code) => emit(page, 'terminal-finished', { projectId: 'project-id', terminalId, code });
+    const finish = (page, terminalId, code) => runEnds(page, { projectId: 'project-id', terminalId, code });
 
     test('a running script shows Running in blue with a time that keeps counting', async ({ page }) => {
         await open(page);
@@ -314,8 +295,9 @@ test.describe('run status', () => {
         await expect(status(page)).toHaveText(/^Failed /);
         expect(await status(page).evaluate(el => el.style.color)).toContain('var(--color-danger)');
         // A script that ends from Ctrl+C with exit code 0 was still stopped.
-        await onCommand(page, 'write_terminal_input', args => {
-            if (args.data === '\x03') setTimeout(() => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: args.terminalId, code: 0 }), 50);
+        await onCommand(page, 'stop_run', args => {
+            window.__backend.runs.stop('project-id', args.terminalId);
+            setTimeout(() => window.__backend.runs.end({ projectId: 'project-id', terminalId: args.terminalId, code: 0 }), 50);
             return null;
         });
         await start(page, 'b.ps1');
@@ -399,7 +381,7 @@ test.describe('script filter', () => {
         await expect.poll(() => shown(page)).toBe('build.ps1');
         await choose(page, 'All Running');
         await expect.poll(() => listed(page)).toEqual(['page-run (Running)']);
-        await emit(page, 'terminal-finished', { projectId: 'project-id', terminalId: 'page-run', code: 0 });
+        await runEnds(page, { projectId: 'project-id', terminalId: 'page-run', code: 0 });
         // Finished while shown, it stays until the choice changes.
         await page.waitForTimeout(200);
         await expect.poll(() => listed(page)).toEqual(['page-run (Finished)']);
@@ -433,7 +415,7 @@ test.describe('script filter', () => {
         await expect(page.locator('#btn-kill')).toHaveJSProperty('disabled', true);
         await expect(placeholder(page)).toBeVisible();
         await page.locator('#btn-clear').click();
-        expect(await calls(page, 'kill_script')).toEqual([]);
+        expect(await calls(page, 'stop_run')).toEqual([]);
     });
 
     test('a run that opens the Terminal Manager shows it under Running, unless All Running is chosen', async ({ page }) => {
@@ -482,11 +464,11 @@ test.describe('script filter', () => {
         });
         await expect.poll(() => screen(page)).toContain('Deploying from the other project');
         // Output for that script, from that project, keeps arriving.
-        await emit(page, 'terminal-data', { projectId: 'other-project', terminalId: 'deploy.ps1', data: 'Done\r\n' });
+        await runOutput(page, { projectId: 'other-project', terminalId: 'deploy.ps1', data: 'Done\r\n' });
         await expect.poll(() => screen(page)).toContain('Done');
         await expect(page.locator('#term-status')).toContainText('Running');
         await page.locator('#btn-kill').click();
-        await expect.poll(() => calls(page, 'kill_script')).toEqual([{ terminalId: 'deploy.ps1', projectId: 'other-project' }]);
+        await expect.poll(() => calls(page, 'stop_run')).toEqual([{ terminalId: 'deploy.ps1', projectId: 'other-project' }]);
     });
 
     test('Stop, Select All, and Clear Output sit beside the terminal status', async ({ page }) => {

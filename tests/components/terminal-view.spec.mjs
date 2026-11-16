@@ -1,20 +1,28 @@
-import { test, expect, openApp, mount, calls, emit, onCommand } from '../support/app.mjs';
+import { test, expect, openApp, mount, calls, onCommand, runOutput, runEnds } from '../support/app.mjs';
 
 const VIEW = '<app-terminal-view id="view" style="display:block;width:800px;height:300px"></app-terminal-view>';
 /** A view showing terminal a.ps1, which is running in a terminal unless told otherwise. */
 async function view(page, terminal = {}, state = {}) {
     await openApp(page, state);
-    await page.evaluate(terminal => {
+    await page.evaluate(async terminal => {
         const helpers = webui.proxy.terminalHelpers;
         helpers.ensureListeners();
-        helpers.getState().terminals['a.ps1'] = helpers.newTerminal('a.ps1', { status: 'Running', interactive: true, ...terminal });
+        const { status = 'Running', interactive = true, ...fields } = terminal;
+        if (status !== 'Running') {
+            helpers.getState().terminals['a.ps1'] = helpers.newTerminal('a.ps1', { status, interactive, ...fields });
+            return;
+        }
+        // A running script is one the backend runs, so its updates and its end reach the view.
+        window.__backend.handlers.spawn_script = () => ({ message: 'Script started', interactive });
+        await helpers.runScript('a.ps1', 'body', [], false, false);
+        Object.assign(helpers.getState().terminals['a.ps1'], fields);
     }, terminal);
     const root = await mount(page, VIEW);
     await page.waitForFunction(() => document.querySelector('#view')?._term);
     await page.evaluate(() => document.querySelector('#view').attach('a.ps1'));
     return root.locator('#view');
 }
-const write = (page, data, terminalId = 'a.ps1') => emit(page, 'terminal-data', { projectId: 'project-id', terminalId, data });
+const write = (page, data, terminalId = 'a.ps1') => runOutput(page, { projectId: 'project-id', terminalId, data });
 const screen = page => page.evaluate(() => document.querySelector('#view').getScreenText());
 const sent = async page => (await calls(page, 'write_terminal_input')).map(call => call.data).join('');
 
@@ -47,7 +55,7 @@ test('output kept for a terminal is shown when it is attached, and only once', a
 test('output for other terminals and projects is left out', async ({ page }) => {
     await view(page);
     await write(page, 'other\r\n', 'b.ps1');
-    await emit(page, 'terminal-data', { projectId: 'another-project', terminalId: 'a.ps1', data: 'elsewhere\r\n' });
+    await runOutput(page, { projectId: 'another-project', terminalId: 'a.ps1', data: 'elsewhere\r\n' });
     await write(page, 'mine\r\n');
     await expect.poll(() => screen(page)).toBe('mine');
 });
@@ -75,7 +83,7 @@ test('Ctrl+C without a selection stops the script, as in a terminal', async ({ p
     await expect.poll(() => sent(page)).toBe('\x03');
     // A script stopped this way failed, even when PowerShell exits with 0, so a commit waiting on it does not go ahead.
     expect(await page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].stopped)).toBe(true);
-    await emit(page, 'terminal-finished', { projectId: 'project-id', terminalId: 'a.ps1', code: 0 });
+    await runEnds(page, { projectId: 'project-id', terminalId: 'a.ps1', code: 0 });
     await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.runStatus(webui.proxy.terminalHelpers.getState().terminals['a.ps1'])?.state)).toBe('Failed');
 });
 test('replayed questions to the terminal are not answered into the script', async ({ page }) => {

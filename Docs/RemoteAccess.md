@@ -27,13 +27,13 @@ The work is in three phases:
 2. **Commands are plain functions over Tauri state,** such as `git_commit(repo, files, message, project, State<CurrentProject>, State<SharedProjects>)`. A gateway can call them with `app.state()`.
 3. **Rust has one open project** (`CurrentProject`), which most commands default to. That is why the session is shared.
 4. **Some state lives only in the desktop window's JavaScript:**
-   - terminal status, output and the script queue (`terminalHelpers` in `app.js`)
+   - terminal status, output and the script queue (`terminalHelpers` in `app.js`), now moved to Rust
    - the commit queue and Run Before Commit (top of `wc/git-manager.js`)
    - app and project data, synced to Rust as whole objects (`sync_app_data`, `sync_project_data`)
 
    A commit started from a phone must finish even if the phone loses signal, so this state moves to Rust.
 5. **Secrets reach the window today.** `get_app_data` and `get_project_data` return every value, including secret variables, `git_pat` and `github_pat`. Page scripts get their values filled in by `injectVariableValues` in `wc/page-handler.js`.
-6. **The backend sends events from three places:** `terminal-data` and `terminal-finished` in `terminal_controller.rs`, and `webui-isclosing` in `lib.rs`.
+6. **The backend sends events from a few places:** `run-changed` and `terminal-data` in `runs.rs`, and `webui-isclosing` in `lib.rs`.
 
 **MyFi accounts** (`Apis/Api`, `Apis/Databases/Postgres`, `Websites/StoicDreams`)
 
@@ -169,22 +169,20 @@ When Phase 1 ships, the app can sign in to MyFi. Scripts, the commit queue and d
 
 The desktop benefits from this as well: terminals and commits no longer depend on the window that started them.
 
-**Script runs:** a new `services/runs.rs`.
+**Script runs:** `services/runs.rs`. *Done.*
 - **Kept for each project:**
   - each terminal's name, status, exit code, start and end times, whether it was stopped, and whether it's a page script
   - the masked script it shows
-  - its output, trimmed to 2 MB at a line start, as `appendOutput` does
-  - the queue
-- **Stopping:** Ctrl+C, then force after 3 s, moves to Rust.
+  - its output in numbered batches, trimmed to 2 MB at a line start, as `appendOutput` does
+  - the queue, which runs in its project whether or not that project is open
+- **Stopping:** Ctrl+C, then force after 3 s, is in Rust. Ctrl+C typed into a terminal marks the run stopped too.
 - **Commands:**
-  - `get_runs(project?)`
-  - `get_run_output(project, terminal, sinceSeq?)`
-  - `queue_script`
-  - `stop_run`
-  - `remove_run`
-  - `remove_finished_page_scripts`
-- **Events:** `run-changed`, and `terminal-data` with `seq`.
-- **The components:** `terminalHelpers` keeps its API (`getState`, `runScript`, `runAndWait`, `getDropdownOptions`, `runStatus`) over the Rust copy, so `wc/terminals.js` and `wc/terminal-view.js` hardly change.
+  - `run_script`, which starts a script or queues it
+  - `get_runs` and `get_run_output(terminal, project, run, since)`
+  - `stop_run`, `kill_all_scripts`
+  - `clear_run_output`, `remove_run`, `remove_finished_page_scripts`
+- **Events:** `run-changed`, with a revision so a screen keeps the newest, and `terminal-data` with the run and batch number.
+- **The components:** `terminalHelpers` keeps its API (`getState`, `runScript`, `runAndWait`, `getDropdownOptions`, `runStatus`) over its copy of the Rust runs, which it loads at startup. `wc/terminals.js` only lost clearing the queue, which Rust does.
 
 **Commit jobs:** a new `services/commit_queue.rs`.
 - **A job holds:**

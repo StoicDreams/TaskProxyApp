@@ -9,8 +9,8 @@ const saved = async page => {
 async function runScript(page, index = 0) {
     await page.locator('webui-icon.run-script-btn').nth(index).click();
     await page.getByText('Trust Project & Run').click();
-    await expect.poll(async () => (await calls(page, 'start_script')).length).toBeGreaterThan(0);
-    return (await calls(page, 'start_script')).at(-1).scriptContent;
+    await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBeGreaterThan(0);
+    return (await calls(page, 'spawn_script')).at(-1).scriptContent;
 }
 const scriptPage = script => `# Title\n\nRun this\n\n\`\`\`powershell\n${script}\n\`\`\``;
 
@@ -142,15 +142,15 @@ test.describe('page scripts', () => {
         await openPage(page, scriptPage('Write-Host a'));
         await page.locator('webui-icon.run-script-btn').click();
         await expect(page.getByText('Run Script From This Project?')).toBeVisible();
-        expect(await calls(page, 'start_script')).toEqual([]);
+        expect(await calls(page, 'spawn_script')).toEqual([]);
         await dialogButton(page, 'Cancel').click();
         await page.waitForTimeout(100);
-        expect(await calls(page, 'start_script')).toEqual([]);
+        expect(await calls(page, 'spawn_script')).toEqual([]);
     });
     test('a trusted project does not ask again', async ({ page }) => {
         await openPage(page, scriptPage('Write-Host a'), { appData: { 'app-trusted-projects': ['/repo'] } });
         await page.locator('webui-icon.run-script-btn').click();
-        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
+        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
     });
     test('the trust prompt masks injected values', async ({ page }) => {
         await openPage(page, scriptPage("$secret = 'x'"), { data: { secret: 'abcdefghijkl' }, variables: ['secret|text|'] });
@@ -216,13 +216,13 @@ test.describe('page scripts', () => {
     test('a project script runs with its own terminal name', async ({ page }) => {
         await openPage(page, '<webui-data data-page-title="My Page" data-page-subtitle=""></webui-data>\n\nDeploy it\n\n```pwsh\nWrite-Host a\n```');
         await runScript(page);
-        expect((await calls(page, 'start_script')).at(-1).terminalId).toBe('Repo_My Page_Deploy it');
+        expect((await calls(page, 'spawn_script')).at(-1).terminalId).toBe('Repo_My Page_Deploy it');
     });
     test('each button runs its own block', async ({ page }) => {
         await openPage(page, '```pwsh\nWrite-Host first\n```\n\n```bash\necho skip\n```\n\n```pwsh\nWrite-Host second\n```', { appData: { 'app-trusted-projects': ['/repo'] } });
         await page.locator('webui-icon.run-script-btn').nth(1).click();
-        await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
-        expect((await calls(page, 'start_script'))[0].scriptContent).toContain('second');
+        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
+        expect((await calls(page, 'spawn_script'))[0].scriptContent).toContain('second');
     });
     test('variables set by page data apply', async ({ page }) => {
         await openPage(page, '<webui-data data-page-title="T" data-page-subtitle="" data-target="prod"></webui-data>\n\n' + scriptPage("$target = 'dev'"));

@@ -32,8 +32,8 @@ test('run saves the file and passes parameters as arguments', async ({ page }) =
     await el.locator('webui-input-text[data-param="Name"] input').fill('val');
     await el.locator('webui-toggle-icon[data-param="Force"]').click();
     await click(el, 'Run');
-    await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
-    expect((await calls(page, 'start_script'))[0]).toMatchObject({ terminalId: 'a.ps1', args: ['-Name', 'val', '-Force'] });
+    await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
+    expect((await calls(page, 'spawn_script'))[0]).toMatchObject({ terminalId: 'a.ps1', args: ['-Name', 'val', '-Force'] });
     expect((await calls(page, 'save_project_file'))[0].filePath).toBe('a.ps1');
 });
 test('an empty script does not run', async ({ page }) => {
@@ -41,13 +41,13 @@ test('an empty script does not run', async ({ page }) => {
     await setScript(el, 'a.ps1', '   ');
     await click(el, 'Run');
     await page.waitForTimeout(100);
-    expect(await calls(page, 'start_script')).toEqual([]);
+    expect(await calls(page, 'spawn_script')).toEqual([]);
 });
 test('a page script is never saved as a file, even with a dot in its name', async ({ page }) => {
     const el = await runner(page);
     for (const name of ['Repo_Page_Deploy v1.2 now', 'Repo_Page_Run deploy.ps1']) {
         await page.evaluate(name => webui.proxy.terminalHelpers.runScript(name, "$secret = 'injected'", [], false, false, true), name);
-        await page.evaluate(name => window.__backend.emit('terminal-finished', { projectId: 'project-id', terminalId: name, code: 0 }), name);
+        await page.evaluate(name => window.__backend.runs.end({ projectId: 'project-id', terminalId: name, code: 0 }), name);
         await setScript(el, name, "$secret = 'injected'");
         await click(el, 'Run');
         await page.waitForTimeout(100);
@@ -67,8 +67,8 @@ test('reset on the live terminal keeps it as the live terminal', async ({ page }
     await click(el, 'Reset');
     await el.locator('webui-input-message textarea').fill('Write-Host new');
     await click(el, 'Run');
-    await expect.poll(async () => (await calls(page, 'start_script')).length).toBe(1);
-    expect((await calls(page, 'start_script'))[0].terminalId).toBe('live');
+    await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
+    expect((await calls(page, 'spawn_script'))[0].terminalId).toBe('live');
 });
 test('reset reloads a script file', async ({ page }) => {
     const el = await runner(page, { files: { 'a.ps1': 'from disk' } });

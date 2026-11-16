@@ -9,8 +9,6 @@
     const patKeys = ['git_pat', 'github_pat'];
     // Output kept per terminal, by characters, so switching terminals can replay it.
     const maxTerminalOutput = 2 * 1024 * 1024;
-    // How long Stop waits after sending Ctrl+C before it forces the script to end.
-    const stopGraceMs = 3000;
     const terminalStates = new Map();
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
@@ -337,16 +335,25 @@
             close: () => tauri.core.invoke('close_task_manager', {}).catch(() => { }),
         }
         terminal = {
-            // project is the path of a saved project to run in, when it is not the open one, as for a queued commit.
-            start: (id, scriptContent, args, inSeparateWindow, size, project) => tauri.core.invoke('start_script', { terminalId: id, scriptContent, args, inSeparateWindow: !!inSeparateWindow, cols: size?.cols ?? null, rows: size?.rows ?? null, ...(project ? { project } : {}) }),
+            /**
+             * Starts a run in Rust, which keeps its state, output, and the queue. `project` is the path of a saved
+             * project to run in, when it is not the open one, as for a queued commit.
+             */
+            run: (args) => tauri.core.invoke('run_script', args),
+            runs: () => tauri.core.invoke('get_runs', {}),
+            /** Output after batch `since` of run `run`, or everything kept, for a screen catching up. */
+            output: (id, projectId, run, since) => tauri.core.invoke('get_run_output', { terminalId: id, projectId, run, since }),
             // projectId names the project a script runs in, when it is not the open one, as in All Running.
-            kill: (id, projectId) => tauri.core.invoke('kill_script', projectId ? { terminalId: id, projectId } : { terminalId: id }),
+            stop: (id, projectId) => tauri.core.invoke('stop_run', projectId ? { terminalId: id, projectId } : { terminalId: id }),
             killAll: () => tauri.core.invoke('kill_all_scripts', {}),
+            clear: (id, projectId) => tauri.core.invoke('clear_run_output', projectId ? { terminalId: id, projectId } : { terminalId: id }),
+            remove: (id, projectId) => tauri.core.invoke('remove_run', projectId ? { terminalId: id, projectId } : { terminalId: id }),
+            removeFinishedPageScripts: () => tauri.core.invoke('remove_finished_page_scripts', {}),
             /** Typed input, including control keys such as Ctrl+C, for a script running in a terminal. */
             write: (id, data, projectId) => tauri.core.invoke('write_terminal_input', projectId ? { terminalId: id, data, projectId } : { terminalId: id, data }),
             resize: (id, cols, rows, projectId) => tauri.core.invoke('resize_terminal', projectId ? { terminalId: id, cols, rows, projectId } : { terminalId: id, cols, rows }),
             onData: (callback) => tauri.event.listen('terminal-data', callback),
-            onFinished: (callback) => tauri.event.listen('terminal-finished', callback),
+            onRunChanged: (callback) => tauri.event.listen('run-changed', callback),
             getPowerShellStatus: (errHandler) => tauri.core.invoke('get_powershell_status', {}).catch(errHandler ?? defaultErrHandler),
             autoInstallPowerShell: (errHandler) => tauri.core.invoke('auto_install_powershell', {}).catch(errHandler ?? defaultErrHandler)
         }
@@ -546,9 +553,12 @@
         }
         terminalHelpers = {
             _listenersAttached: false,
+            /** What runAndWait waits for, by run number. */
+            _waits: new Map(),
             /**
-             * Terminal state for a project. Kept out of webui data because every setData
-             * clones and compares its value, which grows with the amount of script output.
+             * A copy of the runs Rust keeps for a project (`services/runs.rs`), which the `run-changed` and
+             * `terminal-data` events keep current. Which terminal is shown is this screen's own. Kept out of webui
+             * data because every setData clones and compares its value, which grows with the amount of output.
              */
             getState(projectId) {
                 const id = projectId ?? webui.projectData?.id ?? '';
@@ -556,7 +566,6 @@
                     terminalStates.set(id, {
                         activeId: 'live',
                         allScripts: [],
-                        queue: [],
                         terminals: {
                             'live': this.newTerminal('live', { name: 'Live Command' })
                         }
@@ -566,7 +575,7 @@
             },
             /** Output is kept as the text the script wrote, colors and cursor movement included. */
             newTerminal(id, fields) {
-                return { id: id, name: id, status: 'Ready', script: '', output: [], outputSize: 0, interactive: false, isLive: id === 'live', ...fields };
+                return { id: id, name: id, status: 'Ready', script: '', output: [], outputSize: 0, interactive: false, isLive: id === 'live', run: 0, rev: 0, seq: 0, cleared: 0, ...fields };
             },
             /** The size of the terminal view, so scripts start at the width they will be shown at. */
             viewSize: null,
@@ -588,122 +597,115 @@
                 term.outputSize -= first.length - trimmed.length;
                 term.output[0] = trimmed;
             },
-            /**
-             * Asks a running script to stop the way Ctrl+C does in a terminal, and forces it to end if it is
-             * still running after a few seconds. Scripts without a terminal are ended straight away.
-             */
-            async stopScript(id, projectId) {
-                const state = this.getState(projectId);
-                const term = state.terminals[id];
-                if (!term || term.status !== 'Running') return;
-                // A stopped script failed, whatever exit code Ctrl+C or the kill leaves it with.
-                term.stopped = true;
-                const other = this.otherProject(projectId);
-                const forceStop = () => webui.proxy.terminal.kill(id, other).catch(() => {
-                    // The finished event updates the status and starts the next queued script.
-                    this._scriptFinished(id, projectId);
+            /** Brings this screen's copy of a run up to date. An update older than the copy is ignored. */
+            applyRun(info) {
+                if (!info?.id) return null;
+                const state = this.getState(info.projectId);
+                let term = state.terminals[info.id];
+                if (term && term.rev > info.rev) return term;
+                term ??= state.terminals[info.id] = this.newTerminal(info.id);
+                const newRun = term.run !== info.run;
+                const cleared = term.cleared !== info.cleared;
+                Object.assign(term, {
+                    name: info.name, status: info.status, exitCode: info.exitCode ?? null, stopped: !!info.stopped,
+                    startedAt: info.startedAt, endedAt: info.endedAt ?? null, isPageScript: !!info.isPageScript,
+                    isLive: !!info.isLive, script: info.script ?? '', args: info.args || [], interactive: !!info.interactive,
+                    projectId: info.projectId, projectName: info.projectName, run: info.run, rev: info.rev, cleared: info.cleared,
                 });
-                if (!term.interactive) return forceStop();
-                const sent = await webui.proxy.terminal.write(id, '\x03', other).then(() => true, () => false);
-                if (!sent) return forceStop();
-                for (let waited = 0; waited < stopGraceMs && term.status === 'Running'; waited += 100) {
-                    await webui.wait(100);
+                if (newRun) term.seq = 0;
+                if (newRun || cleared) this._clearCopy(term, info.projectId);
+                if (!term.isPageScript && !term.isLive && !state.allScripts.includes(term.id)) state.allScripts.push(term.id);
+                if (term.status === 'Finished') {
+                    const resolve = this._waits.get(term.run);
+                    this._waits.delete(term.run);
+                    resolve?.(term.stopped ? null : term.exitCode);
                 }
-                if (term.status === 'Running') return forceStop();
+                webui.setData('app-terminal-refresh', Date.now());
+                return term;
+            },
+            _clearCopy(term, projectId) {
+                term.output = [];
+                term.outputSize = 0;
+                webui.setData('app-terminal-cleared', { terminalId: term.id, projectId: this.otherProject(projectId), tick: Date.now() });
+            },
+            _removeCopy(projectId, terminalId) {
+                const state = this.getState(projectId);
+                const term = state.terminals[terminalId];
+                if (!term || term.isLive || term.status === 'Running') return;
+                delete state.terminals[terminalId];
+                if (state.activeId === terminalId) state.activeId = 'live';
+                webui.setData('app-terminal-refresh', Date.now());
             },
             /**
-             * `displayScript` is what the Terminal Manager shows. Page scripts pass a copy with
-             * injected values masked, since what runs can contain secrets.
+             * Fetches the output this screen is missing, such as after it reloads, or when a batch was missed.
+             * Batches that arrive meanwhile are covered by fetching again.
+             */
+            async catchUp(term, projectId) {
+                if (term._catchingUp) {
+                    term._catchUpAgain = true;
+                    return;
+                }
+                term._catchingUp = true;
+                try {
+                    do {
+                        term._catchUpAgain = false;
+                        const run = term.run;
+                        const missing = await webui.proxy.terminal.output(term.id, projectId, run, term.seq || null).catch(() => null);
+                        if (!missing || missing.run !== term.run || run !== term.run) continue;
+                        if (missing.reset) {
+                            term.output = [];
+                            term.outputSize = 0;
+                            if (missing.data) this.appendOutput(term, missing.data);
+                            term.seq = missing.seq;
+                            webui.setData('app-terminal-cleared', { terminalId: term.id, projectId: this.otherProject(projectId), tick: Date.now() });
+                        } else if (missing.seq > term.seq) {
+                            if (missing.data) this.appendOutput(term, missing.data);
+                            term.seq = missing.seq;
+                            if (missing.data) document.dispatchEvent(new CustomEvent('term-data', { detail: { projectId, terminalId: term.id, data: missing.data } }));
+                        }
+                    } while (term._catchUpAgain);
+                } finally {
+                    term._catchingUp = false;
+                }
+            },
+            /** Asks Rust to stop a run: Ctrl+C for a script in a terminal, forced after a few seconds if it keeps running. */
+            async stopScript(id, projectId) {
+                const term = this.getState(projectId).terminals[id];
+                if (!term || term.status !== 'Running') return;
+                await webui.proxy.terminal.stop(id, this.otherProject(projectId)).catch(err => webui.alert(err));
+            },
+            /**
+             * Runs a script in a terminal of the open project, resolving with Started, or Queued when `useQueue` has it
+             * wait for what is running. `displayScript` is what the Terminal Manager shows. Page scripts pass a copy
+             * with injected values masked, since what runs can contain secrets.
              */
             async runScript(id, scriptContent, args, inSeparateWindow, useQueue, isPageScript, displayScript) {
-                let state = this.getState();
-                if (state.terminals[id] && state.terminals[id].status === 'Running') {
-                    throw 'Script is already running. You can manage it in the Terminal Manager.';
-                }
-                if (useQueue) {
-                    let isRunning = Object.values(state.terminals).some(t => t.status === 'Running');
-                    if (isRunning) {
-                        state.queue.push({ id, scriptContent, args, inSeparateWindow, isPageScript, displayScript });
-                        return 'Queued';
-                    }
-                }
-                return await this._executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript);
+                return (await this._start(id, scriptContent, args, inSeparateWindow, useQueue, isPageScript, displayScript)).result;
             },
             /** `project`, as `{ id, path, name }`, runs it in another saved project, kept with that project's terminals. */
-            async _executeScript(id, scriptContent, args, inSeparateWindow, isPageScript, displayScript, project) {
+            async _start(id, scriptContent, args, inSeparateWindow, queue, isPageScript, displayScript, project) {
+                this.ensureListeners();
                 const other = project && this.otherProject(project.id) ? project : null;
-                let state = this.getState(other?.id);
-                if (!state.terminals[id]) {
-                    state.terminals[id] = this.newTerminal(id, { args: args, isPageScript: !!isPageScript });
-                } else {
-                    state.terminals[id].isPageScript = !!isPageScript;
-                }
-                state.terminals[id].interactive = false;
-                state.terminals[id].status = 'Running';
-                state.terminals[id].script = displayScript ?? scriptContent;
-                state.terminals[id].exitCode = null;
-                state.terminals[id].stopped = false;
-                state.terminals[id].startedAt = Date.now();
-                state.terminals[id].endedAt = null;
-                // So All Running can name the project a script runs in, after the user switches to another.
-                state.terminals[id].projectId = other ? other.id : webui.projectData?.id ?? '';
-                state.terminals[id].projectName = other ? other.name || other.path : webui.getData('app-current-project')?.display || webui.projectData?.path || '';
-                // Settles with the exit code when this run ends. Made before starting, since a short script can end first.
-                state.terminals[id].finished = new Promise(resolve => state.terminals[id]._resolveFinished = resolve);
-                if (!state.allScripts.includes(id) && id !== 'live' && !isPageScript) {
-                    state.allScripts.push(id);
-                }
-                this.clearOutput(id, other?.id);
-                webui.setData('app-terminal-refresh', Date.now());
-                try {
-                    const started = await webui.proxy.terminal.start(id, scriptContent, args, inSeparateWindow, this.viewSize, other?.path);
-                    state.terminals[id].interactive = !!started?.interactive;
-                    webui.setData('app-terminal-refresh', Date.now());
-                    if (inSeparateWindow) {
-                        this._scriptFinished(id, other?.id);
-                    }
-                    return 'Started';
-                } catch (err) {
-                    this._scriptFinished(id, other?.id);
-                    throw err;
-                }
-            },
-            /** `code` is the exit code, or null when the script was stopped or its exit code is unknown. */
-            _scriptFinished(id, projectId, code) {
-                let state = this.getState(projectId);
-                const term = state.terminals[id];
-                if (term) {
-                    term.status = 'Finished';
-                    term.exitCode = Number.isInteger(code) ? code : null;
-                    term.endedAt = Date.now();
-                    // A stopped script failed, even when PowerShell exits with 0 after Ctrl+C.
-                    term._resolveFinished?.(term.stopped ? null : term.exitCode);
-                    term._resolveFinished = null;
-                    webui.setData('app-terminal-refresh', Date.now());
-                }
-                this.runNextQueued();
+                const started = await webui.proxy.terminal.run({
+                    terminalId: id, scriptContent, args: args || [], inSeparateWindow: !!inSeparateWindow,
+                    cols: this.viewSize?.cols ?? null, rows: this.viewSize?.rows ?? null,
+                    ...(other ? { project: other.path } : {}),
+                    queue: !!queue, isPageScript: !!isPageScript, ...(displayScript !== undefined ? { displayScript } : {}),
+                });
+                if (started?.run) this.applyRun(started.run);
+                return started || { result: 'Started', run: null };
             },
             /**
              * Runs a script now and resolves with its exit code once it ends, or null when it was stopped.
              * Throws when it cannot start, such as when the same terminal is already running a script.
              */
             async runAndWait(id, scriptContent, displayScript, project) {
-                const other = project && this.otherProject(project.id) ? project : null;
-                const state = this.getState(other?.id);
-                if (state.terminals[id]?.status === 'Running') {
-                    throw 'Script is already running. You can manage it in the Terminal Manager.';
-                }
-                await this._executeScript(id, scriptContent, [], false, false, displayScript, other);
-                return state.terminals[id].finished;
-            },
-            /** Scripts run in the open project, so another project's queue waits until it reopens. */
-            runNextQueued() {
-                let state = this.getState();
-                if (Object.values(state.terminals).some(t => t.status === 'Running')) return;
-                let next = state.queue.shift();
-                if (next) {
-                    this._executeScript(next.id, next.scriptContent, next.args || [], next.inSeparateWindow, next.isPageScript, next.displayScript).catch(err => webui.alert(err, 'danger'));
-                }
+                const started = await this._start(id, scriptContent, [], false, false, false, displayScript, project);
+                const info = started.run;
+                if (!info) return null;
+                const term = this.getState(info.projectId).terminals[info.id];
+                if (term?.run === info.run && term.status === 'Finished') return term.stopped ? null : term.exitCode;
+                return new Promise(resolve => this._waits.set(info.run, resolve));
             },
             /**
              * How a terminal's last run went: `state` is Running, Finished, or Failed, and `elapsed` is how long it ran,
@@ -726,37 +728,54 @@
                 const hours = Math.floor(ms / 3600000);
                 return `${pad(hours)}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
             },
-            /** Forget a terminal and its output. Running scripts and the live terminal are kept. */
+            /** Forget a terminal and its output, on every screen. Running scripts and the live terminal are kept. */
             removeTerminal(id, projectId) {
                 let state = this.getState(projectId);
                 const term = state.terminals[id];
                 if (!term || term.isLive || term.status === 'Running') return false;
                 delete state.terminals[id];
                 if (state.activeId === id) state.activeId = 'live';
+                if (term.run) webui.proxy.terminal.remove(id, this.otherProject(projectId)).catch(() => { });
                 return true;
             },
-            /** Forget every page script that is not running. Returns how many were removed. */
+            /** Forget every page script that is not running, on every screen. Returns how many were removed. */
             removeFinishedPageScripts() {
                 let state = this.getState();
-                return Object.values(state.terminals)
-                    .filter(term => term.isPageScript && term.status !== 'Running')
-                    .filter(term => this.removeTerminal(term.id))
-                    .length;
+                const ids = Object.values(state.terminals)
+                    .filter(term => term.isPageScript && !term.isLive && term.status !== 'Running')
+                    .map(term => term.id);
+                ids.forEach(id => {
+                    delete state.terminals[id];
+                    if (state.activeId === id) state.activeId = 'live';
+                });
+                if (ids.length) webui.proxy.terminal.removeFinishedPageScripts().catch(() => { });
+                return ids.length;
             },
+            /** Listens for run updates and output, and loads the runs Rust already has, such as after a reload. */
             ensureListeners() {
                 if (this._listenersAttached || !webui.proxy?.terminal) return;
                 this._listenersAttached = true;
+                webui.proxy.terminal.onRunChanged((event) => {
+                    const { projectId, terminalId, run } = event.payload || {};
+                    if (run) this.applyRun(run);
+                    else this._removeCopy(projectId, terminalId);
+                });
                 webui.proxy.terminal.onData((event) => {
                     const data = event.payload;
                     const term = this.getState(data.projectId).terminals[data.terminalId];
-                    if (!term || typeof data.data !== 'string') return;
+                    if (!term || typeof data.data !== 'string' || data.run !== term.run || data.seq <= term.seq) return;
+                    // A batch is missing, so fetch everything after the last one this screen has.
+                    if (data.seq !== term.seq + 1 || term._catchingUp) return this.catchUp(term, data.projectId);
+                    term.seq = data.seq;
                     this.appendOutput(term, data.data);
                     document.dispatchEvent(new CustomEvent('term-data', { detail: data }));
                 });
-                webui.proxy.terminal.onFinished((event) => {
-                    const data = event.payload;
-                    this._scriptFinished(data.terminalId, data.projectId, data.code);
-                });
+                Promise.resolve(webui.proxy.terminal.runs()).then(runs => {
+                    (runs || []).forEach(info => {
+                        const term = this.applyRun(info);
+                        if (term && term.run === info.run && !term.seq) this.catchUp(term, info.projectId);
+                    });
+                }).catch(() => { });
             },
             /**
              * The Terminal Manager's views, for its switch: the live terminal, saved scripts, this project's page
@@ -832,13 +851,13 @@
                 }
                 return options;
             },
+            /** Empties a terminal's output, on every screen. */
             clearOutput(id, projectId) {
                 let state = this.getState(projectId);
-                if (state.terminals[id]) {
-                    state.terminals[id].output = [];
-                    state.terminals[id].outputSize = 0;
-                    webui.setData('app-terminal-cleared', { terminalId: id, projectId: this.otherProject(projectId), tick: Date.now() });
-                }
+                const term = state.terminals[id];
+                if (!term) return;
+                this._clearCopy(term, projectId);
+                if (term.run) webui.proxy.terminal.clear(id, this.otherProject(projectId)).catch(() => { });
             }
         }
     }
@@ -850,6 +869,8 @@
         webui._appSettings.isDesktopApp = true;
         webui.proxy = new Tauri();
         tauri.event.listen('webui-isclosing', event => webui.isclosing(event.payload));
+        // Rust keeps the runs, so a window that reloads still shows what is running and what it wrote.
+        webui.proxy.terminalHelpers.ensureListeners();
         // A failure has already been shown. Carrying on with blank data could overwrite what was saved.
         let data = await webui.proxy.getAppData();
         if (!data) return;
@@ -1055,7 +1076,6 @@
             webui.proxy.projects.setLoaded(!!webui.projectData.id);
             // Plugins' settings belong to projects, so their pages and notifications change with the project.
             refreshPluginNav();
-            webui.proxy.terminalHelpers.runNextQueued();
             webui.setData('app-nav-routes', webui.projectData.navigation);
             let startPage = webui.projectData.currentPage || '/';
             setTimeout(() => {

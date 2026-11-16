@@ -108,14 +108,14 @@ export async function parkMouse(page, x = 820, y = 520) {
 }
 
 /**
- * Makes start_script play back the given output, as a running script would. Each step is text to write,
+ * Makes each script the backend starts play back the given output, as a running script would. Each step is text to write,
  * `{ wait }` milliseconds to pause, or `{ prompt }` to wait until something is typed and Enter is pressed.
  * Typed keys are echoed, as a terminal does.
  */
 export async function scriptOutput(page, steps, { code = 0 } = {}) {
     await page.evaluate(({ steps, code }) => {
         const backend = window.__backend;
-        const emit = (terminalId, data) => backend.emit('terminal-data', { projectId: webui.projectData.id, terminalId, data });
+        const emit = (terminalId, data) => backend.runs.write({ projectId: webui.projectData.id, terminalId, data });
         let waiting = null;
         backend.handlers.write_terminal_input = ({ terminalId, data }) => {
             if (!waiting || waiting.terminalId !== terminalId) return null;
@@ -132,7 +132,7 @@ export async function scriptOutput(page, steps, { code = 0 } = {}) {
             }
             return null;
         };
-        backend.handlers.start_script = ({ terminalId }) => {
+        backend.handlers.spawn_script = ({ terminalId }) => {
             (async () => {
                 for (const step of steps) {
                     if (typeof step === 'string') {
@@ -145,7 +145,7 @@ export async function scriptOutput(page, steps, { code = 0 } = {}) {
                         await new Promise(resume => { waiting = { terminalId, resume }; });
                     }
                 }
-                backend.emit('terminal-finished', { projectId: webui.projectData.id, terminalId, code });
+                backend.runs.end({ projectId: webui.projectData.id, terminalId, code });
             })();
             return { message: 'Script started', interactive: true };
         };
