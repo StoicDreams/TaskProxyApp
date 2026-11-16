@@ -9,7 +9,7 @@
             const t = this;
             t.setAttribute('title', 'Save Project & App Data');
             makeButton(t);
-            let icon = webui.create('webui-icon', { theme: 'success', 'icon': 'save|fill' });
+            let icon = webui.create('webui-icon', { icon: 'save|theme:success|fill|backing|bordered' });
             t.appendChild(icon);
             function saveProject() {
                 if (isSavingProject) return;
@@ -43,7 +43,11 @@
         shadowTemplate: `
 <style type="text/css">
 :host {
+display:inline-flex;
 cursor:pointer;
+padding:1px;
+align-items:center;
+justify-content:center;
 }
 </style>
 <slot></slot>

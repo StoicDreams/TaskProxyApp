@@ -12,3 +12,17 @@ test('with no project it only saves app data', async ({ page }) => {
     await expect.poll(async () => (await calls(page, 'save_app_data')).length).toBeGreaterThan(0);
     expect(await calls(page, 'save_project_data')).toEqual([]);
 });
+test('its icon lines up with the other header buttons', async ({ page }) => {
+    await openApp(page);
+    const middle = async selector => {
+        const box = await page.locator(`header ${selector} webui-icon`).first().boundingBox();
+        return box.y + box.height / 2;
+    };
+    await expect(page.locator('header app-save-button webui-icon')).toBeVisible();
+    await expect(page.locator('header app-task-manager webui-icon').first()).toBeVisible();
+    await expect.poll(async () => Math.abs(await middle('app-save-button') - await middle('app-task-manager'))).toBeLessThan(1);
+});
+test('its icon has the backing and border of the other header buttons', async ({ page }) => {
+    await openApp(page);
+    await expect(page.locator('header app-save-button webui-icon')).toHaveAttribute('icon', 'save|theme:success|fill|backing|bordered');
+});

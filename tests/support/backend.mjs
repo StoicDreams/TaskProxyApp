@@ -36,6 +36,9 @@
  * - processes: what list_processes lists, as [{ pid, parent, name, command, exe, folder, started, cpu, memory, status,
  *   ports, terminal, orphan, taskProxy, project }]. stop_process removes a process, and its children when asked,
  *   unless stopErrors: { pid: message } names it.
+ * - myfi: { account } for the MyFi account the app is signed in to, as { id, displayName, offline }, or leave
+ *   it out for signed out. myfi_sign_in_wait waits until a test calls window.__backend.myfi.approve(account) or
+ *   .end(reason), or the app cancels. myfiStartError: why myfi_sign_in_start fails, when it should.
  *
  * Other projects in `projects` start with empty data. Saved and synced project data is kept by path,
  * as the backend does, so switching projects and back returns what was saved.
@@ -78,8 +81,22 @@ function setup(state) {
         return [id, { hasProject: true, signIn: used ? 'sign-in-1' : null, settings: view, signIns: used ? [{ id: 'sign-in-1', label: 'Saved sign-in', projects: 1 }] : [] }];
     }));
     const listeners = {};
+    const myfi = {
+        account: state.myfi?.account ? { offline: false, ...state.myfi.account } : null,
+        waiting: null,
+        approve(account) {
+            this.account = { offline: false, ...account };
+            this.waiting?.resolve(this.account);
+            this.waiting = null;
+        },
+        end(reason) {
+            this.waiting?.reject(reason);
+            this.waiting = null;
+        },
+    };
     const backend = {
         calls: [],
+        myfi,
         files,
         git,
         projectData,
@@ -264,6 +281,21 @@ function setup(state) {
             plugin_branch_info: () => state.branchCards || [],
             plugin_notifications: () => state.pluginNotifications || [],
             plugin_notification_read: () => null,
+            myfi_account: () => myfi.account,
+            myfi_sign_in_start: () => {
+                if (state.myfiStartError) throw state.myfiStartError;
+                return { code: 'M7A-JQF', url: 'https://www.stoicdreams.com/signin?app=taskproxy&request=3160d8e4-e8dd-43c7-a397-43b17ef46cbc' };
+            },
+            myfi_sign_in_wait: () => new Promise((resolve, reject) => { myfi.waiting = { resolve, reject }; }),
+            myfi_sign_in_cancel: () => {
+                myfi.waiting?.resolve(null);
+                myfi.waiting = null;
+                return null;
+            },
+            myfi_sign_out: () => {
+                myfi.account = null;
+                return null;
+            },
             plugin_host_action: ({ action }) => action.type === 'git.createBranch' ? `Branch '${action.name}' created.` : '',
         },
     };
@@ -278,7 +310,8 @@ function setup(state) {
             },
         },
         event: { listen: async (name, listener) => { (listeners[name] ??= []).push(listener); } },
-        opener: { openUrl: async () => { } },
+        // Recorded as calls, so tests can check what the app opened in the browser.
+        opener: { openUrl: async url => { backend.calls.push({ command: 'openUrl', args: { url } }); } },
         dialog: { open: async () => state.pickedFolder ?? null },
     };
 }

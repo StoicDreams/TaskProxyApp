@@ -51,7 +51,7 @@ The work is in three phases:
 
    The code only works for the same `mach_id` (a hash of IP address and user agent) that asked for it, and a desktop app has a different user agent from your browser. So the app needs its own approval flow (1.1).
 10. **TaskProxy.com already has MyFi sign-in** (`webui-myfi-info` in its `index.html`). That gives it a site session for `www.taskproxy.com`, as a partitioned cookie on api.myfi.ws.
-11. **api.myfi.ws is warp 0.3** with one request/response handler (`handle_methods` in `api_service/src/main.rs`), and no WebSockets. Signaling fits that as mailboxes read by long-polling.
+11. **A new api.myfi.ws endpoint is a new SQL function.** The dynamic handler (`dyn_api.rs`) names the function from the path and fills its arguments from the request, so signaling is mailboxes in SQL that both sides poll.
 
 **TaskProxy.com**
 
@@ -111,7 +111,7 @@ When Phase 1 ships, the app can sign in to MyFi. Scripts, the commit queue and d
 ### 1.1 MyFi sign-in for the app
 
 **Database** (`Apis/Databases/Postgres`):
-- **Register the app:** an `identity.Apps` row for Task Proxy. Its `key` is the app's `x-app` value. It's an identifier, not a secret, since it ships inside the app.
+- **Apps are a MyFi service,** like domains: any account adds apps to its own companies on myfi.ws's Apps page (`/user/app*` functions). Task Proxy is added to the Stoic Dreams company there, and its key, the `x-app` value, goes into the app. It's an identifier, not a secret, since it ships inside the app.
 - **Fix `identity.StartRequest`:** for app sessions, build the user's details from `tokens.AppSessions`, not `tokens.SiteSessions`.
 - **Session expiry:** add an `expires` column to `tokens.AppSessions`, 90 days, extended on each use. `StartRequest` ignores expired sessions.
 - **New `tokens.AppSigninRequests`:**
@@ -155,7 +155,7 @@ When Phase 1 ships, the app can sign in to MyFi. Scripts, the commit queue and d
     2. Opens `https://www.stoicdreams.com/signin?app=taskproxy&request=<id>` in the default browser.
     3. Returns the user code to show.
   - `myfi_sign_in_wait`: polls collect every 2 s until approved, cancelled, or expired.
-  - `myfi_account` returns the display name, email, and account id from `user/myinfo`, or nothing when signed out.
+  - `myfi_account` returns the account id and display name from `app/account`, or nothing when signed out. Apps belong to client companies, so they never get the user's email.
   - `myfi_sign_out` ends the session.
 - **The session token** is kept in the OS keychain with `keyring`, like the security key. It never reaches the window. Every MyFi call goes through Rust, with `x-app` and `x-auth`.
 - **Header button:** a new `wc/account.js` (`app-account`).
@@ -281,32 +281,36 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 ### 2.1 Desktops and mailboxes in api.myfi.ws
 
-**A new crate, such as `api_remote`,** routed from `handle_methods` in `api_service` (`"remote" => api_remote::handle_methods(request)`). It uses only request/response.
+**Everything is SQL functions behind the dynamic API handler,** like every other MyFi endpoint: no Rust crate. Rust in the API is only for the shared request handling, and none is needed here.
 
-**Database:** `remote.Desktops` (`desktop_id`, `user_id`, `name`, `public_key`, `last_seen`, `created`).
+**Tables:** `remote.Desktops` (`desktop_id`, `user_id`, `app_id`, `name`, `public_key`, `last_seen`, `created`) and `remote.Messages` (`id`, `mailbox`, `from_user_id`, `body`, `expires`). Messages last seconds, and a function deletes them as it reads them.
 
-**Endpoints:**
+**Endpoints.** dyn_api names a function from the path, so ids go in the body or query string, never in the path:
 
-| Endpoint | Who | What |
-|---|---|---|
-| `POST remote/desktop/register` | The desktop app's session | Registers or updates this desktop (name, public key) under its account. Returns `desktop_id`. |
-| `DELETE remote/desktop/{id}` | The owner, from the app or the site | Removes the desktop |
-| `GET remote/desktops` | taskproxy.com's session | Your desktops: name, key fingerprint, and whether each is online (polled in the last 60 s) |
-| `POST remote/desktop/{id}/mailbox` | taskproxy.com's session for the **same account** as the desktop | Leaves a message, with a reply mailbox id. Refused (403) for any other account. Delivered with the sender's account id. |
-| `GET remote/desktop/{id}/mailbox?wait=25` | The desktop's own app session | Waits up to 25 s for messages. Also marks the desktop online. |
-| `POST remote/reply/{reply_id}` and `GET remote/reply/{reply_id}?wait=25` | The desktop posts, and the phone reads with the same account's session | The desktop's replies. The id is random for each attempt. |
-| `GET remote/turn` | Either side, signed in | Short-lived coturn credentials, only if TURN is added |
+| Endpoint | Function | Who | What |
+|---|---|---|---|
+| `POST remote/desktop/register` | `api_post_remote_desktop_register` | An app's session (`p_request_app_id`, `p_user_id`) | Registers or updates this desktop (name, public key) under its account. Returns `desktopId`. |
+| `DELETE remote/desktop` | `api_delete_remote_desktop` | The owner, from the app or `www.taskproxy.com` | Removes the desktop and its messages |
+| `GET remote/desktops` | `api_get_remote_desktops` | `www.taskproxy.com`, signed in | Your desktops: name, key fingerprint, and whether each is online (checked in the last 60 s) |
+| `POST remote/message/send` | `api_post_remote_message_send` | `www.taskproxy.com`, signed in to the **same account** as the desktop | Leaves a message for the desktop, with a reply mailbox id. Refused (403) for any other account, and stored with the sender's account id. |
+| `POST remote/messages` | `api_post_remote_messages` | The desktop's own app session | Returns and deletes its waiting messages, with each sender's account id. Also marks the desktop online. |
+| `POST remote/reply/send` and `POST remote/replies` | `api_post_remote_reply_send`, `api_post_remote_replies` | The desktop sends, and the phone reads with the same account's session | The desktop's replies. The reply id is random for each attempt. |
+| `GET remote/turn` | `api_get_remote_turn` | Either side, signed in | Short-lived coturn credentials, only if TURN is added. HMAC in SQL needs the `pgcrypto` extension. |
 
-**Limits:**
+**Polling, not long-polling.** A function call returns at once and doesn't hold a database connection open, so both sides poll:
+- The desktop polls every 10 s while Remote Access is on, and every 1 s while a connection is being set up.
+- The phone polls its reply mailbox every 1 s while connecting.
+- So a connection starts within about 10 s. If that's too slow, the exception would be a small, general wait in the shared request handling, not a remote-only service. Decide that from use.
+
+**Limits, in the functions:**
 - Each message is at most 16 KB, at most 20 wait at once, and each is dropped after 60 s.
-- Posts are limited per account and per IP address.
-- Messages are kept in memory, since they last seconds; desktops are in the database. Confirm the API runs as one instance, or keep messages in the database too.
+- Sends are limited per account and per `mach_id`.
 
 **What the API can't do:** read or change the messages. Every message is a Noise message, so it can't read, forge or take over a connection, only refuse one.
 
-**Origins:**
-- Mailbox and desktop endpoints accept `www.taskproxy.com` and the app (`agent:taskproxy` with `x-app`).
-- Desktop registration accepts only the app.
+**Origins:** each function checks its own, as `@origin` requires.
+- Site endpoints: `@origin: www.taskproxy.com`.
+- App endpoints: `@origin: any`, refusing calls without an app (`p_request_app_id` of 0).
 
 **STUN:** run your own (coturn does this) rather than a third party's.
 
@@ -316,7 +320,7 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 **Turning it on:**
 1. If you're signed out, the switch has you sign in first.
-2. Turning it on registers the desktop and starts long-polling its mailbox: one request, renewed every 25 s.
+2. Turning it on registers the desktop and starts polling its mailbox every 10 s.
 3. It asks the OS not to sleep: systemd-inhibit on Linux, an IOPMAssertion on macOS, `SetThreadExecutionState` on Windows.
 4. A setting turns it off after a number of hours with no connection.
 
@@ -526,5 +530,5 @@ Each item opens the right screen.
 - **Moving state to Rust** touches the Git Controller, the Terminal Manager, and the Variables panel.
 - **Some phone networks block direct connections,** which settles the TURN decision.
 - **The iframe and service worker approach** depends on the Web UI loader working under a path. That's the spike, with a subdomain as the fallback.
-- **Messages in memory** assume one API instance.
+- **Polling** makes a connection start within about 10 s, and costs one small request every 10 s per desktop with Remote Access on.
 - **iOS can drop a site's storage.** Recommend the Home Screen, and make pairing again quick.

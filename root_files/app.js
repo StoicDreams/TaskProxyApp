@@ -310,6 +310,20 @@
                 }
             }
         }
+        /**
+         * The MyFi account Task Proxy is signed in to, approved in the user's browser on StoicDreams.com. The session
+         * stays in the backend and the OS keychain, so the window only ever sees the account's id and name.
+         */
+        myfi = {
+            /** { id, displayName, offline }, or null when signed out. offline means it is the saved account. */
+            account: () => tauri.core.invoke('myfi_account').catch(() => null),
+            /** Opens the approval page in the browser, and resolves with { code, url }: the code it should show. */
+            signInStart: (err) => tauri.core.invoke('myfi_sign_in_start').catch(err ?? defaultErrHandler),
+            /** Resolves with the account once approved, or null when cancelled. Rejects with why the sign-in ended. */
+            signInWait: () => tauri.core.invoke('myfi_sign_in_wait'),
+            signInCancel: () => tauri.core.invoke('myfi_sign_in_cancel').catch(() => { }),
+            signOut: (err) => tauri.core.invoke('myfi_sign_out').then(() => true).catch(err ?? defaultErrHandler),
+        }
         /** The Task Manager: the user's own processes, read only while it is open. */
         taskManager = {
             /** Lists processes, with the ports each listens on when `ports` is set, which takes longer to read. */

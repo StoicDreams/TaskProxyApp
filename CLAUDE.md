@@ -82,6 +82,8 @@ To add a backend command:
 
 Wrappers usually take an optional `errHandler` (default: `webui.alert`) and resolve to `undefined` on failure, so callers test the result rather than using `try/catch`. CI results for the dropdowns' icons come from `services/ci_status.rs`, which asks each Git server's API about the commit a branch last pushed; GitHub Actions and GitLab CI/CD (gitlab.com, or self-hosted servers named `gitlab.*`) are supported, and adding a server is one `CiServer` variant. Git commands go through `invokeGit`, which matches the error text `Credentials Missing/Invalid` to prompt for a PAT and retry. Terminal output arrives through the `terminal-data` and `terminal-finished` events.
 
+**MyFi sign-in** (`services/myfi.rs`, the header's `app-account`) signs the app in to a Stoic Dreams account, which Remote Access needs (`Docs/RemoteAccess.md`). The app starts a sign-in on api.myfi.ws, opens StoicDreams.com in the user's browser to approve it with a code shown on both, then collects its session with a secret only it holds. The session stays in Rust and the OS keychain, and every MyFi call goes through Rust with `x-app` and `x-auth`; the window only gets the account's id and name. Apps belong to client companies, so MyFi never gives them the user's email.
+
 ### Frontend: lazy-loaded components
 
 - A `MutationObserver` in the loader sees `app-foo` and loads `wc/foo.min.js`, and sees `webui-foo` and loads it from the CDN. Components are defined with `webui.define(name, {...})` (see `wc/template.js`). `preload: 'app:foo bar'` loads dependencies early.
