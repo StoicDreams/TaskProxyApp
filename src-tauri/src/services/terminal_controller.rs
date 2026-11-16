@@ -425,6 +425,7 @@ fn spawn_in_pty(
     args: &[String],
     working_dir: &Path,
     size: PtySize,
+    env: &[(String, String)],
 ) -> Result<PtyProcess, String> {
     let pair = native_pty_system()
         .openpty(size)
@@ -444,6 +445,9 @@ fn spawn_in_pty(
     cmd.cwd(working_dir);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    for (name, value) in env {
+        cmd.env(name, value);
+    }
     #[cfg(target_os = "linux")]
     cmd.env_remove("LD_LIBRARY_PATH");
     let child = pair
@@ -518,6 +522,7 @@ pub(crate) async fn spawn_script(
     target: &RunTarget,
     run: u64,
     request: &RunRequest,
+    env: &[(String, String)],
 ) -> Result<ScriptStarted, String> {
     let terminal_id = request.terminal_id.clone();
     let script_content = &request.script_content;
@@ -541,7 +546,9 @@ pub(crate) async fn spawn_script(
     }
     let working_dir = PathBuf::from(&project_path);
     let candidate_path = working_dir.join(&terminal_id);
+    // A terminal a script opened by name runs what it was given, even if a file has that name.
     let is_existing_file = terminal_id != "live"
+        && !request.content_only
         && safe_relative_path(&terminal_id).is_ok()
         && candidate_path.is_file()
         && ensure_inside_root(&working_dir, &candidate_path).is_ok();
@@ -702,7 +709,13 @@ pub(crate) async fn spawn_script(
     pwsh_args.extend(args.iter().cloned());
     // A pseudo-terminal lets scripts redraw progress, show colors, and take input. Scripts still run
     // with piped output if one cannot be opened.
-    let pty = match spawn_in_pty(&executable, &pwsh_args, &working_dir, pty_size(cols, rows)) {
+    let pty = match spawn_in_pty(
+        &executable,
+        &pwsh_args,
+        &working_dir,
+        pty_size(cols, rows),
+        env,
+    ) {
         Ok(process) => Some(process),
         Err(err) => {
             eprintln!("Running {} without a terminal: {}", terminal_id, err);
@@ -760,6 +773,7 @@ pub(crate) async fn spawn_script(
         cmd.args(&pwsh_args)
             // Nothing can answer a prompt without a terminal, so fail instead of waiting forever.
             .arg("-NonInteractive")
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .current_dir(&working_dir)
             .kill_on_drop(true)
             .stdout(Stdio::piped())
@@ -1074,6 +1088,7 @@ mod tests {
             &["-c".to_string(), command.to_string()],
             dir.path(),
             pty_size(Some(100), Some(20)),
+            &[],
         )
         .unwrap();
         let PtyProcess {
@@ -1142,6 +1157,7 @@ mod tests {
             &["-c".to_string(), "stty size; read _; stty size".to_string()],
             dir.path(),
             pty_size(Some(90), Some(25)),
+            &[],
         )
         .unwrap();
         let PtyProcess {
@@ -1222,6 +1238,7 @@ mod tests {
             ],
             dir.path(),
             pty_size(None, None),
+            &[],
         )
         .unwrap();
         let PtyProcess {

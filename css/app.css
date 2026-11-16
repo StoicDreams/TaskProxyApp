@@ -154,6 +154,52 @@ header h1.editable-title:empty::before {
     margin-bottom: 0;
 }
 
+/* A page of a plugin beside another, in a webui-split-panes that fills the page's height. */
+app-plugin-page.plugin-split-on {
+    display: block;
+}
+
+.plugin-split-main {
+    padding-right: var(--padding);
+}
+
+.plugin-split-side {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    padding-left: var(--padding);
+}
+
+.plugin-split-tools {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.25em;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--color-background);
+}
+
+.plugin-split-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2em;
+    height: 2em;
+    padding: 0;
+    border: none;
+    border-radius: 0.25em;
+    font: inherit;
+    color: inherit;
+    background: none;
+    cursor: pointer;
+}
+
+.plugin-split-tool:hover,
+.plugin-split-tool:focus-visible {
+    background-color: color-mix(in srgb, currentColor 15%, transparent);
+}
+
 .plugin-table {
     width: 100%;
     border-collapse: collapse;
@@ -166,6 +212,37 @@ header h1.editable-title:empty::before {
     vertical-align: top;
     border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
 }
+
+.plugin-table tbody tr:nth-child(2n) {
+    background-color: color-mix(in srgb, currentColor 5%, transparent);
+}
+
+/* A themed row blends its theme over the row's own stripe. */
+.plugin-table tbody tr[data-theme] {
+    --plugin-row-tint: var(--color-primary);
+    background-image: linear-gradient(color-mix(in srgb, var(--plugin-row-tint) 22%, transparent), color-mix(in srgb, var(--plugin-row-tint) 22%, transparent));
+}
+
+.plugin-table tbody tr[data-theme="secondary"] { --plugin-row-tint: var(--color-secondary); }
+.plugin-table tbody tr[data-theme="tertiary"] { --plugin-row-tint: var(--color-tertiary); }
+.plugin-table tbody tr[data-theme="info"] { --plugin-row-tint: var(--color-info); }
+.plugin-table tbody tr[data-theme="success"] { --plugin-row-tint: var(--color-success); }
+.plugin-table tbody tr[data-theme="warning"] { --plugin-row-tint: var(--color-warning); }
+.plugin-table tbody tr[data-theme="danger"] { --plugin-row-tint: var(--color-danger); }
+
+/* Themed text, as an issue type's, mixed toward the text color so it reads on either background. */
+.plugin-clip[data-theme] {
+    --plugin-text-tint: var(--color-primary);
+    color: color-mix(in srgb, var(--plugin-text-tint) 75%, currentColor);
+    font-weight: 600;
+}
+
+.plugin-clip[data-theme="secondary"] { --plugin-text-tint: var(--color-secondary); }
+.plugin-clip[data-theme="tertiary"] { --plugin-text-tint: var(--color-tertiary); }
+.plugin-clip[data-theme="info"] { --plugin-text-tint: var(--color-info); }
+.plugin-clip[data-theme="success"] { --plugin-text-tint: var(--color-success); }
+.plugin-clip[data-theme="warning"] { --plugin-text-tint: var(--color-warning); }
+.plugin-clip[data-theme="danger"] { --plugin-text-tint: var(--color-danger); }
 
 .plugin-table tr.plugin-clickable {
     cursor: pointer;

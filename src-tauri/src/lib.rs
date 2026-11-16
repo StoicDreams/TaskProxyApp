@@ -124,6 +124,10 @@ pub fn run() {
         if let Err(err) = crate::services::file_server::start(app.handle().clone()) {
             eprintln!("The file preview server could not start: {}", err);
         }
+        // Lets scripts Task Proxy runs open terminals in it, rather than windows of their own.
+        if let Err(err) = crate::services::script_api::start(app.handle().clone()) {
+            eprintln!("Scripts cannot reach Task Proxy: {}", err);
+        }
         // Opt-in, because attaching the inspector during startup can hang the page in WebKitGTK.
         // Devtools can still be opened at any time from the page's context menu.
         #[cfg(debug_assertions)]

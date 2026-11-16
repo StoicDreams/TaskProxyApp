@@ -2,7 +2,7 @@
 
 <img src="https://www.taskproxy.com/ms-icon-310x310.png" alt="Stoic Dreams Task Proxy Logo" title="Stoic Dreams Task Proxy Logo" style="float:right;margin-top:-50px;height:60px;width:60px">
 
-[Version: 0.1.134](https://github.com/StoicDreams/TaskProxyApp)
+[Version: 0.1.136](https://github.com/StoicDreams/TaskProxyApp)
 
 [![Task Proxy GitHub Actions][gh-image]][gh-checks]
 
@@ -31,6 +31,22 @@ Task Proxy is a lightweight, cross-platform developer tool designed to manage do
 - **Centralized Team Hubs:** Create modular Task Proxy Pages within your project to provide onboarding documentation, run health-check scripts, and show dynamic reports.
 - **Automated Pipelines:** Utilize the integrated Script and Terminal Managers to queue and execute command flows in a specified sequence.
 - **Live Documentation Editing:** Manage project documentation with side-by-side live rendering.
+
+## Scripts That Open Terminals
+
+A script Task Proxy runs can open more terminals in the Terminal Manager, rather than terminal windows of their own, such as one for each site it starts. Task Proxy gives every script it runs a `TaskProxy` PowerShell module with `Start-TaskProxyTerminal`. Scripts run anywhere else don't have it, so check for it and keep opening windows otherwise:
+
+```powershell
+if (Get-Command Start-TaskProxyTerminal -ErrorAction SilentlyContinue) {
+    # -Replace stops what is still running in that terminal and waits for it to end first.
+    Start-TaskProxyTerminal -Name 'api' -Command "& './run-api.ps1'" -Replace
+}
+else {
+    Start-Process pwsh -ArgumentList '-NoExit', '-Command', "& './run-api.ps1'"
+}
+```
+
+The terminal opens in the same project as the script, starts in the script's current folder unless you pass `-WorkingDirectory`, and keeps running after the script ends. Without `-Replace`, a terminal that is still running is left alone and the call fails. `Test-TaskProxy` says whether the script was started by Task Proxy.
 
 ## Installation
 

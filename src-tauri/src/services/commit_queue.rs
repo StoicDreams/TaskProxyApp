@@ -384,6 +384,7 @@ async fn run_job(app: &AppHandle, job: &CommitJob) -> (JobOutcome, bool) {
             display_script: None,
             cols: None,
             rows: None,
+            content_only: false,
         };
         match runs::run_and_wait(app, &target, &request).await {
             Err(err) => {

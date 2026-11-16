@@ -8,6 +8,7 @@
 //! start and stop the scripts it describes, through `terminal_controller`.
 
 use crate::prelude::*;
+use crate::services::script_api;
 use crate::services::terminal_controller::{
     self, ProcessMap, ScriptStarted, TerminalManager, script_key, script_project,
 };
@@ -76,6 +77,9 @@ pub(crate) struct RunRequest {
     pub display_script: Option<String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
+    /// Runs `script_content` even when a file in the project has the terminal's name, as for a terminal a
+    /// script opened by name.
+    pub content_only: bool,
 }
 
 /// The project a run belongs to and runs in.
@@ -211,6 +215,17 @@ pub(crate) struct RunStore {
     projects: HashMap<String, ProjectRuns>,
     /// Those waiting for a run to end, by run number, such as a commit waiting on its script.
     waiters: HashMap<u64, Vec<oneshot::Sender<RunInfo>>>,
+    /// The keys scripts use to ask Task Proxy for things, such as opening a terminal, by key. Each works only
+    /// while its run is running (`services/script_api.rs`).
+    grants: HashMap<String, Grant>,
+}
+
+/// What a script's key allows: asking for things in the project of the run it was given to.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Grant {
+    pub target: RunTarget,
+    pub terminal_id: String,
+    pub run: u64,
 }
 
 fn now_ms() -> u64 {
@@ -377,7 +392,39 @@ impl RunStore {
         for waiter in self.waiters.remove(&run).unwrap_or_default() {
             let _ = waiter.send(info.clone());
         }
+        self.grants.retain(|_, grant| grant.run != run);
         Some(info)
+    }
+
+    /// Gives a running run's script a key, which works until the run ends.
+    pub fn grant(&mut self, key: String, target: &RunTarget, terminal_id: &str, run: u64) -> bool {
+        let running = self
+            .info(&target.project_id, terminal_id)
+            .is_some_and(|info| info.run == run && info.status == RunStatus::Running);
+        if running {
+            self.grants.insert(
+                key,
+                Grant {
+                    target: target.clone(),
+                    terminal_id: terminal_id.into(),
+                    run,
+                },
+            );
+        }
+        running
+    }
+
+    /// What a key allows, while its run is running.
+    pub fn grant_for(&self, key: &str) -> Option<Grant> {
+        let grant = self.grants.get(key)?;
+        self.is_running(&grant.target.project_id, &grant.terminal_id, grant.run)
+            .then(|| grant.clone())
+    }
+
+    /// The terminal's run, while it is running.
+    pub fn running_run(&self, project_id: &str, terminal_id: &str) -> Option<RunInfo> {
+        self.info(project_id, terminal_id)
+            .filter(|info| info.status == RunStatus::Running)
     }
 
     /// Resolves with run `run` once it ends, or straight away when it already has.
@@ -534,7 +581,7 @@ impl RunStore {
 pub(crate) struct Runs(pub Mutex<RunStore>);
 
 impl Runs {
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, RunStore>, String> {
+    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, RunStore>, String> {
         self.0
             .lock()
             .map_err(|err| format!("State failure: {}", err))
@@ -642,8 +689,19 @@ async fn launch(
     info: RunInfo,
 ) -> Result<RunInfo, String> {
     let processes = app.state::<TerminalManager>().processes.clone();
+    // The script's key for the script API, so it can open terminals here rather than in windows of their own.
+    let key = script_api::new_key();
+    let granted = app
+        .state::<Runs>()
+        .lock()?
+        .grant(key.clone(), target, &info.id, info.run);
+    let env = if granted {
+        script_api::script_env(&key)
+    } else {
+        Vec::new()
+    };
     let started: Result<ScriptStarted, String> =
-        terminal_controller::spawn_script(app, &processes, target, info.run, request).await;
+        terminal_controller::spawn_script(app, &processes, target, info.run, request, &env).await;
     let runs = app.state::<Runs>();
     match started {
         // A script in its own window is not watched, so its run ends as it opens.
@@ -783,6 +841,7 @@ pub(crate) async fn run_script(
         display_script,
         cols,
         rows,
+        content_only: false,
     };
     let begun = runs
         .lock()?
@@ -801,6 +860,23 @@ pub(crate) async fn run_script(
             })
         }
     }
+}
+
+/// Runs a script now in a terminal of the project `target` names, returning its run once it has started.
+pub(crate) async fn start_now(
+    app: &AppHandle,
+    target: &RunTarget,
+    request: &RunRequest,
+) -> Result<RunInfo, String> {
+    let begun = app
+        .state::<Runs>()
+        .lock()?
+        .start(target, request, false, now_ms())?;
+    let Begun::Started(info) = begun else {
+        return Err(ALREADY_RUNNING.into());
+    };
+    emit_changed(app, &info);
+    launch(app, target, request, *info).await
 }
 
 /// Runs a script now, in the project `target` names, and resolves with the run once it ends.
@@ -1017,6 +1093,7 @@ mod tests {
             display_script: None,
             cols: None,
             rows: None,
+            content_only: false,
         }
     }
 
@@ -1324,6 +1401,45 @@ mod tests {
         // An earlier run is gone once the terminal runs again.
         started(store.start(&target("p"), &request("a.ps1"), false, 2));
         assert!(store.wait("p", "a.ps1", a.run).await.is_err());
+    }
+
+    #[test]
+    fn a_scripts_key_works_only_while_its_run_runs() {
+        let mut store = RunStore::default();
+        let a = started(store.start(&target("p"), &request("a.ps1"), false, 0));
+        assert!(store.grant("key".into(), &target("p"), "a.ps1", a.run));
+        let grant = store.grant_for("key").unwrap();
+        assert_eq!(
+            (grant.target, grant.terminal_id.as_str(), grant.run),
+            (target("p"), "a.ps1", a.run)
+        );
+        assert!(store.grant_for("other").is_none());
+        store.finish("p", "a.ps1", a.run, Some(0), 1);
+        assert!(store.grant_for("key").is_none());
+        // A run that is not running gets no key.
+        assert!(!store.grant("late".into(), &target("p"), "a.ps1", a.run));
+        assert!(!store.grant("none".into(), &target("p"), "missing", 99));
+    }
+
+    #[test]
+    fn a_key_from_an_earlier_run_stops_when_the_terminal_runs_again() {
+        let mut store = RunStore::default();
+        let first = started(store.start(&target("p"), &request("a.ps1"), false, 0));
+        store.grant("first".into(), &target("p"), "a.ps1", first.run);
+        store.mark_stopped("p", "a.ps1");
+        let info = store.info("p", "a.ps1").unwrap();
+        assert!(info.stopped);
+        assert!(
+            store.grant_for("first").is_some(),
+            "still running until it ends"
+        );
+        store.finish("p", "a.ps1", first.run, None, 1);
+        let second = started(store.start(&target("p"), &request("a.ps1"), false, 2));
+        assert!(store.grant_for("first").is_none());
+        assert_eq!(
+            store.running_run("p", "a.ps1").map(|info| info.run),
+            Some(second.run)
+        );
     }
 
     #[test]

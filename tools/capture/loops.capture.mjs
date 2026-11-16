@@ -398,7 +398,8 @@ test.describe('plugins', () => {
             backend.handlers.plugin_action = ({ request }) => {
                 const go = (page, params = {}) => ({ navigate: { page, params } });
                 switch (request.action) {
-                    case 'open': return go('issue', { key: request.params.key });
+                    // From a list, an issue opens beside it, as split view is on until the user turns it off.
+                    case 'open': return { navigate: { page: 'issue', params: { key: request.params.key }, side: ['issues', 'all'].includes(request.page) } };
                     case 'list.search':
                     case 'list.sort': return go(request.page, {});
                     case 'cell.options': return screens.statusOptions;
@@ -474,9 +475,13 @@ test.describe('plugins', () => {
     test('an issue with its parents', async ({ page }) => {
         await openJira(page, '/plugin/jira/issues');
         await loop(page, 'issue', async () => {
-            await clickOn(page, view(page).locator('tbody tr').first().locator('.plugin-link', { hasText: 'ATL-142' }), { after: 1600 });
-            await expect(view(page)).toContainText('ATL-142 Show CI status on the dashboard');
-            await moveTo(page, view(page).locator('details.plugin-section summary').first());
+            await clickOn(page, view(page).first().locator('tbody tr').first().locator('.plugin-link', { hasText: 'ATL-142' }), { after: 1600 });
+            const side = page.locator('app-plugin-page.plugin-split-page');
+            await expect(side).toContainText('ATL-142 Show CI status on the dashboard');
+            await moveTo(page, side.locator('details.plugin-section summary').first());
+            await page.waitForTimeout(800);
+            // Closed again, so the loop ends on the list it started from.
+            await clickOn(page, page.locator('webui-split-panes .plugin-split-tool[aria-label="Close"]'), { after: 600 });
         }, { dir });
     });
 

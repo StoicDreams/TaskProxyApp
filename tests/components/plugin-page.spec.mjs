@@ -92,6 +92,176 @@ test('navigating to the same page with new params loads it again, and Back retur
     await expect(page.locator('app-plugin-page webui-button', { hasText: 'New' })).toBeVisible();
 });
 
+test.describe('a page beside another', () => {
+    const list = {
+        type: 'table', columns: ['Key'],
+        rows: ['P-1', 'P-2'].map(key => ({ cells: [{ type: 'link', text: key, action: action('open', `Open ${key}`, { params: { key } }) }] })),
+    };
+    const state = {
+        pluginPages: { 'test/item': text('An item') },
+        pluginActions: { 'test/open': { navigate: { page: 'item', params: { key: 'P-1' }, side: true } } },
+    };
+    const split = page => page.locator('app-plugin-page webui-split-panes.plugin-split');
+    const link = (page, key) => page.locator('app-plugin-page .plugin-link', { hasText: key }).first();
+    const side = page => split(page).locator('app-plugin-page.plugin-split-page');
+    async function openBeside(page, width = 1400) {
+        await page.setViewportSize({ width, height: 800 });
+        await openPlugin(page, list, state);
+        await page.evaluate(list => { window.__list = list; }, list);
+        await onCommand(page, 'plugin_render', ({ page, params }) => page === 'item' ? { type: 'text', text: `Item ${params.key}` } : window.__list);
+        await onCommand(page, 'plugin_action', ({ request }) => ({ navigate: { page: 'item', params: { key: request.params.key }, side: true } }));
+        await link(page, 'P-1').click();
+        await expect(side(page)).toContainText('Item P-1');
+    }
+
+    test('opens beside the page, which stays where it is, evenly split and as tall as the page', async ({ page }) => {
+        await openBeside(page);
+        await expect(page).toHaveURL(/\/plugin\/test\/home$/);
+        await expect(split(page).locator('[slot="start"] table')).toBeVisible();
+        await expect(split(page)).toHaveAttribute('ratio', '0.5');
+        await expect(split(page)).toHaveAttribute('start-label', 'Test Home');
+        await expect(split(page)).toHaveAttribute('end-label', 'Item');
+        expect((await calls(page, 'plugin_render')).at(-1)).toEqual({ id: 'test', page: 'item', params: { key: 'P-1' } });
+        const height = await split(page).evaluate(el => el.getBoundingClientRect().height);
+        expect(height).toBeGreaterThan(600);
+        // Another issue from the list replaces the one beside it.
+        await link(page, 'P-2').click();
+        await expect(side(page)).toContainText('Item P-2');
+        await expect(split(page)).toHaveCount(1);
+    });
+
+    test('resizing is remembered, Close puts the page back, and Open as its own page navigates to it', async ({ page }) => {
+        await openBeside(page);
+        await split(page).locator('.bar').focus();
+        await page.keyboard.press('ArrowRight');
+        await expect.poll(() => page.evaluate(() => webui.getData('app-plugin-sections')?.test?.['split:ratio'])).toBe(0.55);
+        await split(page).getByRole('button', { name: 'Close' }).click();
+        await expect(split(page)).toHaveCount(0);
+        await expect(page.locator('app-plugin-page table')).toBeVisible();
+        await link(page, 'P-1').click();
+        await expect(split(page)).toHaveAttribute('ratio', '0.55');
+        await split(page).getByRole('button', { name: 'Open as its own page' }).click();
+        await expect(page).toHaveURL(/\/plugin\/test\/item\?key=P-1$/);
+        await expect(split(page)).toHaveCount(0);
+        await expect(page.locator('app-plugin-page')).toContainText('Item P-1');
+    });
+
+    test('the side page opens what it navigates to in its place, and the page beside it in the page', async ({ page }) => {
+        await openBeside(page);
+        await onCommand(page, 'plugin_render', ({ page, params }) => page === 'item'
+            ? { type: 'stack', children: [
+                { type: 'text', text: `Item ${params.key}` },
+                { type: 'button', action: { id: 'next', label: 'Next' } },
+                { type: 'button', action: { id: 'list', label: 'To the list' } },
+                { type: 'button', action: { id: 'change', label: 'Change' } },
+            ] }
+            : { type: 'text', text: params.sort ? `Sorted by ${params.sort}` : 'The list' });
+        await onCommand(page, 'plugin_action', ({ request }) => ({
+            next: { navigate: { page: 'item', params: { key: 'P-9' } } },
+            list: { navigate: { page: 'home', params: { sort: 'key' } } },
+            change: { refresh: true },
+        })[request.action]);
+        await page.evaluate(() => document.querySelector('.plugin-split-page').load());
+        await side(page).locator('webui-button', { hasText: 'Next' }).click();
+        await expect(side(page)).toContainText('Item P-9');
+        await expect(page).toHaveURL(/\/plugin\/test\/home$/);
+        await side(page).locator('webui-button', { hasText: 'Change' }).click();
+        // A change beside the page draws the page again too.
+        await expect(split(page).locator('[slot="start"]')).toContainText('The list');
+        await side(page).locator('webui-button', { hasText: 'To the list' }).click();
+        await expect(page).toHaveURL(/\/plugin\/test\/home\?sort=key$/);
+        await expect(split(page).locator('[slot="start"]')).toContainText('Sorted by key');
+    });
+
+    test('too narrow for both, the side page covers the page, with a button back to each', async ({ page }) => {
+        await openBeside(page, 900);
+        await expect(split(page)).toHaveAttribute('narrow', '');
+        await split(page).getByRole('button', { name: 'Test Home' }).click();
+        await expect(split(page)).toHaveAttribute('show', 'start');
+        await expect(side(page)).toBeHidden();
+        await link(page, 'P-2').click();
+        await expect(split(page)).toHaveAttribute('show', 'end');
+        await expect(side(page)).toContainText('Item P-2');
+    });
+});
+
+test('a form with changed shows Refresh until a field changes, then Search, and searching unchanged adds no history', async ({ page }) => {
+    const form = {
+        type: 'form', fields: [{ name: 'jql', label: 'JQL', kind: 'text', value: 'order by key' }],
+        buttons: [], children: [{ type: 'inputs', fields: [{ name: 'f.type', label: 'Type', kind: 'multiselect', value: [], options: [{ value: 'Bug', label: 'Bug' }] }] }],
+        submit: action('search', 'Refresh', { icon: 'refresh' }),
+        changed: action('search', 'Search', { icon: 'magnifying-glass' }),
+    };
+    await openPlugin(page, form, { pluginActions: { 'test/search': { navigate: { page: 'home', params: {} } } } });
+    const view = page.locator('app-plugin-page');
+    const button = view.locator('.plugin-form-actions webui-button');
+    await expect(button).toHaveText('Refresh');
+    await expect(button).toHaveAttribute('start-icon', 'refresh');
+    const field = view.locator('webui-input-text input');
+    await field.fill('order by rank');
+    await expect(button).toHaveText('Search');
+    await expect(button).toHaveAttribute('start-icon', 'magnifying-glass');
+    await field.fill('order by key');
+    await expect(button).toHaveText('Refresh');
+    await view.getByLabel('Bug').check();
+    await expect(button).toHaveText('Search');
+    await view.getByLabel('Bug').uncheck();
+    await expect(button).toHaveText('Refresh');
+    // Refresh searches again as it is, loading the page without a new history entry.
+    const history = await page.evaluate(() => history.length);
+    const renders = (await calls(page, 'plugin_render')).length;
+    await button.click();
+    await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBe(renders + 1);
+    expect(await page.evaluate(() => history.length)).toBe(history);
+    expect((await calls(page, 'plugin_action')).at(-1).request.form).toEqual({ jql: 'order by key', 'f.type': [] });
+});
+
+test.describe('pages drawn before', () => {
+    test('show at once when gone back to, and are drawn again only if the plugin answers differently', async ({ page }) => {
+        await openPlugin(page, text('The list'), {
+            pluginPages: { 'test/item': text('The item') },
+            pluginActions: { 'test/open': { navigate: { page: 'item', params: { key: 'P-1' } } } },
+        });
+        await page.evaluate(() => webui.navigateTo('/plugin/test/item?key=P-1'));
+        await expect(page.locator('app-plugin-page')).toContainText('The item');
+        // The plugin is slow from now on, and answers with a newer list.
+        await onCommand(page, 'plugin_render', ({ page }) => new Promise(resolve => {
+            window.__answer = () => resolve(page === 'home' ? { type: 'text', text: 'The newer list' } : { type: 'text', text: 'The item' });
+        }));
+        await page.goBack();
+        await expect(page).toHaveURL(/\/plugin\/test\/home$/);
+        await expect(page.locator('app-plugin-page')).toContainText('The list');
+        await expect(page.locator('app-plugin-page')).not.toContainText('Loading');
+        await expect.poll(() => page.evaluate(() => typeof window.__answer)).toBe('function');
+        await page.evaluate(() => window.__answer());
+        await expect(page.locator('app-plugin-page')).toContainText('The newer list');
+    });
+
+    test('a page that comes back the same is not drawn again, and one that fails keeps what it showed', async ({ page }) => {
+        await openPlugin(page, text('The list'), { pluginPages: { 'test/item': text('The item') } });
+        const view = page.locator('app-plugin-page');
+        const away = async () => {
+            await page.evaluate(() => webui.navigateTo('/plugin/test/item'));
+            await expect(view).toContainText('The item');
+        };
+        await away();
+        await page.goBack();
+        await expect(view).toContainText('The list');
+        // Marked once drawn from the cache, so drawing it again would lose the mark.
+        await view.locator('.plugin-text').evaluate(node => { node.dataset.drawn = 'cached'; });
+        const renders = (await calls(page, 'plugin_render')).length;
+        await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBeGreaterThan(renders - 1);
+        await expect.poll(async () => (await calls(page, 'plugin_render')).at(-1)?.page).toBe('home');
+        await expect(view.locator('.plugin-text[data-drawn="cached"]')).toHaveText('The list');
+        await away();
+        await onCommand(page, 'plugin_render', () => { throw 'Jira could not be reached'; });
+        await page.goBack();
+        await expect.poll(() => alerts(page)).toContain('Jira could not be reached');
+        await expect(view).toContainText('The list');
+        await expect(view.locator('webui-alert')).toHaveCount(0);
+    });
+});
+
 test('a form sends its values, and a required field must be filled first', async ({ page }) => {
     await openPlugin(page, {
         type: 'form',
@@ -250,6 +420,36 @@ test.describe('editable tables', () => {
         await expect(comment).not.toHaveAttribute('title');
         await comment.click();
         expect((await lastAction(page)).action).toBe('cell.comments');
+    });
+
+    test('rows alternate shades, a themed row is tinted over its shade, and clip text takes a theme', async ({ page }) => {
+        const row = (kind, rowTheme) => ({
+            cells: [{ type: 'clip', text: kind, theme: kind === 'Bug' ? 'danger' : 'success' }],
+            theme: rowTheme,
+        });
+        await openPlugin(page, {
+            type: 'table', columns: ['Issue type'],
+            rows: [row('Story'), row('Story'), row('Bug', 'danger'), row('Story', 'danger'), row('Story', 'nonsense')],
+        });
+        const rows = page.locator('app-plugin-page .plugin-table tbody tr');
+        await expect(rows).toHaveCount(5);
+        const look = index => rows.nth(index).evaluate(tr => {
+            const style = getComputedStyle(tr);
+            return { background: style.backgroundColor, tint: style.backgroundImage, theme: tr.getAttribute('data-theme') };
+        });
+        const [first, second, bug, bugChild, unknown] = await Promise.all([0, 1, 2, 3, 4].map(look));
+        expect(second.background).not.toBe(first.background);
+        expect(first.tint).toBe('none');
+        expect(bug.tint).toContain('gradient');
+        // The tint keeps the row's own stripe beneath it.
+        expect(bugChild.background).toBe(second.background);
+        expect(bug.background).toBe(first.background);
+        expect(unknown.theme).toBeNull();
+        expect(unknown.tint).toBe('none');
+        const clips = page.locator('app-plugin-page .plugin-clip');
+        await expect(clips.nth(2)).toHaveAttribute('data-theme', 'danger');
+        const color = index => clips.nth(index).evaluate(span => getComputedStyle(span).color);
+        expect(await color(2)).not.toBe(await color(0));
     });
 
     test('short text that fits is plain, with no tooltip or click', async ({ page }) => {
@@ -476,23 +676,51 @@ test.describe('spec 0.1.3', () => {
         await expect(view.locator('.plugin-markdown')).toBeVisible();
     });
 
-    test('markdown images are 100px high, show larger while hovered, and open in a dialog at 60vh', async ({ page }) => {
-        await openPlugin(page, { type: 'markdown', text: 'Steps\n\n1. ![Shot](attachment-1)', images: { 'attachment-1': png } });
+    test('markdown images are 100px high, show larger while hovered, and open in a dialog at 60vh to copy', async ({ page, context }) => {
+        await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+        await page.setViewportSize({ width: 1400, height: 900 });
+        // A wide screenshot, as Jira descriptions have.
+        await openPlugin(page, text('Description'));
+        const shot = await page.evaluate(() => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1200;
+            canvas.height = 700;
+            canvas.getContext('2d').fillRect(0, 0, 1200, 700);
+            return canvas.toDataURL('image/jpeg');
+        });
+        await page.evaluate(shot => document.querySelector('app-plugin-page').draw({ type: 'markdown', text: 'Steps\n\n1. ![Shot](attachment-1)', images: { 'attachment-1': shot } }), shot);
         const image = page.locator('app-plugin-page .plugin-markdown img');
         await expect.poll(() => image.evaluate(el => el.getBoundingClientRect().height)).toBe(100);
         await image.hover();
         const hover = page.locator('.plugin-image-hover');
         await expect(hover).toBeVisible();
-        await expect(hover).toHaveAttribute('src', png);
+        await expect(hover).toHaveAttribute('src', shot);
+        // Much larger than in the description, keeping its shape, and inside the window.
+        const size = await hover.evaluate(el => el.getBoundingClientRect().toJSON());
+        expect(size.height).toBeGreaterThanOrEqual(300);
+        expect(size.width / size.height).toBeCloseTo(1200 / 700, 1);
+        expect(size.right).toBeLessThanOrEqual(1400);
+        expect(size.bottom).toBeLessThanOrEqual(900);
         await page.mouse.move(0, 0);
         await expect(hover).toHaveCount(0);
         await image.click();
         const full = page.locator('.plugin-image-full');
         await expect(full).toBeVisible();
-        await expect(full).toHaveAttribute('src', png);
+        await expect(full).toHaveAttribute('src', /^blob:/);
         const height = await page.evaluate(() => window.innerHeight * 0.6);
         await expect.poll(() => full.evaluate(el => el.getBoundingClientRect().height)).toBeCloseTo(height, 0);
         await expect(hover).toHaveCount(0);
+        // Copied as a PNG, which other apps paste.
+        await page.locator('.plugin-image-copy').click();
+        await expect.poll(() => alerts(page)).toContain('Copied the image.');
+        const copied = await page.evaluate(async () => {
+            const [item] = await navigator.clipboard.read();
+            const blob = await item.getType('image/png');
+            const bitmap = await createImageBitmap(blob);
+            return { types: item.types, width: bitmap.width, height: bitmap.height };
+        });
+        expect(copied).toEqual({ types: ['image/png'], width: 1200, height: 700 });
+        await expect(openDialog(page)).toBeVisible();
     });
 
     test('markdown without toggle has no switch', async ({ page }) => {

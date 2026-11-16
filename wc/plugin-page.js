@@ -5,6 +5,7 @@
  *
  * <app-plugin-page plugin="jira" page="issues"></app-plugin-page> renders that page with the address's query as params.
  * showNode(node, plugin) draws a node without loading a page, as the Git Controller does for branch cards.
+ * A navigate result with `side` opens that page beside this one, in a split the user resizes (showSide).
  */
 "use strict"
 {
@@ -18,9 +19,33 @@
     }
     // The image moves away from the preview when the page scrolls.
     window.addEventListener('scroll', hideHoverPreview, true);
+    /** A data URI's bytes, read here since the app's content policy lets no fetch read data or blob addresses. */
+    function blobOf(dataUri) {
+        const [head, data] = `${dataUri}`.split(',', 2);
+        const type = /^data:([^;,]+)/.exec(head)?.[1] || 'application/octet-stream';
+        const bytes = Uint8Array.from(atob(data || ''), char => char.charCodeAt(0));
+        return new Blob([bytes], { type });
+    }
+    /** An image as a PNG, which is what other apps take from the clipboard. */
+    async function pngOf(blob) {
+        if (blob.type === 'image/png') return blob;
+        const bitmap = await createImageBitmap(blob);
+        const canvas = el('canvas', { width: bitmap.width, height: bitmap.height });
+        canvas.getContext('2d').drawImage(bitmap, 0, 0);
+        return new Promise((resolve, reject) => canvas.toBlob(png => png ? resolve(png) : reject(new Error('The image could not be read.')), 'image/png'));
+    }
+    async function copyImage(blob) {
+        try {
+            // A promise, so the copy keeps the click that started it while the PNG is made.
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngOf(blob) })]);
+            webui.alert('Copied the image.', 'success');
+        } catch (error) {
+            webui.alert(`The image could not be copied: ${escape(error?.message || error)}`, 'danger');
+        }
+    }
     /**
      * Makes a markdown image show larger while the pointer is over it, and open in a dialog when clicked, or with
-     * Enter or Space. Its source is a checked data URI, so it can go into the dialog's markup.
+     * Enter or Space, where it can be copied. Its source is a checked data URI.
      */
     function showsLarger(img) {
         img.classList.add('plugin-image');
@@ -34,21 +59,47 @@
             const box = img.getBoundingClientRect();
             // Beside the image, on whichever side has more room, and kept inside the window.
             const right = window.innerWidth - box.right;
-            const width = Math.max(right, box.left) - 16;
-            hoverPreview.style.maxWidth = `${Math.max(120, Math.min(width, window.innerWidth * 0.5))}px`;
-            hoverPreview.style.left = right >= box.left ? `${box.right + 8}px` : '';
-            hoverPreview.style.right = right >= box.left ? '' : `${window.innerWidth - box.left + 8}px`;
-            hoverPreview.style.top = `${Math.max(8, Math.min(box.top, window.innerHeight * 0.55 - 8))}px`;
+            const roomWide = Math.max(160, Math.min(Math.max(right, box.left) - 24, window.innerWidth * 0.6));
+            const roomHigh = Math.max(160, window.innerHeight * 0.8);
+            // Sized here, since the page's styles for images would otherwise shrink it. As large as fits, up to the
+            // image's own size, and always well above the size shown in the description.
+            const natural = { width: img.naturalWidth || box.width, height: img.naturalHeight || box.height };
+            const larger = Math.max(1, (box.height * 3) / natural.height);
+            const scale = Math.min(roomWide / natural.width, roomHigh / natural.height, larger);
+            const width = Math.round(natural.width * scale);
+            const height = Math.round(natural.height * scale);
+            Object.assign(hoverPreview.style, {
+                width: `${width}px`,
+                height: `${height}px`,
+                maxWidth: 'none',
+                maxHeight: 'none',
+                left: right >= box.left ? `${box.right + 8}px` : '',
+                right: right >= box.left ? '' : `${window.innerWidth - box.left + 8}px`,
+                top: `${Math.max(8, Math.min(box.top, window.innerHeight - height - 8))}px`,
+            });
         });
         img.addEventListener('mouseleave', hideHoverPreview);
         const open = () => {
             hideHoverPreview();
+            // A blob address rather than the data URI, which the webview's own Copy Image handles better.
+            const blob = blobOf(img.src);
+            const src = URL.createObjectURL(blob);
+            // Styled here, since the dialog's content is outside the app's stylesheet.
+            const box = el('div', { style: 'display:flex;flex-direction:column;align-items:center;gap:0.5em;' });
+            const full = el('img', { class: 'plugin-image-full', src, alt: img.alt || '', style: 'display:block;height:60vh;max-height:none;width:auto;max-width:90vw;margin:auto;object-fit:contain;' });
+            const copy = el('button', { type: 'button', class: 'plugin-image-copy', style: 'display:inline-flex;align-items:center;gap:0.4em;padding:0.3em 0.8em;font:inherit;cursor:pointer;' });
+            copy.append(el('webui-icon', { icon: 'copy', 'aria-hidden': 'true' }), el('span', {}, 'Copy image'));
+            copy.addEventListener('click', ev => {
+                ev.preventDefault();
+                copyImage(blob);
+            });
+            box.append(full, copy);
             webui.dialog({
                 title: img.alt || 'Image',
-                // Styled here, since the dialog's content is outside the app's stylesheet.
-                content: `<img class="plugin-image-full" src="${img.src}" alt="${escape(img.alt)}" style="display:block;height:60vh;max-height:none;width:auto;max-width:90vw;margin:auto;object-fit:contain;">`,
+                content: box,
                 confirm: 'Close',
-            });
+                onclose: () => setTimeout(() => URL.revokeObjectURL(src), 1000),
+            }).catch(() => { });
         };
         img.addEventListener('click', ev => {
             ev.preventDefault();
@@ -92,6 +143,38 @@
         const params = {};
         new URLSearchParams(location.search).forEach((value, key) => { params[key] = value; });
         return params;
+    }
+
+    /** A page's params as its address would carry them, for a page shown beside another, which has no address. */
+    function paramsOf(plugin, page, params) {
+        return Object.fromEntries(new URLSearchParams(pageUrl(plugin, page, params).split('?')[1] || ''));
+    }
+
+    /**
+     * Pages drawn before, by project, plugin, page, and params, so going back to one shows it at once while it is
+     * loaded again in the background. The oldest are dropped first.
+     */
+    const pageCache = new Map();
+    const PAGE_CACHE_SIZE = 40;
+    function cacheKey(plugin, page, params) {
+        const project = webui.getData('app-current-project')?.value ?? '';
+        const sorted = Object.keys(params || {}).sort().map(key => [key, params[key]]);
+        return JSON.stringify([project, plugin, page, sorted]);
+    }
+    function cachePage(key, node) {
+        pageCache.delete(key);
+        pageCache.set(key, node);
+        while (pageCache.size > PAGE_CACHE_SIZE) pageCache.delete(pageCache.keys().next().value);
+    }
+
+    /** The element that scrolls the page, which a split fills. */
+    function scrollBox(node) {
+        let at = node;
+        while (at) {
+            at = at.assignedSlot || at.parentElement || at.getRootNode?.().host;
+            if (at?.nodeType === Node.ELEMENT_NODE && /^(auto|scroll)$/.test(getComputedStyle(at).overflowY)) return at;
+        }
+        return null;
     }
 
     function pageUrl(plugin, page, params) {
@@ -262,7 +345,7 @@
             adoptPluginStyles(t);
             // Back and Forward between two addresses of this page change only the query, which does not load a page.
             t._onPopState ??= () => {
-                if (!t._staticNode && location.pathname === t.path()) t.load();
+                if (!t._staticNode && !t._sideOf && location.pathname === t.path()) t.load();
             };
             window.addEventListener('popstate', t._onPopState);
             t._queueLoad();
@@ -281,22 +364,38 @@
                 if (t.plugin && t.page) t.load();
             });
         },
+        /** Where the page is drawn: the split's own side while a page shows beside it, or the element itself. */
+        content() {
+            return this._split?.main || this;
+        },
         /** The address of this page, without its query. */
         path() {
             return pageUrl(this.plugin, this.page);
         },
-        /** Loads the page from the plugin and draws it. */
+        /**
+         * Loads the page from the plugin and draws it. A page drawn before shows straight away from the cache, and
+         * is drawn again only if the plugin's answer changed.
+         */
         async load() {
             const t = this;
             const load = ++t._load;
             const plugin = t.plugin;
             const page = t.page;
-            t._params = readParams();
-            if (!t.firstChild) t.replaceChildren(el('webui-flex', { align: 'center', gap: 'var(--padding)' }, 'Loading…'));
+            // A page beside another has no address, so its params are kept on it.
+            t._params = t._sideOf ? { ...t._sideParams } : readParams();
+            const key = cacheKey(plugin, page, t._params);
+            const content = t.content();
+            const cached = pageCache.get(key);
+            // Drawn from the cache, the plugin's answer only replaces it if it changed. Otherwise, such as for a
+            // refresh, the answer is drawn.
+            const fromCache = !!cached && t._shownKey !== key;
+            if (fromCache) t.draw(cached, key);
+            else if (!content.firstChild) content.replaceChildren(el('webui-flex', { align: 'center', gap: 'var(--padding)' }, 'Loading…'));
             // A plugin's settings belong to projects, so one not set up for this project shows how to set it up.
             const plugins = await webui.proxy.plugins.list(() => undefined);
             if (load !== t._load) return;
             const info = (plugins || []).find(item => item.id === plugin);
+            t._info = info;
             if (info && !info.configured) {
                 t.showSetup(info);
                 return;
@@ -305,10 +404,33 @@
             const node = await webui.proxy.plugins.render(plugin, page, t._params, err => { error = `${err}`; });
             if (load !== t._load) return;
             if (error) {
-                t.showError(error);
+                // A page showing from the cache stays, and says it could not be brought up to date.
+                if (fromCache && t._shownKey === key) webui.alert(escape(error), 'danger');
+                else t.showError(error);
                 return;
             }
-            t.draw(node);
+            const same = fromCache && t._shownKey === key && JSON.stringify(cached) === JSON.stringify(node);
+            cachePage(key, node);
+            if (same) return;
+            if (fromCache) t.drawWhenIdle(node, key, load);
+            else t.draw(node, key);
+        },
+        /**
+         * Draws a page that loaded in the background. While the user is typing in it, that waits until they leave the
+         * field, so what they typed is not lost.
+         */
+        drawWhenIdle(node, key, load) {
+            const t = this;
+            const content = t.content();
+            const active = document.activeElement;
+            const typing = t._shownKey === key && active && content.contains(active) && active.matches('input, textarea, select, [contenteditable]');
+            if (!typing) {
+                t.draw(node, key);
+                return;
+            }
+            active.addEventListener('focusout', () => {
+                if (load === t._load && t.isConnected) t.draw(node, key);
+            }, { once: true });
         },
         /** Asks for the plugin's settings for this project, then shows the page once they are saved. */
         showSetup(info) {
@@ -326,15 +448,18 @@
             const settings = el('app-plugin-settings', { plugin: info.id });
             settings.addEventListener('plugin-settings-changed', () => t.load());
             box.appendChild(settings);
-            t.replaceChildren(box);
+            t._shownKey = null;
+            t.content().replaceChildren(box);
         },
         showError(message) {
             const t = this;
             const alert = el('webui-alert', { theme: 'danger', show: true }, message);
             const retry = el('webui-button', { theme: 'secondary' }, 'Try again');
             retry.addEventListener('click', () => t.load());
-            t.replaceChildren(el('webui-flex', { column: true, gap: 'var(--padding)' }));
-            t.firstChild.append(alert, retry);
+            const box = el('webui-flex', { column: true, gap: 'var(--padding)' });
+            box.append(alert, retry);
+            t._shownKey = null;
+            t.content().replaceChildren(box);
         },
         /** Draws a node from another plugin call, such as a branch card, without loading a page. */
         showNode(node, plugin, page) {
@@ -345,17 +470,20 @@
             t._params = {};
             t.draw(node);
         },
-        draw(node) {
+        draw(node, key = null) {
             const t = this;
             t._node = node;
+            // Which cached page is shown. A plugin's ui result is not a cached page.
+            t._shownKey = key;
             t._ctx = 'page';
-            t.replaceChildren(t.build(node));
-            t.syncToggles(t);
+            const content = t.content();
+            content.replaceChildren(t.build(node));
+            t.syncToggles(content);
             // A reorder list moved from the keyboard keeps focus on the item that moved, after the plugin redraws.
             const refocus = t._refocus;
             t._refocus = null;
             if (refocus) {
-                [...t.querySelectorAll('.plugin-reorder-item')].find(item => item.dataset.id === refocus)
+                [...content.querySelectorAll('.plugin-reorder-item')].find(item => item.dataset.id === refocus)
                     ?.querySelector('.plugin-reorder-handle')?.focus();
             }
         },
@@ -546,7 +674,8 @@
             table.appendChild(el('thead')).appendChild(head);
             const body = table.appendChild(el('tbody'));
             (node.rows || []).forEach(row => {
-                const tr = el('tr');
+                // A themed row is tinted, as Jira's bugs are, over its stripe.
+                const tr = el('tr', { 'data-theme': theme(row.theme) || null });
                 (row.cells || []).forEach(cell => tr.appendChild(el('td')).appendChild(t.build(cell)));
                 if (row.action) {
                     tr.classList.add('plugin-clickable');
@@ -590,7 +719,7 @@
             const max = Math.max(parseInt(node.max) || 30, 1);
             const tip = Math.max(parseInt(node.tip) || 100, max);
             const cut = chars.length > max;
-            const span = el('span', { class: node.muted ? 'plugin-clip plugin-muted' : 'plugin-clip' }, cut ? `${chars.slice(0, max).join('').trimEnd()}...` : text);
+            const span = el('span', { class: node.muted ? 'plugin-clip plugin-muted' : 'plugin-clip', 'data-theme': theme(node.theme) || null }, cut ? `${chars.slice(0, max).join('').trimEnd()}...` : text);
             if (cut) span.title = chars.length > tip ? `${chars.slice(0, tip).join('').trimEnd()}...` : text;
             if (node.action && (cut || node.always)) {
                 span.classList.add('plugin-clip-open');
@@ -617,7 +746,7 @@
         /** Shows or hides the panels with this key, and marks the buttons that toggle them. */
         togglePanel(key, ctx) {
             const t = this;
-            const root = ctx === 'dialog' && t._dialog ? t._dialog.body : t;
+            const root = ctx === 'dialog' && t._dialog ? t._dialog.body : t.content();
             const panels = [...root.querySelectorAll('.plugin-panel')].filter(panel => panel.dataset.panel === key);
             if (!panels.length) return;
             const open = panels[0].hidden;
@@ -781,7 +910,8 @@
             const actions = el('webui-flex', { gap: 'var(--padding)', wrap: true, align: 'center', class: 'plugin-form-actions' });
             (node.buttons || []).forEach(button => actions.appendChild(t.build(button)));
             const submit = el('webui-button', { theme: 'primary', 'start-icon': node.submit?.icon || null });
-            submit.appendChild(el('span', {}, node.submit?.label ?? 'Submit'));
+            const submitText = el('span', {}, node.submit?.label ?? 'Submit');
+            submit.appendChild(submitText);
             actions.appendChild(submit);
             if (node.cancel) {
                 const cancel = el('webui-button', { theme: 'secondary' });
@@ -799,6 +929,29 @@
                 t._formReaders = outer;
             }
             const fields = [...(node.fields || []), ...collectFields(node.children)];
+            // With `changed`, the button runs it once any field differs from what the form was drawn with, such as
+            // Search, and `submit` otherwise, such as Refresh.
+            const valuesNow = () => JSON.stringify(readers.map(read => read()));
+            let drawn = null;
+            let changed = false;
+            const current = () => changed && node.changed ? node.changed : node.submit;
+            if (node.changed) {
+                // Read just before the user first changes anything, once the fields' components have their values.
+                const snapshot = () => { drawn ??= valuesNow(); };
+                form.addEventListener('focusin', snapshot, true);
+                form.addEventListener('pointerdown', snapshot, true);
+                const check = () => {
+                    if (drawn === null) return;
+                    const now = valuesNow() !== drawn;
+                    if (now === changed) return;
+                    changed = now;
+                    const action = current();
+                    submitText.textContent = action?.label ?? 'Submit';
+                    if (action?.icon) submit.setAttribute('start-icon', action.icon);
+                    else submit.removeAttribute('start-icon');
+                };
+                ['input', 'change', 'keyup', 'click'].forEach(name => form.addEventListener(name, () => setTimeout(check), true));
+            }
             const send = () => {
                 const values = Object.fromEntries(readers.map(read => read()));
                 const missing = fields.find(field => field.required && field.kind !== 'checkbox' && `${values[field.name] ?? ''}`.trim() === '');
@@ -806,7 +959,7 @@
                     webui.alert(`${escape(missing.label || missing.name)} is required.`, 'warning');
                     return;
                 }
-                t.run(node.submit, values, ctx);
+                t.run(current(), values, ctx);
             };
             submit.addEventListener('click', send);
             form.addEventListener('submit', ev => {
@@ -908,8 +1061,26 @@
             const inDialog = ctx === 'dialog' && t._dialog;
             if (result.closeDialog || (result.navigate && t._dialog)) t.closeDialog();
             if (result.navigate) {
-                const url = pageUrl(t.plugin, result.navigate.page, result.navigate.params);
+                const target = result.navigate;
+                // A page shown beside another opens what it navigates to in its place, except the other page itself.
+                if (t._sideOf) {
+                    if (target.page === t._sideOf.page) t._sideOf.apply({ navigate: { page: target.page, params: target.params } });
+                    else t._sideOf.showSide(target.page, target.params);
+                    return;
+                }
+                if (target.side === true && !t._staticNode) {
+                    t.showSide(target.page, target.params);
+                    return;
+                }
+                const url = pageUrl(t.plugin, target.page, target.params);
                 const samePage = !t._staticNode && url.split('?')[0] === t.path();
+                // The address it is already at, such as a search run again unchanged, loads again without a new
+                // history entry, so Back still leaves the page.
+                const here = new URL(url, location.origin);
+                if (samePage && here.pathname === location.pathname && here.search === location.search) {
+                    t.load();
+                    return;
+                }
                 webui.navigateTo(url);
                 // The app only loads a page when its path changes, so a new query for this page is loaded here.
                 if (samePage && location.pathname === t.path()) t.load();
@@ -924,7 +1095,96 @@
                 }
             }
             if (result.refresh && !t._staticNode) t.load();
+            // A change made beside the page, such as an issue's status, shows in the page too.
+            if (result.refresh && t._sideOf) t._sideOf.load();
             if (result.refresh && t._staticNode) t.dispatchEvent(new CustomEvent('plugin-refresh', { bubbles: true }));
+        },
+        /**
+         * Shows another of the plugin's pages beside this one, in a webui-split-panes whose bar resizes them. When the
+         * window is too narrow for both, the side page covers this one, and a full height button on each switches
+         * between them.
+         */
+        showSide(page, params) {
+            const t = this;
+            if (!t._split) t.openSplit();
+            const side = t._split.page;
+            side._sideParams = paramsOf(t.plugin, page, params);
+            side.setAttribute('page', page);
+            side._queueLoad();
+            t._split.split.setAttribute('end-label', t.pageName(page));
+            t.focusSplit('side');
+        },
+        /** A page's name from the plugin's manifest. */
+        pageName(page) {
+            return (this._info?.manifest?.pages || []).find(item => item.id === page)?.name || page;
+        },
+        /** Puts the page in the start side of a webui-split-panes, and another page of the plugin in its end side. */
+        openSplit() {
+            const t = this;
+            const box = scrollBox(t);
+            // The page keeps where it was scrolled to, now inside its own side.
+            const scrolled = box ? Math.max(0, box.scrollTop - (t.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop)) : 0;
+            const split = el('webui-split-panes', { class: 'plugin-split', fill: true, ratio: `${t.savedSplit()}`, show: 'end', 'start-label': t.pageName(t.page), 'end-label': '' });
+            const main = el('div', { slot: 'start', class: 'plugin-split-main' });
+            main.append(...t.childNodes);
+            const side = el('div', { slot: 'end', class: 'plugin-split-side' });
+            const tools = el('div', { class: 'plugin-split-tools' });
+            const tool = (icon, label, run) => {
+                const button = el('button', { type: 'button', class: 'plugin-split-tool', title: label, 'aria-label': label });
+                button.appendChild(el('webui-icon', { icon, 'aria-hidden': 'true' }));
+                button.addEventListener('click', run);
+                return button;
+            };
+            const page = el('app-plugin-page', { plugin: t.plugin, class: 'plugin-split-page' });
+            page._sideOf = t;
+            tools.append(
+                tool('expand', 'Open as its own page', () => webui.navigateTo(pageUrl(t.plugin, page.page, page._sideParams))),
+                tool('xmark', 'Close', () => t.closeSplit()),
+            );
+            side.append(tools, page);
+            split.append(main, side);
+            // Saved when the user resizes the sides. Changes in the page's own fields bubble up here too.
+            split.addEventListener('change', ev => {
+                if (ev.target === split && typeof ev.detail?.ratio === 'number') t.saveSplit(ev.detail.ratio);
+            });
+            t.replaceChildren(split);
+            t.classList.add('plugin-split-on');
+            t._split = { split, main, page };
+            if (scrolled) t.restoreScroll(split, scrolled);
+        },
+        /** Scrolls the start side once the component has drawn and sized it. */
+        async restoreScroll(split, top) {
+            await customElements.whenDefined('webui-split-panes');
+            for (let frame = 0; frame < 30; frame++) {
+                const pane = split.shadowRoot?.querySelector('.start');
+                if (pane && split.style.height && pane.scrollHeight > pane.clientHeight) {
+                    pane.scrollTop = top;
+                    return;
+                }
+                await new Promise(resolve => requestAnimationFrame(resolve));
+            }
+        },
+        closeSplit() {
+            const t = this;
+            const split = t._split;
+            if (!split) return;
+            split.page.closeDialog();
+            t._split = null;
+            t.classList.remove('plugin-split-on');
+            t.replaceChildren(...split.main.childNodes);
+        },
+        /** Which side shows while the window is too narrow for both. */
+        focusSplit(which) {
+            this._split?.split.setAttribute('show', which === 'side' ? 'end' : 'start');
+        },
+        savedSplit() {
+            const saved = ((webui.getData(sectionsKey) || {})[this.plugin] || {})['split:ratio'];
+            return typeof saved === 'number' && saved > 0 && saved < 1 ? saved : 0.5;
+        },
+        saveSplit(ratio) {
+            const all = structuredClone(webui.getData(sectionsKey) || {});
+            all[this.plugin] = { ...(all[this.plugin] || {}), 'split:ratio': ratio };
+            webui.setData(sectionsKey, all);
         },
         /** Opens a plugin's dialog over the page. Its actions answer to it, and closing it changes nothing. */
         openDialog(dialog) {
