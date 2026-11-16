@@ -1177,6 +1177,9 @@ test.describe('files that show something when drawn', () => {
         await expect(frame(page)).toHaveAttribute('sandbox', '');
         const srcdoc = await frame(page).getAttribute('srcdoc');
         expect(srcdoc).toContain("default-src 'none'");
+        // Images and videos from websites load, as they do on pages.
+        expect(srcdoc).toContain('img-src data: https:;');
+        expect(srcdoc).toContain('media-src https:;');
         expect(srcdoc).not.toContain('<script');
         expect(srcdoc).not.toContain('onerror');
         const doc = page.frameLocator('app-git-manager iframe.rendered');

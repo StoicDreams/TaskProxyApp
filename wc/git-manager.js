@@ -367,10 +367,10 @@
     /**
      * A page for the sandboxed preview frame. The frame runs no scripts and the page allows none, so nothing in a
      * project's file can reach Task Proxy. Markdown and HTML are also sanitized, Web UI components show as their
-     * content, and only images inside the file or on Task Proxy's CDN load.
+     * content, and only images and videos inside the file or on websites load.
      */
     function previewDocument(kind, text) {
-        const policy = "default-src 'none'; img-src data: https://cdn.myfi.ws; style-src 'unsafe-inline' https://cdn.myfi.ws; font-src data: https://cdn.myfi.ws";
+        const policy = "default-src 'none'; img-src data: https:; media-src https:; style-src 'unsafe-inline' https://cdn.myfi.ws; font-src data: https://cdn.myfi.ws";
         const style = `
             :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
             body { margin: 0; padding: 1rem; overflow-wrap: anywhere; }

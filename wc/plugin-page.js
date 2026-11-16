@@ -400,6 +400,11 @@
                 t.showSetup(info);
                 return;
             }
+            // The page the user left open beside this one opens again, such as the issue they were reading.
+            if (!t._split && !t._sideOf && !t._staticNode) {
+                const side = t.savedSide();
+                if (side) t.showSide(side.page, side.params);
+            }
             let error = null;
             const node = await webui.proxy.plugins.render(plugin, page, t._params, err => { error = `${err}`; });
             if (load !== t._load) return;
@@ -1111,6 +1116,7 @@
             side._sideParams = paramsOf(t.plugin, page, params);
             side.setAttribute('page', page);
             side._queueLoad();
+            t.saveSide({ page, params: side._sideParams });
             t._split.split.setAttribute('end-label', t.pageName(page));
             t.focusSplit('side');
         },
@@ -1138,7 +1144,10 @@
             const page = el('app-plugin-page', { plugin: t.plugin, class: 'plugin-split-page' });
             page._sideOf = t;
             tools.append(
-                tool('expand', 'Open as its own page', () => webui.navigateTo(pageUrl(t.plugin, page.page, page._sideParams))),
+                tool('expand', 'Open as its own page', () => {
+                    t.saveSide(null);
+                    webui.navigateTo(pageUrl(t.plugin, page.page, page._sideParams));
+                }),
                 tool('xmark', 'Close', () => t.closeSplit()),
             );
             side.append(tools, page);
@@ -1169,6 +1178,7 @@
             const split = t._split;
             if (!split) return;
             split.page.closeDialog();
+            t.saveSide(null);
             t._split = null;
             t.classList.remove('plugin-split-on');
             t.replaceChildren(...split.main.childNodes);
@@ -1180,6 +1190,26 @@
         savedSplit() {
             const saved = ((webui.getData(sectionsKey) || {})[this.plugin] || {})['split:ratio'];
             return typeof saved === 'number' && saved > 0 && saved < 1 ? saved : 0.5;
+        },
+        /** Where the page beside this one is remembered: by plugin, then by project and page. */
+        sideKey() {
+            const project = webui.getData('app-current-project')?.value ?? '';
+            return `side:${project}:${this.page}`;
+        },
+        /** The page left open beside this one, as {page, params}, or null. */
+        savedSide() {
+            const saved = ((webui.getData(sectionsKey) || {})[this.plugin] || {})[this.sideKey()];
+            return saved && typeof saved.page === 'string' && saved.page ? saved : null;
+        },
+        saveSide(side) {
+            const key = this.sideKey();
+            const all = structuredClone(webui.getData(sectionsKey) || {});
+            const mine = { ...(all[this.plugin] || {}) };
+            if (JSON.stringify(mine[key] ?? null) === JSON.stringify(side)) return;
+            if (side) mine[key] = side;
+            else delete mine[key];
+            all[this.plugin] = mine;
+            webui.setData(sectionsKey, all);
         },
         saveSplit(ratio) {
             const all = structuredClone(webui.getData(sectionsKey) || {});

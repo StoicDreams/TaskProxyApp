@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test, expect, openApp } from '../support/app.mjs';
 
 const clean = (page, html) => page.evaluate(html => sanitizeProjectHtml(html), html);
@@ -35,7 +36,33 @@ test.describe('sanitizeProjectHtml', () => {
         const html = '<webui-flex data-bind="x" class="y"><a href="https://example.com">a</a></webui-flex>';
         expect(await clean(page, html)).toBe(html);
     });
+    test('keeps images and videos from websites', async ({ page }) => {
+        const html = '<img src="https://example.com/a.png" alt="a"><video src="https://example.com/a.mp4" poster="https://example.com/a.png"></video>'
+            + '<webui-loop-video src="https://example.com/b.mp4" poster="https://example.com/b.png"></webui-loop-video>';
+        expect(await clean(page, html)).toBe(html);
+    });
     test('returns nothing for values that are not text', async ({ page }) => {
         expect(await page.evaluate(() => [sanitizeProjectHtml(null), sanitizeProjectHtml(5)])).toEqual(['', '']);
+    });
+});
+
+test.describe('the content security policy', () => {
+    const config = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
+    const csp = config.app.security.csp;
+    const sources = name => csp[name].split(/\s+/);
+    test('lets pages show images and videos from websites', () => {
+        for (const name of ['img-src', 'media-src']) {
+            expect(sources(name), name).toContain('https:');
+            expect(sources(name), `${name} allows no unencrypted websites`).not.toContain('http:');
+            expect(sources(name), name).not.toContain('*');
+        }
+    });
+    test('still runs scripts and opens connections only to the app and its services', () => {
+        for (const name of ['default-src', 'script-src', 'connect-src', 'worker-src']) {
+            expect(sources(name), name).not.toContain('https:');
+            expect(sources(name), name).not.toContain('*');
+        }
+        expect(csp['object-src']).toBe("'none'");
+        expect(csp['frame-src']).toBe("'none'");
     });
 });

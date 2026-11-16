@@ -146,6 +146,35 @@ test.describe('a page beside another', () => {
         await expect(page.locator('app-plugin-page')).toContainText('Item P-1');
     });
 
+    test('the page left open beside it opens again when the page is shown again, until it is closed', async ({ page }) => {
+        await openBeside(page);
+        await link(page, 'P-2').click();
+        await expect(side(page)).toContainText('Item P-2');
+        const away = async () => {
+            await page.evaluate(() => webui.navigateTo('/plugin/test/item?key=P-9'));
+            await expect(page.locator('app-plugin-page').first()).toContainText('Item P-9');
+            await page.evaluate(() => webui.navigateTo('/plugin/test/home'));
+            await expect(page.locator('app-plugin-page .plugin-link').first()).toBeVisible();
+        };
+        await away();
+        await expect(side(page)).toContainText('Item P-2');
+        await expect(split(page).locator('[slot="start"] table')).toBeVisible();
+        // Closed, it stays closed.
+        await split(page).getByRole('button', { name: 'Close' }).click();
+        await expect(split(page)).toHaveCount(0);
+        await away();
+        await expect(page.locator('app-plugin-page table')).toBeVisible();
+        await expect(split(page)).toHaveCount(0);
+        // Opened as its own page, it is no longer beside the page either.
+        await link(page, 'P-1').click();
+        await expect(side(page)).toContainText('Item P-1');
+        await split(page).getByRole('button', { name: 'Open as its own page' }).click();
+        await expect(page).toHaveURL(/\/plugin\/test\/item\?key=P-1$/);
+        await page.evaluate(() => webui.navigateTo('/plugin/test/home'));
+        await expect(page.locator('app-plugin-page table')).toBeVisible();
+        await expect(split(page)).toHaveCount(0);
+    });
+
     test('the side page opens what it navigates to in its place, and the page beside it in the page', async ({ page }) => {
         await openBeside(page);
         await onCommand(page, 'plugin_render', ({ page, params }) => page === 'item'
