@@ -296,21 +296,30 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 ### 2.1 Desktops and mailboxes in api.myfi.ws
 
-**Everything is SQL functions behind the dynamic API handler,** like every other MyFi endpoint: no Rust crate. Rust in the API is only for the shared request handling, and none is needed here.
+*Done in `Apis/Databases`. Nothing calls it until 2.2.*
 
-**Tables:** `remote.Desktops` (`desktop_id`, `user_id`, `app_id`, `name`, `public_key`, `last_seen`, `created`) and `remote.Messages` (`id`, `mailbox`, `from_user_id`, `body`, `expires`). Messages last seconds, and a function deletes them as it reads them.
+**Everything is SQL functions behind the dynamic API handler,** like every other MyFi endpoint: no Rust crate. Rust in the API is only for the shared request handling, and none was needed.
 
-**Endpoints.** dyn_api names a function from the path, so ids go in the body or query string, never in the path:
+**Tables,** in a new `remote` schema (`Postgres/Tables/Remote/`):
+- `remote.Desktops`: `desktop_id`, `user_id`, `app_id`, `mach_id`, `name`, `public_key`, `last_seen`. One row per account and public key.
+- `remote.Messages`: `mailbox`, `to_desktop`, `desktop_id`, `user_id` (the sender, always the desktop's account), `reply`, `body`, `expires`. Deleted as they are read.
+- `remote.Sends`: when each message was sent, by which account and from which `mach_id`, kept for a minute for the limits (`remote.CanSend`).
 
-| Endpoint | Function | Who | What |
+**Endpoints.** dyn_api names a function from the path, so ids go in the body or query string, never in the path. Bodies are camelCase, such as `desktopId`. `message` is the encrypted Noise message as base64url.
+
+| Endpoint | Who | Sends | Returns |
 |---|---|---|---|
-| `POST remote/desktop/register` | `api_post_remote_desktop_register` | An app's session (`p_request_app_id`, `p_user_id`) | Registers or updates this desktop (name, public key) under its account. Returns `desktopId`. |
-| `DELETE remote/desktop` | `api_delete_remote_desktop` | The owner, from the app or `www.taskproxy.com` | Removes the desktop and its messages |
-| `GET remote/desktops` | `api_get_remote_desktops` | `www.taskproxy.com`, signed in | Your desktops: name, key fingerprint, and whether each is online (checked in the last 60 s) |
-| `POST remote/message/send` | `api_post_remote_message_send` | `www.taskproxy.com`, signed in to the **same account** as the desktop | Leaves a message for the desktop, with a reply mailbox id. Refused (403) for any other account, and stored with the sender's account id. |
-| `POST remote/messages` | `api_post_remote_messages` | The desktop's own app session | Returns and deletes its waiting messages, with each sender's account id. Also marks the desktop online. |
-| `POST remote/reply/send` and `POST remote/replies` | `api_post_remote_reply_send`, `api_post_remote_replies` | The desktop sends, and the phone reads with the same account's session | The desktop's replies. The reply id is random for each attempt. |
-| `GET remote/turn` | `api_get_remote_turn` | Either side, signed in | Short-lived coturn credentials, only if TURN is added. HMAC in SQL needs the `pgcrypto` extension. |
+| `POST remote/desktop/register` | An app's session | `name`, `publicKey` (64 hex) | `{desktopId}`. The same key on the same account keeps its id. |
+| `DELETE remote/desktop` | The app that registered it, or `www.taskproxy.com`, signed in to its account | `desktopId` | Removes it and its messages |
+| `GET remote/desktops` | `www.taskproxy.com`, signed in | | `{desktops: [{desktopId, name, fingerprint, online, lastSeen}]}`. `fingerprint` is the first 16 hex of the key's SHA-256; online means read in the last 60 s. |
+| `POST remote/message/send` | `www.taskproxy.com`, signed in to the **desktop's account** | `desktopId`, `reply` (a random UUID per attempt), `message` | `{online}`. Any other account, or an unknown desktop, gets the same 403. |
+| `POST remote/messages` | The app that registered it, signed in to its account | `desktopId` | `{messages: [{reply, from, message}]}`, oldest first, then deletes them. `from` is the sender's account id. Marks the desktop online. |
+| `POST remote/reply/send` | The same app | `desktopId`, `reply`, `message` | Leaves the answer in the reply mailbox |
+| `POST remote/replies` | `www.taskproxy.com`, signed in | `reply` | `{messages: [{desktopId, message}]}`, only from that account's desktops, then deletes them |
+
+`GET remote/turn` waits until TURN is added.
+
+**Origins:** each function checks its own, as `@origin` requires. Site endpoints refuse app sessions, and app endpoints refuse calls without an app (`p_request_app_id` of 0).
 
 **Polling, not long-polling.** A function call returns at once and doesn't hold a database connection open, so both sides poll:
 - The desktop polls every 10 s while Remote Access is on, and every 1 s while a connection is being set up.
@@ -318,14 +327,16 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 - So a connection starts within about 10 s. If that's too slow, the exception would be a small, general wait in the shared request handling, not a remote-only service. Decide that from use.
 
 **Limits, in the functions:**
-- Each message is at most 16 KB, at most 20 wait at once, and each is dropped after 60 s.
-- Sends are limited per account and per `mach_id`.
+- Each message is at most 16 KB of base64url.
+- At most 20 wait for a desktop, and 20 in a reply mailbox. Each is dropped after 60 s.
+- An account sends at most 120 a minute, desktop answers included, and a `mach_id` at most 60.
+- An account has at most 20 desktops.
 
 **What the API can't do:** read or change the messages. Every message is a Noise message, so it can't read, forge or take over a connection, only refuse one.
 
-**Origins:** each function checks its own, as `@origin` requires.
-- Site endpoints: `@origin: www.taskproxy.com`.
-- App endpoints: `@origin: any`, refusing calls without an app (`p_request_app_id` of 0).
+**The request log keeps bodies,** so it holds the encrypted messages too. They are useless without the keys, but they take space: a connection is about ten messages of a few KB.
+
+**Tests:** `Postgres/Tests/RemoteAccess.test.sql`, run by `Test-Database.ps1` (see 2.5).
 
 **STUN:** run your own (coturn does this) rather than a third party's.
 
@@ -418,7 +429,7 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 ### 2.5 Tests
 
-**API:**
+**API:** *done, in `Postgres/Tests/RemoteAccess.test.sql`.*
 - **Account checks:**
   - a post from another account is refused
   - a desktop's mailbox can't be read with another app session
