@@ -128,6 +128,45 @@ test.describe('a page beside another', () => {
         await expect(split(page)).toHaveCount(1);
     });
 
+    test('with cover, the page beside covers this one at any width, and a result can switch it back', async ({ page }) => {
+        await page.setViewportSize({ width: 1400, height: 800 });
+        const withSwitch = { type: 'stack', children: [{ type: 'button', action: action('split', 'Split view'), on: false }, list] };
+        await openPlugin(page, withSwitch, state);
+        await page.evaluate(node => { window.__list = node; window.__cover = true; }, withSwitch);
+        await onCommand(page, 'plugin_render', ({ page, params }) => page === 'item' ? { type: 'text', text: `Item ${params.key}` } : window.__list);
+        await onCommand(page, 'plugin_action', ({ request }) => {
+            if (request.action === 'split') {
+                window.__cover = !window.__cover;
+                return { refresh: true, cover: window.__cover };
+            }
+            return { navigate: { page: 'item', params: { key: request.params.key }, side: true, cover: window.__cover } };
+        });
+        await link(page, 'P-1').click();
+        await expect(side(page)).toContainText('Item P-1');
+        // One page at a time, though the window has room for both, with a button on each to switch.
+        await expect(split(page)).toHaveAttribute('single', '');
+        await expect(split(page)).toHaveAttribute('narrow', '');
+        await expect(split(page).locator('.bar')).toBeHidden();
+        await split(page).getByRole('button', { name: 'Test Home' }).click();
+        await expect(split(page).locator('[slot="start"] table')).toBeVisible();
+        await expect(side(page)).toBeHidden();
+        await split(page).getByRole('button', { name: 'Item', exact: true }).click();
+        await expect(side(page)).toBeVisible();
+        const saved = () => page.evaluate(() => webui.getData('app-plugin-sections')?.test?.['side::home'] ?? Object.entries(webui.getData('app-plugin-sections')?.test || {}).find(([key]) => key.startsWith('side:'))?.[1]);
+        await expect.poll(saved).toEqual({ page: 'item', params: { key: 'P-1' }, cover: true });
+        // Turning it off on the page switches the page already beside it back to side by side.
+        await split(page).getByRole('button', { name: 'Test Home' }).click();
+        await page.locator('app-plugin-page webui-toggle-icon', { hasText: 'Split view' }).click();
+        await expect(split(page)).not.toHaveAttribute('single', '');
+        await expect(split(page)).not.toHaveAttribute('narrow', '');
+        await expect(side(page)).toContainText('Item P-1');
+        await expect.poll(saved).toEqual({ page: 'item', params: { key: 'P-1' } });
+        // Another page opened without cover keeps the split as it is.
+        await link(page, 'P-2').click();
+        await expect(side(page)).toContainText('Item P-2');
+        await expect(split(page)).not.toHaveAttribute('single', '');
+    });
+
     test('resizing is remembered, Close puts the page back, and Open as its own page navigates to it', async ({ page }) => {
         await openBeside(page);
         await split(page).locator('.bar').focus();
@@ -333,6 +372,26 @@ test('an action can replace the page, refresh it, or show an error', async ({ pa
     await expect(view).toHaveText('Swapped in');
 });
 
+test('a button with on is a switch that shows its state and runs its action', async ({ page }) => {
+    await openPlugin(page, {
+        type: 'toolbar', children: [
+            { type: 'button', action: action('split', 'Split view'), theme: 'primary', on: true },
+            { type: 'button', action: action('wrap', 'Wrap'), theme: 'secondary', on: false },
+            { type: 'button', action: action('plain', 'Plain') },
+        ],
+    }, { pluginActions: { 'test/split': { refresh: true } } });
+    const view = page.locator('app-plugin-page');
+    const split = view.locator('webui-toggle-icon', { hasText: 'Split view' });
+    await expect(split).toHaveAttribute('enabled', /.*/);
+    await expect(view.locator('webui-toggle-icon', { hasText: 'Wrap' })).not.toHaveAttribute('enabled', /.*/);
+    // A button without on is still a button.
+    await expect(view.locator('webui-button', { hasText: 'Plain' })).toBeVisible();
+    await expect(view.locator('webui-toggle-icon')).toHaveCount(2);
+    const renders = (await calls(page, 'plugin_render')).length;
+    await split.click();
+    expect((await calls(page, 'plugin_action')).at(-1).request.action).toBe('split');
+    await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBe(renders + 1);
+});
 test('an action that asks first only runs when confirmed', async ({ page }) => {
     await openPlugin(page, { type: 'button', action: action('delete', 'Delete', { confirm: 'Delete <b>it</b>?' }) },
         { pluginActions: { 'test/delete': { refresh: true } } });

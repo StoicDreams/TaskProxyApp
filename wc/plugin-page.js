@@ -403,7 +403,7 @@
             // The page the user left open beside this one opens again, such as the issue they were reading.
             if (!t._split && !t._sideOf && !t._staticNode) {
                 const side = t.savedSide();
-                if (side) t.showSide(side.page, side.params);
+                if (side) t.showSide(side.page, side.params, side.cover === true);
             }
             let error = null;
             const node = await webui.proxy.plugins.render(plugin, page, t._params, err => { error = `${err}`; });
@@ -649,6 +649,7 @@
         },
         buildButton(node, ctx) {
             const t = this;
+            if (typeof node.on === 'boolean') return t.buildSwitch(node, ctx);
             const button = el('webui-button', { theme: theme(node.theme) || 'secondary', 'start-icon': node.action?.icon || null });
             button.appendChild(el('span', {}, node.action?.label ?? ''));
             if (node.action?.host?.type === 'toggle') {
@@ -657,6 +658,19 @@
             }
             button.addEventListener('click', () => t.run(node.action, undefined, ctx));
             return button;
+        },
+        /** A button with on (spec 0.1.4): a switch between two states, which runs its action when clicked. */
+        buildSwitch(node, ctx) {
+            const t = this;
+            const label = node.action?.label ?? '';
+            // Colored by its state, so the plugin's theme, which is for hosts that draw a button, is not used.
+            const toggle = el('webui-toggle-icon', { label, 'theme-on': 'primary', 'theme-off': 'secondary', class: 'plugin-switch' });
+            // The toggle icon keeps its state in a property, so it is set once the component is defined.
+            const show = () => toggle.setValue(node.on);
+            if (customElements.get('webui-toggle-icon')) show();
+            else customElements.whenDefined('webui-toggle-icon').then(show);
+            toggle.addEventListener('click', () => t.run(node.action, undefined, ctx));
+            return toggle;
         },
         buildTable(node, ctx) {
             const t = this;
@@ -1074,7 +1088,7 @@
                     return;
                 }
                 if (target.side === true && !t._staticNode) {
-                    t.showSide(target.page, target.params);
+                    t.showSide(target.page, target.params, target.cover === true);
                     return;
                 }
                 const url = pageUrl(t.plugin, target.page, target.params);
@@ -1099,6 +1113,8 @@
                     return;
                 }
             }
+            // Whether the page beside covers this one (spec 0.1.4), from either of them.
+            if (typeof result.cover === 'boolean') (t._sideOf || t).setCover(result.cover);
             if (result.refresh && !t._staticNode) t.load();
             // A change made beside the page, such as an issue's status, shows in the page too.
             if (result.refresh && t._sideOf) t._sideOf.load();
@@ -1106,17 +1122,19 @@
         },
         /**
          * Shows another of the plugin's pages beside this one, in a webui-split-panes whose bar resizes them. When the
-         * window is too narrow for both, the side page covers this one, and a full height button on each switches
-         * between them.
+         * window is too narrow for both, or with cover at any width, the side page covers this one, and a full height
+         * button on each switches between them. Without cover, a split already open keeps whether it covers.
          */
-        showSide(page, params) {
+        showSide(page, params, cover) {
             const t = this;
             if (!t._split) t.openSplit();
             const side = t._split.page;
             side._sideParams = paramsOf(t.plugin, page, params);
             side.setAttribute('page', page);
             side._queueLoad();
-            t.saveSide({ page, params: side._sideParams });
+            if (typeof cover === 'boolean') t._split.cover = cover;
+            t._split.split.toggleAttribute('single', t._split.cover);
+            t.saveSide(t.sideState());
             t._split.split.setAttribute('end-label', t.pageName(page));
             t.focusSplit('side');
         },
@@ -1158,7 +1176,7 @@
             });
             t.replaceChildren(split);
             t.classList.add('plugin-split-on');
-            t._split = { split, main, page };
+            t._split = { split, main, page, cover: false };
             if (scrolled) t.restoreScroll(split, scrolled);
         },
         /** Scrolls the start side once the component has drawn and sized it. */
@@ -1182,6 +1200,21 @@
             t._split = null;
             t.classList.remove('plugin-split-on');
             t.replaceChildren(...split.main.childNodes);
+        },
+        /** The page beside this one as it is remembered: {page, params}, and cover while it covers this one. */
+        sideState() {
+            const split = this._split;
+            const state = { page: split.page.page, params: split.page._sideParams };
+            if (split.cover) state.cover = true;
+            return state;
+        },
+        /** Whether the page beside this one covers it at any width, as in a narrow window. Nothing beside, nothing changes. */
+        setCover(cover) {
+            const t = this;
+            if (!t._split || t._split.cover === cover) return;
+            t._split.cover = cover;
+            t._split.split.toggleAttribute('single', cover);
+            t.saveSide(t.sideState());
         },
         /** Which side shows while the window is too narrow for both. */
         focusSplit(which) {

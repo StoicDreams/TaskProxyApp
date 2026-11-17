@@ -27,3 +27,12 @@ test('the site links show on settings and not on other pages', async ({ page }) 
     // The copyright stays in the app's bottom bar.
     await expect(page.locator('webui-app > footer[slot="footer"]')).toContainText('Stoic Dreams');
 });
+test('every update control shows whole in the settings side column', async ({ page }) => {
+    // The window size where the buttons once ran out of the card and were cut off.
+    await page.setViewportSize({ width: 1297, height: 808 });
+    await openApp(page);
+    const updates = page.locator('app-update-manager');
+    for (const control of [updates.getByText('Check for Updates'), updates.getByText('Install Updates'), updates.getByText('Current Version')]) {
+        await expect(control).toBeInViewport({ ratio: 0.95 });
+    }
+});
