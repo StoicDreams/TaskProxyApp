@@ -1,15 +1,32 @@
 //! The devices paired with this desktop, and the desktop's own key, kept in `remote-devices.enc`.
 //!
-//! A device is found by the static key it paired with, and only while its pairing lasts (30 days, renewed on each
-//! connection). The API tells the desktop which MyFi account sent each connection, and it must be the account the
+//! A device is found by the static key it paired with, and only while its pairing lasts (7, 30 or 90 days without a
+//! connection, or for good, as chosen when pairing). The API tells the desktop which MyFi account sent each connection, and it must be the account the
 //! desktop is signed in to, and the one the device paired under. Signing out of MyFi forgets every device.
 
 use super::noise::{Keys, generate_keys};
 use crate::prelude::*;
 
 const FILE: &str = "remote-devices.enc";
-/// How long a pairing lasts without a connection.
-pub(crate) const PAIRING_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+/// How long a pairing lasts without a connection, unless another time was chosen.
+pub(crate) const PAIRING_DAYS: u32 = 30;
+pub(crate) const PAIRING_MS: u64 = PAIRING_DAYS as u64 * DAY_MS;
+/// The times a pairing can last without a connection. 0 is for good.
+pub(crate) const PAIRING_CHOICES: &[u32] = &[7, 30, 90, 0];
+
+/// When a pairing that lasts `days` without a connection ends, counted from `now`. 0 days never ends.
+pub(crate) fn expiry(days: u32, now: u64) -> u64 {
+    if days == 0 {
+        u64::MAX
+    } else {
+        now.saturating_add(days as u64 * DAY_MS)
+    }
+}
+
+fn default_days() -> u32 {
+    PAIRING_DAYS
+}
 
 /// What a device may do. Each level allows everything the ones before it do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -35,6 +52,9 @@ pub(crate) struct Device {
     pub level: Level,
     pub paired_at: u64,
     pub expires_at: u64,
+    /// How many days the pairing lasts without a connection. 0 is for good.
+    #[serde(default = "default_days")]
+    pub days: u32,
     #[serde(default)]
     pub last_seen: Option<u64>,
 }
@@ -50,6 +70,12 @@ pub(crate) struct DeviceStore {
     pub desktop_keys: Option<Keys>,
     #[serde(default)]
     pub devices: Vec<Device>,
+    /// The id api.myfi.ws gave this desktop when Remote Access was turned on.
+    #[serde(default)]
+    pub desktop_id: Option<String>,
+    /// The MyFi account Remote Access was turned on under. Signing in to another account forgets every device.
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 impl DeviceStore {
@@ -61,7 +87,7 @@ impl DeviceStore {
         Ok(self.desktop_keys.clone().unwrap_or_else(|| unreachable!()))
     }
 
-    /// Saves a device that finished pairing, at the View level. Pairing again with the same key replaces it.
+    /// Saves a device that finished pairing, at the View level for 30 days. Pairing again with the same key replaces it.
     pub(crate) fn pair(
         &mut self,
         name: &str,
@@ -69,22 +95,32 @@ impl DeviceStore {
         account_id: &str,
         now: u64,
     ) -> Device {
+        self.pair_as(name, public_key, account_id, Level::View, PAIRING_DAYS, now)
+    }
+
+    /// Saves a device that finished pairing, at `level`, lasting `days` without a connection.
+    pub(crate) fn pair_as(
+        &mut self,
+        name: &str,
+        public_key: &[u8],
+        account_id: &str,
+        level: Level,
+        days: u32,
+        now: u64,
+    ) -> Device {
         let public_key = hex::encode(public_key);
         self.devices
             .retain(|device| device.public_key != public_key);
-        let name = name.trim().chars().take(60).collect::<String>();
+        let name = device_name(name);
         let device = Device {
             id: Uuid::now_v7().to_string(),
-            name: if name.is_empty() {
-                String::from("Device")
-            } else {
-                name
-            },
+            name,
             public_key,
             account_id: account_id.into(),
-            level: Level::View,
+            level,
             paired_at: now,
-            expires_at: now + PAIRING_MS,
+            expires_at: expiry(days, now),
+            days,
             last_seen: None,
         };
         self.devices.push(device.clone());
@@ -131,7 +167,7 @@ impl DeviceStore {
     pub(crate) fn connected(&mut self, id: &str, now: u64) {
         if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
             device.last_seen = Some(now);
-            device.expires_at = now + PAIRING_MS;
+            device.expires_at = expiry(device.days, now);
         }
     }
 
@@ -142,6 +178,16 @@ impl DeviceStore {
             .find(|device| device.id == id)
             .ok_or_else(|| String::from("No such device."))?;
         device.level = level;
+        Ok(())
+    }
+
+    pub(crate) fn rename(&mut self, id: &str, name: &str) -> Result<(), String> {
+        let device = self
+            .devices
+            .iter_mut()
+            .find(|device| device.id == id)
+            .ok_or_else(|| String::from("No such device."))?;
+        device.name = device_name(name);
         Ok(())
     }
 
@@ -162,6 +208,23 @@ impl DeviceStore {
     /// that kept the old key can no longer reach this desktop.
     pub(crate) fn forget_all(&mut self) {
         *self = Self::default();
+    }
+}
+
+/// A device's name as it is shown: one line of at most 60 characters.
+pub(crate) fn device_name(name: &str) -> String {
+    let name = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(60)
+        .collect::<String>();
+    if name.is_empty() {
+        String::from("Device")
+    } else {
+        name
     }
 }
 
@@ -299,6 +362,49 @@ mod tests {
         );
         store.forget_all();
         assert!(!store.enabled && store.devices.is_empty() && store.desktop_keys.is_none());
+    }
+
+    #[test]
+    fn a_pairing_lasts_as_long_as_chosen_and_can_last_for_good() {
+        let mut store = store();
+        let week = store.pair_as("Laptop", &[1], ME, Level::Work, 7, 0);
+        assert_eq!(week.level, Level::Work);
+        assert!(store.find(&[1], ME, Some(ME), 7 * DAY_MS - 1).is_ok());
+        assert!(store.find(&[1], ME, Some(ME), 7 * DAY_MS).is_err());
+        store.connected(&week.id, 7 * DAY_MS - 1);
+        assert!(
+            store.find(&[1], ME, Some(ME), 13 * DAY_MS).is_ok(),
+            "a connection renews it for another week"
+        );
+        store.pair_as("Phone", &[2], ME, Level::View, 0, 0);
+        assert!(store.find(&[2], ME, Some(ME), u64::MAX - 1).is_ok());
+        assert_eq!(
+            store.prune(u64::MAX - 1),
+            1,
+            "only the week-long pairing ends"
+        );
+    }
+
+    #[test]
+    fn names_are_one_short_line() {
+        let mut store = store();
+        let device = store.pair("Pixel\n<b>", &[1], ME, 0);
+        assert_eq!(device.name, "Pixel<b>");
+        store.rename(&device.id, &"x".repeat(80)).unwrap();
+        assert_eq!(store.devices[0].name.len(), 60);
+        store.rename(&device.id, "   ").unwrap();
+        assert_eq!(store.devices[0].name, "Device");
+        assert!(store.rename("missing", "A").is_err());
+    }
+
+    #[test]
+    fn devices_saved_before_pairings_had_a_length_last_30_days() {
+        let mut store = store();
+        store.pair("Pixel", &[9], ME, 3);
+        let mut json = serde_json::to_value(&store).unwrap();
+        json["devices"][0].as_object_mut().unwrap().remove("days");
+        let read: DeviceStore = serde_json::from_value(json).unwrap();
+        assert_eq!(read.devices[0].days, PAIRING_DAYS);
     }
 
     #[test]

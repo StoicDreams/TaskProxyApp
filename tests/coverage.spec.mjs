@@ -10,7 +10,7 @@ const specs = readdirSync(path('./components')).filter(name => name.endsWith('.s
 const components = readdirSync(path('../wc')).filter(name => name.endsWith('.js') && !name.endsWith('.min.js')).map(name => name.replace('.js', '')).filter(name => name !== 'template');
 // Only the commands in generate_handler!, since lib.rs names other things in services, such as the file protocol.
 const handlerList = read('../src-tauri/src/lib.rs').match(/generate_handler!\[([\s\S]*?)\]/)[1];
-const registered = [...handlerList.matchAll(/(?:services|plugins)::\w+::(\w+),|appdata::(\w+),/g)].map(match => match[1] || match[2]);
+const registered = [...handlerList.matchAll(/(?:services|plugins|remote)::\w+::(\w+),|appdata::(\w+),/g)].map(match => match[1] || match[2]);
 const invoked = [...read('../root_files/app.js').matchAll(/(?:invoke|invokeGit)\('(\w+)'/g)].map(match => match[1]);
 
 test('every component has a spec file', () => {

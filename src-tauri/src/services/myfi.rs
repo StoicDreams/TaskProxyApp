@@ -205,7 +205,7 @@ impl MyFiApi {
     }
 
     /// The status and text of a response. Only failing to reach the API is an error.
-    async fn send(
+    pub(crate) async fn send(
         &self,
         method: reqwest::Method,
         path: &str,
@@ -383,7 +383,15 @@ async fn delete_stored() {
     .await;
 }
 
-fn api() -> Result<MyFiApi, String> {
+/// The stored session and the account it was last read as, or None when signed out. Reads the keychain, so callers
+/// that ask often keep the session themselves.
+pub(crate) async fn session() -> Option<(String, Option<MyFiAccount>)> {
+    read_stored()
+        .await
+        .map(|stored| (stored.session, stored.account))
+}
+
+pub(crate) fn api() -> Result<MyFiApi, String> {
     MyFiApi::new(API)
 }
 
@@ -441,7 +449,7 @@ pub(crate) async fn myfi_sign_in_start(app: AppHandle) -> Result<SignInStarted, 
 /// Waits for the user to approve the sign-in, then saves the session. None when it was cancelled or replaced by a
 /// new sign-in. A refusal or expiry is an error with the reason.
 #[tauri::command]
-pub(crate) async fn myfi_sign_in_wait() -> Result<Option<MyFiStatus>, String> {
+pub(crate) async fn myfi_sign_in_wait(app: AppHandle) -> Result<Option<MyFiStatus>, String> {
     let api = api()?;
     let Some(session) = SIGN_INS.wait(&api, POLL).await? else {
         return Ok(None);
@@ -452,6 +460,9 @@ pub(crate) async fn myfi_sign_in_wait() -> Result<Option<MyFiStatus>, String> {
         account: account.clone(),
     })
     .await?;
+    if let Some(account) = &account {
+        crate::remote::service::signed_in_as(&app, &account.id.to_string()).await?;
+    }
     Ok(account.map(|account| MyFiStatus {
         account,
         offline: false,
@@ -479,7 +490,7 @@ pub(crate) async fn myfi_sign_out(app: AppHandle) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
@@ -487,14 +498,20 @@ mod tests {
 
     /// A request the fake API received: its first line, headers in lowercase, and body.
     #[derive(Debug)]
-    struct Received {
-        line: String,
-        headers: HashMap<String, String>,
-        body: String,
+    pub(crate) struct Received {
+        pub line: String,
+        pub headers: HashMap<String, String>,
+        pub body: String,
     }
 
     /// An API that answers each connection with the next of `answers`, and reports what it received.
-    fn fake_api(answers: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<Received>) {
+    pub(crate) fn fake_api<S: Into<String>>(
+        answers: Vec<(u16, S)>,
+    ) -> (String, mpsc::Receiver<Received>) {
+        let answers: Vec<(u16, String)> = answers
+            .into_iter()
+            .map(|(status, body)| (status, body.into()))
+            .collect();
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let (sender, receiver) = mpsc::channel();
@@ -542,7 +559,7 @@ mod tests {
         (base, receiver)
     }
 
-    fn body_of(received: &Received) -> Value {
+    pub(crate) fn body_of(received: &Received) -> Value {
         serde_json::from_str(&received.body).unwrap()
     }
 

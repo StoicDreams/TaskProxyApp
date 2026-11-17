@@ -5,6 +5,8 @@
 //! - `dispatch.rs` runs a device's commands at its level, with secrets redacted.
 //! - `hub.rs` sends events to the window and to devices.
 //! - `audit.rs` logs every command a device sends.
+//! - `mailbox.rs` talks to api.myfi.ws, `pairing.rs` pairs a device through it, and `service.rs` turns Remote Access
+//!   on and off and reads the mailbox.
 //!
 //! Nothing listens for connections yet. Phase 2 carries a connection over WebRTC: once its handshake finishes and
 //! `devices.rs` has found the device, it calls `Remote::open`, passes each message it decrypts to `receive`, and
@@ -17,8 +19,11 @@ pub(crate) mod audit;
 pub(crate) mod devices;
 pub(crate) mod dispatch;
 pub(crate) mod hub;
+pub(crate) mod mailbox;
 pub(crate) mod noise;
+pub(crate) mod pairing;
 pub(crate) mod protocol;
+pub(crate) mod service;
 
 use crate::prelude::*;
 use dispatch::Caller;
@@ -43,9 +48,18 @@ pub(crate) struct Remote {
     pub log: Mutex<audit::AuditLog>,
     connections: Mutex<HashMap<u64, Connection>>,
     next: AtomicU64,
+    /// The open QR code and the pairings under way.
+    pub pairing: Mutex<pairing::Pairing>,
+    /// The open QR code as the panel shows it.
+    pub invite_status: Mutex<Option<service::InviteStatus>>,
+    /// The MyFi session the mailbox is read with, so the keychain isn't read every poll.
+    pub session: Mutex<Option<String>>,
+    /// Reading the mailbox, while Remote Access is on.
+    pub poller: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    pub reachability: Mutex<service::Reachability>,
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|time| time.as_millis() as u64)
@@ -80,6 +94,25 @@ impl Remote {
     pub(crate) fn close(&self, id: u64) {
         if let Ok(mut connections) = self.connections.lock() {
             connections.remove(&id);
+        }
+    }
+
+    /// The ids of the devices connected now.
+    pub(crate) fn connected_devices(&self) -> Vec<String> {
+        self.connections
+            .lock()
+            .map(|connections| {
+                connections
+                    .values()
+                    .map(|connection| connection.caller.device_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn disconnect_all(&self) {
+        if let Ok(mut connections) = self.connections.lock() {
+            connections.clear();
         }
     }
 
@@ -242,6 +275,7 @@ pub(crate) async fn load(app: AppHandle) {
         }
         Err(err) => eprintln!("{}", err),
     }
+    service::resume(app).await;
 }
 
 /// Saves the log of remote commands, if it changed.
@@ -258,15 +292,16 @@ pub(crate) async fn forget_all(app: &AppHandle) -> Result<(), String> {
     let Some(remote) = app.try_state::<Remote>() else {
         return Ok(());
     };
+    service::unregister(app).await;
     let store = {
         let mut devices = remote.devices.lock().map_err(|err| err.to_string())?;
         devices.forget_all();
         devices.clone()
     };
-    if let Ok(mut connections) = remote.connections.lock() {
-        connections.clear();
-    }
-    devices::save(app, &store).await
+    remote.disconnect_all();
+    devices::save(app, &store).await?;
+    let _ = tauri::Emitter::emit(app, service::CHANGED, serde_json::json!({ "notice": null }));
+    Ok(())
 }
 
 #[cfg(test)]

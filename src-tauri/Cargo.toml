@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.143"
+version = "0.1.144"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -73,6 +73,8 @@ sysinfo = { version = "0.40", default-features = false, features = ["system", "u
 listeners = "0.6"
 # Remote Access: the Noise handshakes and encryption between the desktop and a paired device.
 snow = "0.10"
+# Remote Access: the pairing QR code, drawn as SVG.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [dev-dependencies]
 tempfile = "3"

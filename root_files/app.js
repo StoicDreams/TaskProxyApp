@@ -407,6 +407,27 @@
             signInCancel: () => tauri.core.invoke('myfi_sign_in_cancel').catch(() => { }),
             signOut: (err) => tauri.core.invoke('myfi_sign_out').then(() => true).catch(err ?? defaultErrHandler),
         }
+        /**
+         * Remote Access: pairing phones and laptops, signed in to the same account, to use this desktop's Task Proxy.
+         * Each resolves with the panel's status: { enabled, signedIn, desktopName, desktopId, fingerprint,
+         * reachability: { reachable, error }, invite: { link, svg, name, level, days, expiresAt } or null,
+         * devices: [{ id, name, level, days, pairedAt, expiresAt, lastSeen, connected }], pairingDays }.
+         */
+        remoteAccess = {
+            status: (err) => tauri.core.invoke('remote_status').catch(err ?? defaultErrHandler),
+            setEnabled: (enabled, err) => tauri.core.invoke('remote_set_enabled', { enabled: !!enabled }).catch(err ?? defaultErrHandler),
+            /** Opens a QR code that pairs one device within 10 minutes. level is view, work or commit; days 7, 30, 90 or 0 for good. */
+            invite: (name, level, days, err) => tauri.core.invoke('remote_invite', { invite: { name, level, days } }).catch(err ?? defaultErrHandler),
+            cancelInvite: (err) => tauri.core.invoke('remote_invite_cancel').catch(err ?? defaultErrHandler),
+            /** Renames a device or changes its level: change is { name } and/or { level }. */
+            updateDevice: (id, change, err) => tauri.core.invoke('remote_device_update', { id, change }).catch(err ?? defaultErrHandler),
+            removeDevice: (id, err) => tauri.core.invoke('remote_device_remove', { id }).catch(err ?? defaultErrHandler),
+            disconnectDevice: (id, err) => tauri.core.invoke('remote_device_disconnect', { id }).catch(err ?? defaultErrHandler),
+            /** The latest commands devices sent, newest first: [{ at, deviceId, deviceName, cmd, ok, error }]. */
+            log: (err) => tauri.core.invoke('remote_log').catch(err ?? defaultErrHandler),
+            /** Calls back with { notice: { text, severity } or null } whenever what the panel shows changes. */
+            onChanged: (callback) => tauri.event.listen('remote-changed', event => callback(event.payload ?? {})),
+        }
         /** The Task Manager: the user's own processes, read only while it is open. */
         taskManager = {
             /** Lists processes, with the ports each listens on when `ports` is set, which takes longer to read. */

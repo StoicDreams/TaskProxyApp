@@ -48,6 +48,10 @@
  * - myfi: { account } for the MyFi account the app is signed in to, as { id, displayName, offline }, or leave
  *   it out for signed out. myfi_sign_in_wait waits until a test calls window.__backend.myfi.approve(account) or
  *   .end(reason), or the app cancels. myfiStartError: why myfi_sign_in_start fails, when it should.
+ * - remote: Remote Access as services/remote's commands keep it: { enabled, devices: [{ id, name, level, days,
+ *   pairedAt, expiresAt, lastSeen, connected }], log, reachability, enableError }. Turning it on needs a MyFi
+ *   account. window.__backend.remote.pair(name) pairs a device with the open QR code, as a phone would, and
+ *   .changed(notice) sends remote-changed.
  *
  * Page scripts are filled as services/page_scripts.rs fills them, from the page values the window sends, then the
  * backend's copies of the project's and global values. run_page_script refuses a project that appData does not trust.
@@ -323,6 +327,46 @@ function setup(state) {
         entry.info.interactive = true;
         if ('code' in run) Object.assign(entry.info, { status: 'Finished', exitCode: run.code, endedAt: Date.now() });
     }
+    const remote = {
+        enabled: !!state.remote?.enabled,
+        devices: (state.remote?.devices || []).map(device => ({ days: 30, pairedAt: 1, expiresAt: Date.now() + 30 * 86400000, lastSeen: null, connected: false, ...device })),
+        log: state.remote?.log || [],
+        reachability: state.remote?.reachability || { reachable: !!state.remote?.enabled, error: null },
+        invite: null,
+        status() {
+            return {
+                enabled: this.enabled,
+                signedIn: !!myfi.account,
+                desktopName: 'Desk PC',
+                desktopId: this.enabled ? 'b1c2d3e4-0000-4000-8000-000000000001' : null,
+                fingerprint: 'a1b2c3d4e5f60718',
+                reachability: this.reachability,
+                invite: this.invite,
+                devices: this.devices.map(device => ({ ...device })),
+                pairingDays: [7, 30, 90, 0],
+            };
+        },
+        changed(notice) {
+            emitEvent('remote-changed', { notice: notice || null });
+        },
+        /** A device pairs with the open QR code, as one would through the mailbox. */
+        pair(name) {
+            if (!this.invite) throw new Error('No QR code is open.');
+            const device = {
+                id: `device-${this.devices.length + 1}`, name, level: this.invite.level, days: this.invite.days,
+                pairedAt: Date.now(), expiresAt: Date.now() + 86400000, lastSeen: null, connected: false,
+            };
+            this.devices.push(device);
+            this.invite = null;
+            this.changed({ text: `${name} is paired, at the ${device.level[0].toUpperCase()}${device.level.slice(1)} level.`, severity: 'success' });
+            return device;
+        },
+        find(id) {
+            const device = this.devices.find(device => device.id === id);
+            if (!device) throw 'No such device.';
+            return device;
+        },
+    };
     const myfi = {
         account: state.myfi?.account ? { offline: false, ...state.myfi.account } : null,
         waiting: null,
@@ -408,6 +452,7 @@ function setup(state) {
             emitEvent('data-changed', { scope, id: scope === 'app' ? '' : openProject.id, rev: ++dataRev, screen: 'other-screen', set: {}, remove: [], fields: {}, ...patch });
         },
         myfi,
+        remote,
         runs,
         commits,
         files,
@@ -727,8 +772,51 @@ function setup(state) {
             },
             myfi_sign_out: () => {
                 myfi.account = null;
+                Object.assign(remote, { enabled: false, devices: [], invite: null });
                 return null;
             },
+            remote_status: () => remote.status(),
+            remote_set_enabled: ({ enabled }) => {
+                if (enabled && !myfi.account) throw 'Sign in to your Stoic Dreams account first, from the account button at the top.';
+                if (enabled && state.remote?.enableError) throw state.remote.enableError;
+                remote.enabled = enabled;
+                remote.reachability = { reachable: enabled, error: null };
+                if (!enabled) {
+                    remote.invite = null;
+                    remote.devices.forEach(device => device.connected = false);
+                }
+                return remote.status();
+            },
+            remote_invite: ({ invite }) => {
+                if (!remote.enabled) throw 'Turn Remote Access on first.';
+                if (![7, 30, 90, 0].includes(invite.days)) throw 'Choose 7, 30 or 90 days, or for good.';
+                remote.invite = {
+                    link: 'https://www.taskproxy.com/remote/#pair=eyJ2IjoxfQ', name: invite.name, level: invite.level, days: invite.days,
+                    expiresAt: Date.now() + 600000,
+                    svg: '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#fff"/><rect class="qr-test" x="20" y="20" width="60" height="60"/></svg>',
+                };
+                return remote.status();
+            },
+            remote_invite_cancel: () => {
+                remote.invite = null;
+                return remote.status();
+            },
+            remote_device_update: ({ id, change }) => {
+                const device = remote.find(id);
+                if (change.name !== undefined && change.name !== null) device.name = change.name.trim() || 'Device';
+                if (change.level) device.level = change.level;
+                return remote.status();
+            },
+            remote_device_remove: ({ id }) => {
+                remote.find(id);
+                remote.devices = remote.devices.filter(device => device.id !== id);
+                return remote.status();
+            },
+            remote_device_disconnect: ({ id }) => {
+                remote.find(id).connected = false;
+                return remote.status();
+            },
+            remote_log: () => remote.log,
             plugin_host_action: ({ action }) => action.type === 'git.createBranch' ? `Branch '${action.name}' created.` : '',
         },
     };

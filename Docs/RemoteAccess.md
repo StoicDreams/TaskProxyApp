@@ -342,21 +342,37 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 ### 2.2 Pairing
 
-**Remote Access panel:** a new `wc/remote-access.js`, opened from Settings and from a header button that shows while anything is connected.
+*The desktop's side is done. Keeping the computer awake and turning off after idle hours are still to do. A device can pair once 2.4 builds the page the QR code opens.*
 
-**Turning it on:**
-1. If you're signed out, the switch has you sign in first.
-2. Turning it on registers the desktop and starts polling its mailbox every 10 s.
-3. It asks the OS not to sleep: systemd-inhibit on Linux, an IOPMAssertion on macOS, `SetThreadExecutionState` on Windows.
-4. A setting turns it off after a number of hours with no connection.
+**Remote Access panel:** `wc/remote-access.js`, in Settings, and in the header as a button that shows while a device is connected and opens the panel in a dialog.
 
-**Pairing a device:**
-1. Choose a name, a level, and how long it lasts (7, 30, 90 days, or never).
-2. The panel shows a QR code (drawn in Rust as SVG by the `qrcode` crate) and a link.
+**Turning it on** (`remote/service.rs`):
+1. Signed out, the panel says to sign in first, with a Sign In button.
+2. Turning it on registers the desktop with its name and key, and reads its mailbox every 10 s, or every second while a QR code is open or a device is pairing.
+3. At startup it reads the mailbox again if it was on. Without a network it keeps trying. If api.myfi.ws no longer has the desktop, it registers again. If the session ended, it turns off with a notice.
+4. Turning it off stops reading, removes the desktop from api.myfi.ws, ends connections and any QR code, and keeps the paired devices for next time.
+5. **Still to do:** asking the OS not to sleep (systemd-inhibit on Linux, an IOPMAssertion on macOS, `SetThreadExecutionState` on Windows), and a setting that turns it off after a number of hours with no connection.
+
+**Pairing a device** (`remote/pairing.rs`), through the mailbox, so it needs no direct connection:
+1. Choose a name, a level, and how long it stays paired without connecting: 7, 30 or 90 days, or for good. A connection renews it.
+2. The panel shows a QR code, drawn in Rust as SVG by the `qrcode` crate, and the link, with Copy Link and Cancel.
    - **The link:** `https://www.taskproxy.com/remote/#pair=<payload>`.
-   - **The payload, as base64url:** `{v, desktopId, desktopKey, secret, expires}`.
-   - **The secret** works once and expires in 10 minutes.
-3. The phone checks the account (see "How the account check works"), and the device is saved with its account id.
+   - **The payload, as base64url JSON:** `{v: 1, desktopId, desktopKey (hex), secret (base64url), expires (ms), name}`.
+   - **The secret** works once and expires in 10 minutes. A new QR code replaces the open one.
+3. The phone and desktop run `Noise_XXpsk3` through the mailbox. Each message's body is a kind byte and the Noise message (`remote/mailbox.rs`):
+
+   | Kind | From | Carries |
+   |---|---|---|
+   | 1 `Pair1` | Device | Its ephemeral key |
+   | 2 `Pair2` | Desktop | Its key, and `{name}` |
+   | 3 `Pair3` | Device | Its key, `{name}`, and proof it holds the secret |
+   | 4 `Paired` | Desktop | Encrypted `{ok, deviceId, name, level, days, desktopName}` |
+   | 5 `Refused` | Desktop | Why, as plain text |
+
+   - The prologue holds the desktop's id and the reply mailbox, so a message can't be moved to another pairing.
+   - At most 4 pairings wait at once, each for 2 minutes between messages.
+   - A wrong secret is refused without using up the QR code.
+4. The sender's account is checked against the desktop's own (see "How the account check works"), and the device is saved with its account id, level, and lifetime.
 
 **Moving to another device:** working on the phone, then picking up the laptop in another room.
 - **"Continue on another device"** in the client asks the desktop, over the phone's connection, for a one-time pairing like the QR code's: the same payload, 10 minutes, used once.
@@ -364,17 +380,19 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 - The payload also carries where the phone was (project, route, open terminal), so the laptop opens on the same screen.
 - The phone stays connected until it's closed or disconnected. Both are separate paired devices, each in the Paired devices list and the log, and the desktop raises a notification that the phone added the laptop.
 - **Once paired,** the laptop connects from its own list of desktops on taskproxy.com, with no phone needed. "Continue on another device" then only hands over the screen: the link opens the same place on a device that's already paired.
-- **Needs a new command,** `remote_invite`, at the Work level. It is the only way a device creates a pairing, and its level and expiry are capped by the caller's own.
+- **Needs a new command,** `remote_continue`, at the Work level. It is the only way a device creates a pairing, and its level and expiry are capped by the caller's own. The desktop's own `remote_invite` stays desktop-only.
 
 **Paired devices:**
-- Each shows its account, the last time it connected, and how.
-- You can rename one, change its level, revoke it, or disconnect it now.
+- Each shows when it paired, when it last connected, when it unpairs, and whether it's connected now. How it connected comes with 2.3.
+- You can rename one, change its level, unpair it, or disconnect it now.
 
-**Activity:** the audit log.
+**Activity:** the audit log, including pairings and refused pairings, newest first.
 
-**Header indicator:** while a device is connected, a Web UI icon in the header shows its name. Pairing, connecting, and refusals, including a refused account, raise a desktop notification and an alert in the Alerts panel.
+**Header indicator:** while a device is connected, a Web UI icon in the header shows its name. Pairing and refusals, including a refused account, raise a desktop notification and an alert in the Alerts panel. Connecting comes with 2.3.
 
 **Signing out on the desktop**, or signing in as someone else, turns Remote Access off, deletes this desktop from the API, and removes every paired device.
+
+**Commands,** all desktop-only: `remote_status`, `remote_set_enabled`, `remote_invite`, `remote_invite_cancel`, `remote_device_update`, `remote_device_remove`, `remote_device_disconnect`, `remote_log`. `remote-changed` tells the window to refresh, with a notice when there is one.
 
 ### 2.3 WebRTC on the desktop
 

@@ -34,6 +34,14 @@ NOTE: Deleting your security key only removes the key from your OS' key store. Y
 
 <app-security-key-setter></app-security-key-setter>
 
+## Remote Access
+
+<webui-page-segment>
+
+<app-remote-access></app-remote-access>
+
+</webui-page-segment>
+
 ## Plugins
 
 <webui-page-segment>
