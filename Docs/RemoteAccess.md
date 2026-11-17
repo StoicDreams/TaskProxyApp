@@ -262,7 +262,7 @@ The desktop benefits from this as well: terminals and commits no longer depend o
 | **View** | Projects, pages, docs, diffs, file previews, CI, terminal output, the Task Manager list, plugin pages, notifications |
 | **Work** | View, plus: edit pages, docs and navigation; set variables (secrets write-only); run trusted scripts; type into terminals; stop runs and processes; plugin actions that don't change git |
 | **Commit** | Work, plus: commit and the commit queue; pull, push and sync; branches; stash; restore files; plugin host actions that change git |
-| **Desktop only** | Security key, updates, Add Project, installing plugins from a folder, installing PowerShell, trusting a new project, pairing devices, MyFi sign-in and sign-out |
+| **Desktop only** | Security key, updates, Add Project, installing plugins from a folder, installing PowerShell, trusting a new project, pairing devices (except a paired device's "Continue on another device", capped at its own level), MyFi sign-in and sign-out |
 
 ### 1.5 Tests
 
@@ -358,6 +358,14 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
    - **The secret** works once and expires in 10 minutes.
 3. The phone checks the account (see "How the account check works"), and the device is saved with its account id.
 
+**Moving to another device:** working on the phone, then picking up the laptop in another room.
+- **"Continue on another device"** in the client asks the desktop, over the phone's connection, for a one-time pairing like the QR code's: the same payload, 10 minutes, used once.
+- The phone shows it as a QR code and a short link. Opening either on the laptop pairs the laptop: the same account check applies, and the laptop's level and expiry can't be more than the phone's.
+- The payload also carries where the phone was (project, route, open terminal), so the laptop opens on the same screen.
+- The phone stays connected until it's closed or disconnected. Both are separate paired devices, each in the Paired devices list and the log, and the desktop raises a notification that the phone added the laptop.
+- **Once paired,** the laptop connects from its own list of desktops on taskproxy.com, with no phone needed. "Continue on another device" then only hands over the screen: the link opens the same place on a device that's already paired.
+- **Needs a new command,** `remote_invite`, at the Work level. It is the only way a device creates a pairing, and its level and expiry are capped by the caller's own.
+
 **Paired devices:**
 - Each shows its account, the last time it connected, and how.
 - You can rename one, change its level, revoke it, or disconnect it now.
@@ -393,7 +401,7 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 **Signing in comes first.**
 - **Signed out:** the page keeps the `#pair=` payload in `sessionStorage` for that tab, then signs in through the usual stoicdreams.com handoff.
-- **A return path for the handoff:** add a `&return=/remote/` parameter to `/signin?domain=`, and to `webui-myfi-info` in MyFiCDN. It accepts only a path on the same site, and sends you to `https://<site><path>#myfi-signin=<code>`. Other sites can use it too, so deploy the CDN first.
+- **A return path for the handoff (done):** `/signin?domain=<site>&return=<path>` on stoicdreams.com sends you back to `https://<site><path>#myfi-signin=<code>`, accepting only a path on that same site, and falls back to the site's home page otherwise. `webui-myfi-info` sends the page you're on, and its `signinUrl(path)` builds the address for any page, such as `/remote/`.
 - **Back on `/remote/`:** the page exchanges the code as the loader does, then continues the pairing.
 
 **Your desktops:** the page lists them from `GET remote/desktops`, showing which are paired on this device and which are online.
