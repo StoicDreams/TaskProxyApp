@@ -569,8 +569,15 @@
                 openDrawer(t.drawer);
                 return true;
             });
+            // The number of variables on the page shown, set by the page handler as each page loads.
+            t._onPageVariables = ev => t.icon.setAttribute('count', ev.detail > 0 ? ev.detail : '');
+            window.addEventListener('app-page-variables', t._onPageVariables);
+            const count = (webui.currentPageVariables || []).length;
+            t.icon.setAttribute('count', count > 0 ? count : '');
         },
-        disconnected() { },
+        disconnected() {
+            window.removeEventListener('app-page-variables', this._onPageVariables);
+        },
         shadowTemplate: `
 <webui-icon icon="circle_dollar|theme:tertiary|fill|backing|bordered"></webui-icon>
 <style type="text/css">

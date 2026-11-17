@@ -777,16 +777,14 @@ test.describe('spec 0.1.3', () => {
         await expect(full).toHaveAttribute('src', /^blob:/);
         await expect(full).toBeInViewport();
         await expect(hover).toHaveCount(0);
-        // Copied as a PNG, which other apps paste.
+        // Copied through Rust, which puts it on the system clipboard.
         await page.locator('.plugin-image-copy').click();
         await expect.poll(() => alerts(page)).toContain('Copied the image.');
         const copied = await page.evaluate(async () => {
-            const [item] = await navigator.clipboard.read();
-            const blob = await item.getType('image/png');
-            const bitmap = await createImageBitmap(blob);
-            return { types: item.types, width: bitmap.width, height: bitmap.height };
+            const bitmap = await createImageBitmap(new Blob([new Uint8Array(window.__backend.clipboard.bytes)]));
+            return { width: bitmap.width, height: bitmap.height };
         });
-        expect(copied).toEqual({ types: ['image/png'], width: 1200, height: 700 });
+        expect(copied).toEqual({ width: 1200, height: 700 });
         await expect(openDialog(page)).toBeVisible();
     });
 

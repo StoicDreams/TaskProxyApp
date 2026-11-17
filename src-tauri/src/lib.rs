@@ -221,6 +221,8 @@ pub fn run() {
             services::projects::get_project_file,
             services::projects::get_project_file_size,
             services::file_server::get_file_server_base,
+            services::clipboard::copy_image,
+            services::clipboard::copy_image_url,
             services::projects::get_projects,
             services::projects::load_projects,
             services::projects::rename_project,

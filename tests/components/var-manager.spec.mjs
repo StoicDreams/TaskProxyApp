@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, openPage, calls, dialogButton } from '../support/app.mjs';
 
 const open = async page => {
     await page.locator('app-var-manager').click();
@@ -197,4 +197,11 @@ test.describe('values kept on the desktop', () => {
         expect(await page.evaluate(() => webui.getGlobalData('db_password'))).toBeUndefined();
         expect(await page.evaluate(() => window.__copied)).toEqual([]);
     });
+});
+test('the Variables button counts the variables on the page shown, and none on pages without them', async ({ page }) => {
+    await openPage(page, '<webui-input-text data-bind="first"></webui-input-text>\n\n<webui-input-text data-bind="second"></webui-input-text>\n\n<webui-data data-third="3"></webui-data>');
+    const count = page.locator('app-var-manager webui-icon');
+    await expect(count).toHaveAttribute('count', '3');
+    await page.evaluate(() => webui.navigateTo('/'));
+    await expect(count).not.toHaveAttribute('count', /\d/);
 });

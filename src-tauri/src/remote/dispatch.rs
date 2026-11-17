@@ -42,6 +42,9 @@ pub(crate) const DESKTOP_ONLY: &[&str] = &[
     "greet",
     // Previews stream from 127.0.0.1, which a device can't reach. Phase 2 sends files over the connection.
     "get_file_server_base",
+    // The desktop's own clipboard.
+    "copy_image",
+    "copy_image_url",
     "auto_install_powershell",
     "get_version",
     "check_update",

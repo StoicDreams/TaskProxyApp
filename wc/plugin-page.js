@@ -26,22 +26,9 @@
         const bytes = Uint8Array.from(atob(data || ''), char => char.charCodeAt(0));
         return new Blob([bytes], { type });
     }
-    /** An image as a PNG, which is what other apps take from the clipboard. */
-    async function pngOf(blob) {
-        if (blob.type === 'image/png') return blob;
-        const bitmap = await createImageBitmap(blob);
-        const canvas = el('canvas', { width: bitmap.width, height: bitmap.height });
-        canvas.getContext('2d').drawImage(bitmap, 0, 0);
-        return new Promise((resolve, reject) => canvas.toBlob(png => png ? resolve(png) : reject(new Error('The image could not be read.')), 'image/png'));
-    }
     async function copyImage(blob) {
-        try {
-            // A promise, so the copy keeps the click that started it while the PNG is made.
-            await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngOf(blob) })]);
-            webui.alert('Copied the image.', 'success');
-        } catch (error) {
-            webui.alert(`The image could not be copied: ${escape(error?.message || error)}`, 'danger');
-        }
+        const error = message => webui.alert(`The image could not be copied: ${escape(message)}`, 'danger');
+        if (await webui.proxy.copyImage(blob, error)) webui.alert('Copied the image.', 'success');
     }
     /**
      * Makes a markdown image show larger while the pointer is over it, and open in a dialog when clicked, or with

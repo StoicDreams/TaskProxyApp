@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, onCommand, runOutput, runEnds } from '../support/app.mjs';
+import { test, expect, openApp, calls, onCommand, runOutput, runEnds, emit } from '../support/app.mjs';
 
 const open = async (page, state = {}) => {
     await openApp(page, state);
@@ -475,4 +475,23 @@ test.describe('script filter', () => {
         const row = page.locator('#term-status').locator('xpath=ancestor::webui-flex[1]');
         for (const id of ['#btn-kill', '#btn-select-all', '#btn-clear']) await expect(row.locator(id)).toHaveCount(1);
     });
+});
+test('the Terminals button counts the scripts running in every project', async ({ page }) => {
+    await openApp(page);
+    const count = page.locator('app-terminals webui-icon');
+    await expect(count).not.toHaveAttribute('count', /\d/);
+    await page.evaluate(() => webui.proxy.terminalHelpers.runScript('a.ps1', 'body', [], false, false));
+    await expect(count).toHaveAttribute('count', '1');
+    await emit(page, 'run-changed', {
+        projectId: 'other-project', terminalId: 'deploy.ps1',
+        run: { id: 'deploy.ps1', projectId: 'other-project', projectName: 'Storefront', status: 'Running', run: 900, rev: 1, cleared: 0, startedAt: Date.now() },
+    });
+    await expect(count).toHaveAttribute('count', '2');
+    await runEnds(page, { projectId: 'project-id', terminalId: 'a.ps1', code: 0 });
+    await expect(count).toHaveAttribute('count', '1');
+    await emit(page, 'run-changed', {
+        projectId: 'other-project', terminalId: 'deploy.ps1',
+        run: { id: 'deploy.ps1', projectId: 'other-project', projectName: 'Storefront', status: 'Finished', exitCode: 0, run: 900, rev: 2, cleared: 0, startedAt: Date.now(), endedAt: Date.now() },
+    });
+    await expect(count).not.toHaveAttribute('count', /\d/);
 });

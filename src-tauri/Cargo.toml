@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.151"
+version = "0.1.152"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -80,6 +80,10 @@ keepawake = "0.6"
 # Remote Access: WebRTC to a paired device. Its OpenSSL backend reuses the OpenSSL git2 already vendors, so it adds the
 # least to the app (Docs/RemoteAccess.md, 2.3).
 str0m = { version = "0.25", default-features = false, features = ["openssl", "vendored"] }
+# Copies images to the system clipboard, which WebKitGTK's own Copy Image leaves empty on Wayland.
+arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
+# Reads the images copied, in more formats than arboard's own PNG.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 
 [dev-dependencies]
 tempfile = "3"

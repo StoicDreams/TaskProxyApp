@@ -377,6 +377,9 @@
         onTerminalRefresh() {
             // Saved data can reach this before app.js has set up the proxy, when there is nothing to refresh yet.
             if (!webui.proxy?.terminalHelpers) return;
+            // How many scripts are running, in every project.
+            const running = webui.proxy.terminalHelpers.runningCount();
+            this.icon.setAttribute('count', running > 0 ? running : '');
             this.refreshDropdown();
             this.refreshButtons();
             this.renderConsole();

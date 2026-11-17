@@ -30,6 +30,8 @@
     /** Counts preview updates, so a slow answer cannot replace a newer one. */
     let previewRound = 0;
     webui.currentPageVariables = [];
+    /** Tells the header's variables button how many variables the page has (wc/var-manager.js). */
+    const announcePageVariables = () => window.dispatchEvent(new CustomEvent('app-page-variables', { detail: webui.currentPageVariables.length }));
     let onTitleClick = () => {
         // Set after opening, because markup in a dialog's content is processed before it renders.
         webui.wait(() => webui.querySelector('webui-input-text[name="pageSubtitle"]')?.setValue).then(() => {
@@ -210,6 +212,7 @@
                 }
             });
         });
+        announcePageVariables();
         convertMarkdownToSegments(markdown);
         comp.appendChild(topBar);
         segments.forEach(segment => {
@@ -676,6 +679,11 @@
         },
         disconnected() {
             const t = this;
+            // Leaving for a page this handler doesn't draw, such as Settings, leaves no page variables.
+            if (!document.querySelector('app-page-handler')) {
+                webui.currentPageVariables = [];
+                announcePageVariables();
+            }
             if (t._pluginPage) return;
             webui.unwatchAppDataChanges(onAppDataChanged);
             if (sharedDrawerObserver) {

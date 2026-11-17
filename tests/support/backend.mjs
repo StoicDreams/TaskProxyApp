@@ -518,6 +518,9 @@ function setup(state) {
             },
             // openApp serves this address from files and binaryFiles, as the backend's file server does.
             get_file_server_base: () => 'http://files.localhost/token',
+            // The system clipboard, as Rust's copy commands leave it: the last image's bytes, or the address downloaded.
+            copy_image: bytes => { backend.clipboard = { bytes: [...bytes] }; },
+            copy_image_url: ({ url }) => { backend.clipboard = { url }; },
             get_project_file_size: ({ filePath }) => {
                 if (filePath in binaryFiles) return atob(binaryFiles[filePath]).length;
                 if (filePath in files) return new TextEncoder().encode(files[filePath]).length;
@@ -839,7 +842,8 @@ function setup(state) {
     window.__TAURI__ = {
         core: {
             invoke: async (command, args) => {
-                backend.calls.push({ command, args: JSON.parse(JSON.stringify(args ?? {})) });
+                // Raw bytes, as copy_image sends, are recorded by their length.
+                backend.calls.push({ command, args: args instanceof Uint8Array ? { bytes: args.length } : JSON.parse(JSON.stringify(args ?? {})) });
                 const handler = backend.handlers[command];
                 if (!handler) throw `The mock backend has no command named ${command}`;
                 return handler(args);

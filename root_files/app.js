@@ -261,6 +261,32 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('get_version', {}).catch(errHandler);
         }
+        /**
+         * Copies an image, a Blob or an <img>, to the system clipboard through Rust (services/clipboard.rs), since
+         * WebKitGTK's own copy leaves nothing to paste on Wayland. Resolves to true once copied.
+         */
+        async copyImage(image, errHandler) {
+            errHandler ??= defaultErrHandler;
+            try {
+                if (image instanceof Blob) {
+                    const bytes = new Uint8Array(await (await imageForClipboard(image)).arrayBuffer());
+                    await tauri.core.invoke('copy_image', bytes);
+                    return true;
+                }
+                const src = image?.currentSrc || image?.src || '';
+                // Rust downloads images from other websites and the file server, which would taint a canvas here.
+                if (/^https?:/i.test(src)) {
+                    await tauri.core.invoke('copy_image_url', { url: src });
+                    return true;
+                }
+                const bytes = new Uint8Array(await (await pngOfImage(image)).arrayBuffer());
+                await tauri.core.invoke('copy_image', bytes);
+                return true;
+            } catch (error) {
+                errHandler(error?.message || error);
+                return undefined;
+            }
+        }
         loading = {
             show: showLoading,
             hide: hideLoading
@@ -916,6 +942,14 @@
             filters: ['Live', 'Saved', 'Page', 'Running', 'All Running', 'Finished'],
             /** The views that list running scripts, and that a run opens the Terminal Manager on. */
             runningFilters: ['Running', 'All Running'],
+            /** How many scripts are running, in every project, for the Terminals button's count. */
+            runningCount() {
+                let count = 0;
+                for (const state of terminalStates.values()) {
+                    count += Object.values(state.terminals).filter(term => term.status === 'Running').length;
+                }
+                return count;
+            },
             /** The project id to send with a terminal command, which is only needed for a project that is not open. */
             otherProject(projectId) {
                 return projectId && projectId !== (webui.projectData?.id ?? '') ? projectId : undefined;
@@ -1451,6 +1485,60 @@ function makeButton(el, label) {
     });
     return el;
 }
+/** An <img> drawn as a PNG, for images the window already holds, such as data and blob addresses. */
+async function pngOfImage(img) {
+    if (!img.complete) await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width || 300;
+    canvas.height = img.naturalHeight || img.height || 150;
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return new Promise((resolve, reject) => canvas.toBlob(png => png ? resolve(png) : reject(new Error('The image could not be read.')), 'image/png'));
+}
+/** An image Blob in a format Rust reads: PNG, JPEG, WebP, and GIF go as they are, and anything else as a PNG. */
+async function imageForClipboard(blob) {
+    if (/^image\/(png|jpeg|webp|gif)$/.test(blob.type)) return blob;
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    return new Promise((resolve, reject) => canvas.toBlob(png => png ? resolve(png) : reject(new Error('The image could not be read.')), 'image/png'));
+}
+/**
+ * Right-clicking an image offers Copy image, which copies through Rust. The webview's own menu offers a Copy Image
+ * that leaves nothing to paste on Wayland. Shift with the right click still opens the webview's menu.
+ */
+(() => {
+    let menu;
+    const close = () => { menu?.remove(); menu = undefined; };
+    document.addEventListener('contextmenu', ev => {
+        close();
+        if (ev.shiftKey) return;
+        const img = ev.composedPath().find(node => node instanceof HTMLImageElement);
+        if (!img || !(img.currentSrc || img.src)) return;
+        ev.preventDefault();
+        menu = document.createElement('div');
+        menu.className = 'app-image-menu';
+        menu.setAttribute('role', 'menu');
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.setAttribute('role', 'menuitem');
+        copy.textContent = 'Copy image';
+        copy.addEventListener('click', async () => {
+            close();
+            if (await webui.proxy.copyImage(img)) webui.alert('Copied the image.', 'success');
+        });
+        menu.append(copy);
+        menu.style.left = `${Math.min(ev.clientX, window.innerWidth - 160)}px`;
+        menu.style.top = `${Math.min(ev.clientY, window.innerHeight - 50)}px`;
+        document.body.append(menu);
+        copy.focus();
+    }, true);
+    document.addEventListener('mousedown', ev => { if (menu && !ev.composedPath().includes(menu)) close(); }, true);
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') close(); }, true);
+    window.addEventListener('blur', close);
+    window.addEventListener('scroll', close, true);
+})();
 /**
  * Resolves once webui.proxy exists. Unlike webui.wait, it never gives up, since the app can take longer to start
  * than webui.wait allows on a slow connection, and code that ran on without the proxy would throw.
