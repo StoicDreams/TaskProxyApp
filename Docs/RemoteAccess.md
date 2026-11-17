@@ -266,25 +266,27 @@ The desktop benefits from this as well: terminals and commits no longer depend o
 
 ### 1.5 Tests
 
-**Rust:**
-- **Handshakes:** both, with `snow`, over an in-process pipe.
-- **Permissions:** every command at every level, and desktop-only commands always refused.
-- **Secrets:** the redaction sweep.
-- **Runs:** the queue, output trimming and sequence numbers.
-- **Commit pipeline:** against temporary repositories.
-- **Data:** patch revisions.
-- **Script filling:** the ported cases.
-- **MyFi sign-in:** start, wait, cancel and expiry, against a fake API.
+*Done.*
 
-**Database and API:**
-- **App sign-in:** a request that wasn't approved, the wrong secret, an expired request, and a request used twice.
-- **The `StartRequest` fix:** an app session now resolves to its user.
-- **Session expiry.**
+**Rust** (`cargo test -p taskproxy`):
+- **Handshakes:** both, with `snow`, over an in-process pipe, including a wrong pairing secret, a party in the middle, and a device holding another desktop's key (`remote/noise.rs`). `remote/tests.rs` connects a paired device from its handshake to a command's reply.
+- **Permissions:** every command at every level, and desktop-only commands always refused (`remote/dispatch.rs`).
+- **Secrets:** redaction of data and of changes (`services/secrets.rs`), and every remote command placed as redacting or never returning a value (`remote/dispatch.rs`).
+- **Runs:** the queue, output trimming and sequence numbers (`services/runs.rs`).
+- **Commit pipeline:** a job's steps against a temporary repository: the files changed before its script, its changes, and the commit (`services/commit_queue.rs`).
+- **Data:** patch revisions, and changes for a project no longer open (`services/shared_data.rs`).
+- **Script filling:** the ported cases (`services/page_scripts.rs`).
+- **MyFi sign-in:** start, wait, approval, refusal, cancel, a new sign-in replacing one, and expiry while the API can't be reached, against a fake API (`services/myfi.rs`).
+
+**Database and API** (`pwsh ./PowerShell/Test-Database.ps1` in `Apis/Databases`, against a throwaway PostgreSQL cluster):
+- **App sign-in:** a request that wasn't approved, the wrong secret, another app collecting, an expired request, a request used twice, who may approve, and the limit on sign-ins from one place.
+- **The `StartRequest` fix:** an app session resolves to its user, which fails with the code from before the fix.
+- **Session expiry:** each use keeps a session 90 more days, and an expired one signs no one in.
+- API endpoints are these SQL functions, so the tests call them directly.
 
 **UI:**
 - `tests/components/account.spec.mjs`.
-- The existing Terminal Manager, Git Controller and Variables specs, unchanged in what they check, now against the Rust-backed state.
-- Then `npm run test:min` and `npm run test:stress` on the changed specs.
+- The Terminal Manager, Git Controller and Variables specs run against the Rust-backed state in the mock backend.
 
 ---
 

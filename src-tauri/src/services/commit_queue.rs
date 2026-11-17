@@ -788,4 +788,84 @@ mod tests {
             );
         }
     }
+
+    /// A job's steps on a real repository: the files changed before its script, the script's changes, then the
+    /// commit of the chosen files and those the script changed.
+    #[test]
+    fn a_job_commits_the_chosen_files_and_the_scripts_changes_in_a_real_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let repository = git2::Repository::init(root).unwrap();
+        let write = |file: &str, contents: &str| std::fs::write(root.join(file), contents).unwrap();
+        for file in ["a.txt", "a.min.txt", "old.txt", "c.txt"] {
+            write(file, "first");
+        }
+        {
+            let mut index = repository.index().unwrap();
+            index
+                .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+                .unwrap();
+            index.write().unwrap();
+            let tree = repository.find_tree(index.write_tree().unwrap()).unwrap();
+            let signature = git2::Signature::now("Test", "test@example.com").unwrap();
+            repository
+                .commit(Some("HEAD"), &signature, &signature, "first", &tree, &[])
+                .unwrap();
+        }
+        // Changed before the script: a.txt and c.txt were chosen, old.txt was not.
+        write("a.txt", "chosen");
+        std::fs::remove_file(root.join("c.txt")).unwrap();
+        write("old.txt", "not chosen");
+        let names = |lines: &[String]| {
+            lines
+                .iter()
+                .filter_map(|line| change_name(line))
+                .collect::<Vec<_>>()
+        };
+        let before = names(&git_controller::collect_changes(&repository).unwrap());
+        // The script minifies a.txt, and writes b.txt, which the user excluded.
+        write("a.min.txt", "minified");
+        write("b.txt", "excluded");
+        let mut chosen = job("1", &root.to_string_lossy(), "");
+        chosen.files = lines(&["a.txt", "c.txt"]);
+        chosen.excluded = lines(&["b.txt"]);
+        let after = git_controller::collect_changes(&repository).unwrap();
+        let files = files_to_commit(&after, &chosen, Some(&before));
+        let mut sorted = files.clone();
+        sorted.sort();
+        assert_eq!(sorted, ["a.min.txt", "a.txt", "c.txt"]);
+        git_controller::commit_files(&repository, root, &files, "Commit with a script").unwrap();
+
+        let head = repository.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.message(), Some("Commit with a script"));
+        let tree = head.tree().unwrap();
+        let committed = |file: &str| {
+            tree.get_path(Path::new(file)).ok().map(|entry| {
+                String::from_utf8(repository.find_blob(entry.id()).unwrap().content().to_vec())
+                    .unwrap()
+            })
+        };
+        assert_eq!(committed("a.txt").as_deref(), Some("chosen"));
+        assert_eq!(
+            committed("a.min.txt").as_deref(),
+            Some("minified"),
+            "the script's change joins the commit"
+        );
+        assert_eq!(committed("c.txt"), None, "a chosen deletion is committed");
+        assert_eq!(
+            committed("old.txt").as_deref(),
+            Some("first"),
+            "a change that was not chosen stays out"
+        );
+        assert_eq!(
+            committed("b.txt"),
+            None,
+            "an excluded file stays out even when the script wrote it"
+        );
+        let left = names(&git_controller::collect_changes(&repository).unwrap());
+        assert_eq!(left.len(), 2, "{:?}", left);
+        assert!(
+            left.iter().any(|name| name == "old.txt") && left.iter().any(|name| name == "b.txt")
+        );
+    }
 }

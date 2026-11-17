@@ -79,8 +79,107 @@ struct Pending {
     expires: Instant,
 }
 
-static PENDING: LazyLock<Mutex<Option<Pending>>> = LazyLock::new(|| Mutex::new(None));
-static NEXT_SIGN_IN: LazyLock<Mutex<u64>> = LazyLock::new(|| Mutex::new(0));
+/// The sign-in waiting for the user's approval. Starting another replaces it, and the one waiting stops.
+#[derive(Default)]
+pub(crate) struct SignIns {
+    pending: Mutex<Option<Pending>>,
+    next: Mutex<u64>,
+}
+
+static SIGN_INS: LazyLock<SignIns> = LazyLock::new(SignIns::default);
+
+impl SignIns {
+    /// Starts waiting for a request the API made, which lasts `lasts`. Returns its id.
+    pub(crate) fn begin(
+        &self,
+        request: String,
+        secret: String,
+        lasts: Duration,
+    ) -> Result<u64, String> {
+        let id = {
+            let mut next = self.next.lock().map_err(|_| "Failed to acquire lock")?;
+            *next += 1;
+            *next
+        };
+        *self.pending.lock().map_err(|_| "Failed to acquire lock")? = Some(Pending {
+            id,
+            request,
+            secret,
+            expires: Instant::now() + lasts,
+        });
+        Ok(id)
+    }
+
+    /// Stops waiting. The request is left to expire.
+    pub(crate) fn cancel(&self) -> Result<(), String> {
+        *self.pending.lock().map_err(|_| "Failed to acquire lock")? = None;
+        Ok(())
+    }
+
+    /// Waits for the user to approve the sign-in, asking the API every `poll`, and returns its session. None when
+    /// it was cancelled or replaced by a new sign-in. A refusal or expiry is an error with the reason.
+    pub(crate) async fn wait(
+        &self,
+        api: &MyFiApi,
+        poll: Duration,
+    ) -> Result<Option<String>, String> {
+        let Some(id) = self
+            .pending
+            .lock()
+            .map_err(|_| "Failed to acquire lock")?
+            .as_ref()
+            .map(|p| p.id)
+        else {
+            return Ok(None);
+        };
+        let take = || {
+            if let Ok(mut pending) = self.pending.lock()
+                && pending.as_ref().map(|p| p.id) == Some(id)
+            {
+                *pending = None;
+            }
+        };
+        loop {
+            let (request, secret, expired) = {
+                let pending = self.pending.lock().map_err(|_| "Failed to acquire lock")?;
+                match pending.as_ref() {
+                    Some(p) if p.id == id => (
+                        p.request.clone(),
+                        p.secret.clone(),
+                        Instant::now() >= p.expires,
+                    ),
+                    _ => return Ok(None),
+                }
+            };
+            if expired {
+                take();
+                return Err(String::from("The sign-in expired. Start signing in again."));
+            }
+            // Not reaching the API is often brief, so it keeps asking until the request expires.
+            match api.collect(&request, &secret).await {
+                Ok(Collected::Waiting) | Err(_) => sleep(poll).await,
+                Ok(Collected::Ended(reason)) => {
+                    take();
+                    return Err(reason);
+                }
+                Ok(Collected::Session(session)) => {
+                    // A sign-in cancelled while the API answered is not kept.
+                    let current = self
+                        .pending
+                        .lock()
+                        .map_err(|_| "Failed to acquire lock")?
+                        .as_ref()
+                        .map(|p| p.id);
+                    if current != Some(id) {
+                        return Ok(None);
+                    }
+                    take();
+                    return Ok(Some(session));
+                }
+            }
+        }
+    }
+}
 
 /// api.myfi.ws, as the app uses it. The address can change for tests.
 pub(crate) struct MyFiApi {
@@ -323,17 +422,11 @@ pub(crate) async fn myfi_sign_in_start(app: AppHandle) -> Result<SignInStarted, 
     let name = computer_name(sysinfo::System::host_name().ok());
     let started = api()?.start(&challenge, &name).await?;
     let url = sign_in_page_url(&started.request)?;
-    let id = {
-        let mut next = NEXT_SIGN_IN.lock().map_err(|_| "Failed to acquire lock")?;
-        *next += 1;
-        *next
-    };
-    *PENDING.lock().map_err(|_| "Failed to acquire lock")? = Some(Pending {
-        id,
-        request: started.request,
+    SIGN_INS.begin(
+        started.request,
         secret,
-        expires: Instant::now() + Duration::from_secs(started.expires_in.min(3600)),
-    });
+        Duration::from_secs(started.expires_in.min(3600)),
+    )?;
     {
         use tauri_plugin_opener::OpenerExt;
         // The page's address is shown too, so a browser that doesn't open is not the end of it.
@@ -350,66 +443,25 @@ pub(crate) async fn myfi_sign_in_start(app: AppHandle) -> Result<SignInStarted, 
 #[tauri::command]
 pub(crate) async fn myfi_sign_in_wait() -> Result<Option<MyFiStatus>, String> {
     let api = api()?;
-    let Some(id) = PENDING
-        .lock()
-        .map_err(|_| "Failed to acquire lock")?
-        .as_ref()
-        .map(|p| p.id)
-    else {
+    let Some(session) = SIGN_INS.wait(&api, POLL).await? else {
         return Ok(None);
     };
-    let take = || {
-        if let Ok(mut pending) = PENDING.lock()
-            && pending.as_ref().map(|p| p.id) == Some(id)
-        {
-            *pending = None;
-        }
-    };
-    loop {
-        let (request, secret, expired) = {
-            let pending = PENDING.lock().map_err(|_| "Failed to acquire lock")?;
-            match pending.as_ref() {
-                Some(p) if p.id == id => (
-                    p.request.clone(),
-                    p.secret.clone(),
-                    Instant::now() >= p.expires,
-                ),
-                _ => return Ok(None),
-            }
-        };
-        if expired {
-            take();
-            return Err(String::from("The sign-in expired. Start signing in again."));
-        }
-        // Not reaching the API is often brief, so it keeps asking until the request expires.
-        match api.collect(&request, &secret).await {
-            Ok(Collected::Waiting) | Err(_) => sleep(POLL).await,
-            Ok(Collected::Ended(reason)) => {
-                take();
-                return Err(reason);
-            }
-            Ok(Collected::Session(session)) => {
-                take();
-                let account = api.account(&session).await.ok().flatten();
-                write_stored(StoredSignIn {
-                    session,
-                    account: account.clone(),
-                })
-                .await?;
-                return Ok(account.map(|account| MyFiStatus {
-                    account,
-                    offline: false,
-                }));
-            }
-        }
-    }
+    let account = api.account(&session).await.ok().flatten();
+    write_stored(StoredSignIn {
+        session,
+        account: account.clone(),
+    })
+    .await?;
+    Ok(account.map(|account| MyFiStatus {
+        account,
+        offline: false,
+    }))
 }
 
 /// Stops waiting for a sign-in. The request is left to expire.
 #[tauri::command]
 pub(crate) async fn myfi_sign_in_cancel() -> Result<(), String> {
-    *PENDING.lock().map_err(|_| "Failed to acquire lock")? = None;
-    Ok(())
+    SIGN_INS.cancel()
 }
 
 /// Ends the session with the API, when it can be reached, and forgets it here either way. Remote Access turns off
@@ -669,5 +721,130 @@ mod tests {
             "https://www.stoicdreams.com/signin?app=taskproxy&request=3160d8e4-e8dd-43c7-a397-43b17ef46cbc"
         );
         assert!(sign_in_page_url("x&domain=evil.example").is_err());
+    }
+
+    const SESSION: &str =
+        r#"{"session":"0f9eb2b1-01ce-422f-af58-d758144125c8","expiresIn":7776000}"#;
+    const FAST: Duration = Duration::from_millis(10);
+
+    fn unreachable_api() -> MyFiApi {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        MyFiApi::new(&base).unwrap()
+    }
+
+    #[tokio::test]
+    async fn waiting_returns_the_session_once_the_user_approves() {
+        let (base, received) = fake_api(vec![(202, "Waiting"), (202, "Waiting"), (200, SESSION)]);
+        let sign_ins = SignIns::default();
+        sign_ins
+            .begin("req".into(), "secret".into(), Duration::from_secs(60))
+            .unwrap();
+        let session = sign_ins
+            .wait(&MyFiApi::new(&base).unwrap(), FAST)
+            .await
+            .unwrap();
+        assert_eq!(
+            session.as_deref(),
+            Some("0f9eb2b1-01ce-422f-af58-d758144125c8")
+        );
+        assert_eq!(received.try_iter().count(), 3, "it asked until approved");
+        assert_eq!(
+            sign_ins
+                .wait(&MyFiApi::new(&base).unwrap(), FAST)
+                .await
+                .unwrap(),
+            None,
+            "a sign-in is used once"
+        );
+    }
+
+    #[tokio::test]
+    async fn waiting_ends_with_the_reason_it_was_refused() {
+        let (base, _received) =
+            fake_api(vec![(202, "Waiting"), (400, "This sign-in was refused.")]);
+        let sign_ins = SignIns::default();
+        sign_ins
+            .begin("req".into(), "secret".into(), Duration::from_secs(60))
+            .unwrap();
+        let err = sign_ins
+            .wait(&MyFiApi::new(&base).unwrap(), FAST)
+            .await
+            .unwrap_err();
+        assert_eq!(err, "This sign-in was refused.");
+        assert_eq!(sign_ins.wait(&unreachable_api(), FAST).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_sign_in_expires_even_while_the_api_cannot_be_reached() {
+        let sign_ins = SignIns::default();
+        sign_ins
+            .begin("req".into(), "secret".into(), Duration::from_millis(150))
+            .unwrap();
+        let started = Instant::now();
+        let err = sign_ins.wait(&unreachable_api(), FAST).await.unwrap_err();
+        assert!(err.contains("expired"), "{}", err);
+        assert!(
+            started.elapsed() >= Duration::from_millis(150),
+            "it kept asking until it expired"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_stops_the_wait_with_nothing_signed_in() {
+        let sign_ins = Arc::new(SignIns::default());
+        sign_ins
+            .begin("req".into(), "secret".into(), Duration::from_secs(60))
+            .unwrap();
+        let waiting = {
+            let sign_ins = sign_ins.clone();
+            tokio::spawn(async move { sign_ins.wait(&unreachable_api(), FAST).await })
+        };
+        sleep(Duration::from_millis(50)).await;
+        sign_ins.cancel().unwrap();
+        assert_eq!(waiting.await.unwrap().unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_new_sign_in_replaces_the_one_waiting() {
+        let sign_ins = Arc::new(SignIns::default());
+        sign_ins
+            .begin("first".into(), "s1".into(), Duration::from_secs(60))
+            .unwrap();
+        let waiting = {
+            let sign_ins = sign_ins.clone();
+            tokio::spawn(async move { sign_ins.wait(&unreachable_api(), FAST).await })
+        };
+        sleep(Duration::from_millis(50)).await;
+        sign_ins
+            .begin("second".into(), "s2".into(), Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(
+            waiting.await.unwrap().unwrap(),
+            None,
+            "the first wait stops"
+        );
+        // The new one is still there to wait for.
+        let (base, received) = fake_api(vec![(200, SESSION)]);
+        assert!(
+            sign_ins
+                .wait(&MyFiApi::new(&base).unwrap(), FAST)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(body_of(&received.recv().unwrap())["request"], "second");
+    }
+
+    #[tokio::test]
+    async fn waiting_with_no_sign_in_started_returns_at_once() {
+        assert_eq!(
+            SignIns::default()
+                .wait(&unreachable_api(), FAST)
+                .await
+                .unwrap(),
+            None
+        );
     }
 }

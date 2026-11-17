@@ -678,7 +678,7 @@ pub(crate) async fn git_commit(
     result.map_err(|err| format!("{}", err))?
 }
 
-fn commit_files(
+pub(crate) fn commit_files(
     repository: &Repository,
     git_path: &Path,
     files: &[String],
@@ -1034,7 +1034,7 @@ fn repo_git_status(
     })
 }
 
-fn collect_changes(repository: &Repository) -> Result<Vec<String>, String> {
+pub(crate) fn collect_changes(repository: &Repository) -> Result<Vec<String>, String> {
     let mut options = git2::StatusOptions::new();
     options.include_untracked(true).recurse_untracked_dirs(true);
     let statuses = repository

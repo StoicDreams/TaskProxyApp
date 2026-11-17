@@ -46,6 +46,33 @@ pub(crate) struct DataRevs {
     project: AtomicU64,
 }
 
+impl DataRevs {
+    /// Applies a change to app data. Returns the new revision, which a refused change does not raise.
+    pub(crate) fn patch_app(
+        &self,
+        data: &mut TaskProxyData,
+        patch: &DataPatch,
+    ) -> Result<u64, String> {
+        apply_patch(data, patch, &[])?;
+        Ok(self.app.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    /// Applies a change to the open project's data, when `id` is that project. A change for a project that is no
+    /// longer open is dropped, and returns 0. Returns the new revision.
+    pub(crate) fn patch_project(
+        &self,
+        project: &mut ProjectData,
+        id: &str,
+        patch: &DataPatch,
+    ) -> Result<u64, String> {
+        if id.is_empty() || project.id != id {
+            return Ok(0);
+        }
+        apply_patch(project, patch, &FIXED_PROJECT_FIELDS)?;
+        Ok(self.project.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+}
+
 /// Applies a patch to `target`, whose `data` holds the values. Fields it does not have, and `fixed` ones, are
 /// ignored, and a field of the wrong type is refused, leaving `target` unchanged.
 pub(crate) fn apply_patch<T: Serialize + DeserializeOwned>(
@@ -111,8 +138,7 @@ pub(crate) fn patch_app_data(
         let mut app_data = state
             .lock()
             .map_err(|err| format!("State failure: {}", err))?;
-        apply_patch(&mut *app_data, &patch, &[])?;
-        revs.app.fetch_add(1, Ordering::SeqCst) + 1
+        revs.patch_app(&mut app_data, &patch)?
     };
     send_changed(
         &app_handle,
@@ -142,11 +168,11 @@ pub(crate) fn patch_project_data(
         let mut project = state
             .lock()
             .map_err(|err| format!("State failure: {}", err))?;
-        if id.is_empty() || project.id != id {
+        let rev = revs.patch_project(&mut project, &id, &patch)?;
+        if rev == 0 {
             return Ok(0);
         }
-        apply_patch(&mut *project, &patch, &FIXED_PROJECT_FIELDS)?;
-        revs.project.fetch_add(1, Ordering::SeqCst) + 1
+        rev
     };
     send_changed(
         &app_handle,
@@ -269,5 +295,50 @@ mod tests {
             Some(&json!({ "value": "/repo" }))
         );
         assert_eq!(data.variables, ["x|text|"]);
+    }
+
+    #[test]
+    fn each_change_raises_its_scopes_revision_by_one() {
+        let revs = DataRevs::default();
+        let mut app = TaskProxyData::new();
+        let mut data = project();
+        let change = patch(json!({ "set": { "one": "x" } }));
+        assert_eq!(revs.patch_app(&mut app, &change).unwrap(), 1);
+        assert_eq!(revs.patch_app(&mut app, &change).unwrap(), 2);
+        assert_eq!(
+            revs.patch_project(&mut data, "p1", &change).unwrap(),
+            1,
+            "projects are numbered apart from app data"
+        );
+        assert_eq!(revs.patch_project(&mut data, "p1", &change).unwrap(), 2);
+        assert_eq!(revs.patch_app(&mut app, &change).unwrap(), 3);
+    }
+
+    #[test]
+    fn a_refused_change_does_not_raise_the_revision() {
+        let revs = DataRevs::default();
+        let mut data = project();
+        let bad = patch(json!({ "fields": { "variables": "not a list" } }));
+        assert!(revs.patch_project(&mut data, "p1", &bad).is_err());
+        assert_eq!(
+            revs.patch_project(&mut data, "p1", &patch(json!({ "set": { "a": 1 } })))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_change_for_a_project_no_longer_open_is_dropped() {
+        let revs = DataRevs::default();
+        let mut data = project();
+        let change = patch(json!({ "set": { "one": "changed" } }));
+        assert_eq!(revs.patch_project(&mut data, "other", &change).unwrap(), 0);
+        assert_eq!(revs.patch_project(&mut data, "", &change).unwrap(), 0);
+        assert_eq!(data.data.get("one"), Some(&json!("1")));
+        assert_eq!(
+            revs.patch_project(&mut data, "p1", &change).unwrap(),
+            1,
+            "dropped changes take no revision"
+        );
     }
 }
