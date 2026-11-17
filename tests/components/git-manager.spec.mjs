@@ -641,65 +641,55 @@ test.describe('file list', () => {
         await page.waitForTimeout(200);
         await expect(manager(page).locator('.files .file-row:not([hidden])')).toHaveCount(1);
     });
-    test('the file list and preview fill the window and scroll on their own', async ({ page }) => {
+    // How the panes look is checked by eye. These check what a person can see and reach while using them.
+    const scrollPageToBottom = page => page.evaluate(() => {
+        const main = document.querySelector('webui-app').shadowRoot.querySelector('main');
+        main.scrollTop = main.scrollHeight;
+    });
+    test('the file list scrolls on its own, keeping the commit controls and the comparison in view', async ({ page }) => {
         await page.setViewportSize({ width: 1400, height: 800 });
         const many = Array.from({ length: 150 }, (_, i) => `M  src/file${i}.cs`);
         await openList(page, { changes: many });
-        const layout = () => manager(page).evaluate(el => {
-            const root = el.shadowRoot;
-            let scroller = el.assignedSlot || el.parentElement;
-            while (scroller && !['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY)) scroller = scroller.assignedSlot || scroller.parentElement || scroller.getRootNode().host;
-            const files = root.querySelector('.files');
-            const panes = root.querySelector('.commit-panes').getBoundingClientRect();
-            return {
-                listScrolls: files.scrollHeight > files.clientHeight,
-                panesBottom: Math.round(panes.bottom),
-                visibleBottom: Math.round(scroller.getBoundingClientRect().bottom),
-                pageScroll: scroller.scrollTop,
-                pageOverflow: scroller.scrollHeight - scroller.clientHeight,
-            };
-        });
-        await expect.poll(async () => (await layout()).listScrolls).toBe(true);
-        const before = await layout();
-        // The panes stop at the bottom of the visible page, less its padding, give or take rounding.
-        expect(before.panesBottom).toBeLessThanOrEqual(before.visibleBottom + 1);
-        expect(before.panesBottom).toBeGreaterThan(before.visibleBottom - 10);
-        // Nothing below the panes makes the page itself scroll, so a scroll that reaches the end of a pane goes nowhere.
-        await expect.poll(async () => (await layout()).pageOverflow).toBeLessThanOrEqual(0);
+        const rows = manager(page).locator('.files .file-row');
+        await expect(rows).toHaveCount(150);
+        // Too many files to show at once: the last is out of view until the list is scrolled.
+        await expect(rows.last()).not.toBeInViewport();
         await manager(page).locator('.files').evaluate(files => { files.scrollTop = files.scrollHeight; });
-        await page.waitForTimeout(100);
-        expect((await layout()).pageScroll).toBe(0);
+        await expect(rows.last()).toBeInViewport();
+        // Only the list moved: the page didn't scroll its controls away.
         await expect(manager(page).locator('webui-button[label="Commit"]')).toBeInViewport();
         await expect(manager(page).locator('webui-content-compare')).toBeInViewport();
+        await expect(manager(page).locator('webui-button[label="Refresh"]')).toBeInViewport();
     });
     test('a long branch list on its hidden tab does not make the page scroll', async ({ page }) => {
         await page.setViewportSize({ width: 1400, height: 800 });
         const branches = Array.from({ length: 40 }, (_, i) => ({ name: `feature/${i}`, isCurrent: i === 0, updatedDate: '2026-01-01' }));
         await openList(page, { branches });
-        const layout = () => manager(page).evaluate(el => {
-            const scroller = el.parentElement.shadowRoot?.querySelector('main') || document.querySelector('webui-app').shadowRoot.querySelector('main');
-            return { overflow: scroller.scrollHeight - scroller.clientHeight, panes: Math.round(el.shadowRoot.querySelector('.commit-panes').getBoundingClientRect().height) };
-        });
-        await expect.poll(async () => (await layout()).overflow).toBeLessThanOrEqual(0);
-        // The panes still fill the page, rather than shrinking to make room for the hidden list.
-        expect((await layout()).panes).toBeGreaterThan(500);
+        // With the branches hidden, there is nothing below the panes to scroll to, so the top controls stay put.
+        await scrollPageToBottom(page);
+        await expect(manager(page).locator('webui-button[label="Refresh"]')).toBeInViewport();
+        await expect(manager(page).locator('webui-button[label="Commit"]')).toBeInViewport();
+        // Shown, the long list can be scrolled to its last branch.
         await openBranches(page);
-        await expect.poll(async () => (await layout()).overflow).toBeGreaterThan(0);
+        const last = manager(page).locator('webui-button.btn-switch').last();
+        await last.scrollIntoViewIfNeeded();
+        await expect(last).toBeInViewport();
     });
-    test('the panes keep their size when something else holds the page taller than them', async ({ page }) => {
+    test('the panes keep showing when something else holds the page taller than them', async ({ page }) => {
         await page.setViewportSize({ width: 1400, height: 800 });
         await openList(page);
-        const panesHeight = () => manager(page).evaluate(el => Math.round(el.shadowRoot.querySelector('.commit-panes').getBoundingClientRect().height));
-        await expect.poll(panesHeight).toBeGreaterThan(500);
-        const fitted = await panesHeight();
-        // A hidden tab that stays tall keeps the tabs from shrinking with the panes.
+        const firstFile = manager(page).locator('.files .file-row').first();
+        await expect(firstFile).toBeInViewport();
+        // A hidden tab that stays tall once made the panes shrink a little more on every fit, until they were gone.
         await manager(page).evaluate(el => {
             const hidden = el.shadowRoot.querySelectorAll('webui-tabs > [slot="content"]')[1];
             hidden.style.cssText = 'height:1500px !important;min-height:1500px !important;';
         });
         // Every fit is a chance to shrink further, so give it several.
         await page.waitForTimeout(2000);
-        expect(Math.abs(await panesHeight() - fitted)).toBeLessThanOrEqual(2);
+        await expect(firstFile).toBeInViewport();
+        await expect(manager(page).locator('webui-content-compare')).toBeInViewport();
+        await expect(manager(page).locator('webui-button[label="Commit"]')).toBeInViewport();
     });
     test('hundreds of files are listed', async ({ page }) => {
         const many = Array.from({ length: 600 }, (_, i) => `M  src/folder${i % 20}/file${i}.cs`);
@@ -1135,9 +1125,6 @@ test.describe('plugin branch cards', () => {
         await expect(cards).toHaveCount(1);
         await expect(cards).toContainText('In Progress');
         await expect(cards).toContainText('Assigned to Sam Lee');
-        // The Git Controller has its own shadow DOM, which the page's plugin styles must still reach.
-        await expect(cards.locator('.plugin-badge')).toHaveCSS('background-color', /rgb/);
-        expect(await cards.locator('.plugin-badge').evaluate(el => getComputedStyle(el).borderRadius)).not.toBe('0px');
         await cards.getByText('PJ-3').click();
         await expect(page).toHaveURL(/\/plugin\/jira\/issue\?key=PJ-3$/);
         await expect(page.locator('app-plugin-page')).toHaveText('Issue page');

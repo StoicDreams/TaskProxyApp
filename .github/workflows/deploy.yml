@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.147
+  VERSION: 0.1.150
 
 jobs:
   test:
@@ -38,7 +38,8 @@ jobs:
       - name: build frontend
         run: trunk build
       - name: run tests
-        run: cargo test -p taskproxy
+        # The tests are all in the library; main.rs and the doc tests have none, and the release build compiles main.rs.
+        run: cargo test -p taskproxy --lib
       - name: install Node
         uses: actions/setup-node@v4
         with:

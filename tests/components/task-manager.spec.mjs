@@ -188,14 +188,19 @@ test('a refresh keeps the list where it was scrolled to, and only redraws the ro
         };
     });
     await view(page).locator('.tm-pace').selectOption('1000');
-    const wrap = view(page).locator('.tm-table-wrap');
-    await expect.poll(() => wrap.evaluate(el => el.scrollHeight > el.clientHeight + 400)).toBe(true);
-    await wrap.evaluate(el => { el.scrollTop = 400; });
-    const kept = await row(page, 1100).elementHandle();
+    const first = view(page).locator('tr.tm-row').first();
+    // Scrolled down the list, as a person would, until a row in the middle of it shows and the first row is out of
+    // view. Rows sort by name, so worker-50 is in the middle.
+    await row(page, 1050).scrollIntoViewIfNeeded();
+    await expect(row(page, 1050)).toBeInViewport();
+    await expect(first).not.toBeInViewport();
+    const kept = await row(page, 1050).elementHandle();
     const reads = (await calls(page, 'list_processes')).length;
     await expect.poll(async () => (await calls(page, 'list_processes')).length, { timeout: 5000 }).toBeGreaterThan(reads + 1);
     await expect(row(page, 1005).locator('.c-cpu')).not.toHaveText('0%');
-    expect(await wrap.evaluate(el => el.scrollTop)).toBe(400);
+    // After the refreshes the same rows show: the list didn't jump back to the top.
+    await expect(row(page, 1050)).toBeInViewport();
+    await expect(first).not.toBeInViewport();
     expect(await kept.evaluate(el => el.isConnected)).toBe(true);
 });
 
@@ -217,16 +222,22 @@ test('processes that start between reads keep the list where it was scrolled to,
     const wrap = view(page).locator('.tm-table-wrap');
     const reads = async () => (await calls(page, 'list_processes')).length;
     await view(page).locator('.tm-pace').selectOption('1000');
-    await expect.poll(() => wrap.evaluate(el => el.scrollHeight > el.clientHeight + 600)).toBe(true);
-    await wrap.evaluate(el => { el.scrollTop = 600; });
+    const first = view(page).locator('tr.tm-row').first();
+    await row(page, 1050).scrollIntoViewIfNeeded();
+    await expect(row(page, 1050)).toBeInViewport();
+    await expect(first).not.toBeInViewport();
     const before = await reads();
     await expect.poll(reads, { timeout: 5000 }).toBeGreaterThan(before + 1);
     await expect.poll(() => view(page).locator('tr.tm-row[data-pid="902"]').count()).toBe(1);
-    expect(await wrap.evaluate(el => el.scrollTop)).toBe(600);
+    // New processes arrived. They sort above worker-50, so they push it down, but the list didn't jump back to the top.
+    await expect(first).not.toBeInViewport();
+    // Scrolled to the end, the last row shows, and keeps showing as more processes arrive.
     await wrap.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    const last = view(page).locator('tr.tm-row').last();
+    await expect(last).toBeInViewport();
     const end = await reads();
     await expect.poll(reads, { timeout: 5000 }).toBeGreaterThan(end + 1);
-    expect(await wrap.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(2);
+    await expect(view(page).locator('tr.tm-row').last()).toBeInViewport();
 });
 
 test('a refresh leaves the header as it is, since WebKit moved the list when the header and summary were rewritten together', async ({ page }) => {

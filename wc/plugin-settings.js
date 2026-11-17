@@ -47,7 +47,8 @@
             const id = t.getAttribute('plugin');
             if (!id) return;
             const load = ++t._load;
-            await webui.wait(() => webui.proxy?.plugins);
+            // whenProxyReady waits however long the app takes to start, where webui.wait gives up after about 10 seconds.
+            await whenProxyReady();
             const view = await webui.proxy.plugins.settings(id);
             if (load !== t._load || !view) return;
             t.render(id, view);

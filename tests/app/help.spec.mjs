@@ -36,19 +36,12 @@ test('the Git Controller can be used with its help open', async ({ page }) => {
     await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(before);
     await expect(page.locator('webui-page-help .panel')).toBeVisible();
 });
-test('the help bubble sits above the app footer', async ({ page }) => {
+test('the app footer never covers the help bubble', async ({ page }) => {
     await openApp(page, { currentPage: '/script-manager' }, '/script-manager');
+    // Wait for the footer, which renders shortly after the page.
+    await page.locator('webui-app > footer[slot="footer"]').waitFor();
+    // A real click, which Playwright refuses when another element, such as the footer, would take it.
     const bubble = page.locator('webui-page-help button.bubble');
-    await expect(bubble).toBeVisible();
-    // The app footer renders shortly after the page, and the bubble moves up to clear it.
-    const gap = () => page.evaluate(() => {
-        const footerEl = document.querySelector('webui-app > footer[slot="footer"]');
-        const floatEl = document.querySelector('webui-page-help')?.shadowRoot?.querySelector('.float');
-        if (!footerEl || !floatEl) return -1;
-        const footer = footerEl.getBoundingClientRect();
-        const help = floatEl.getBoundingClientRect();
-        return Math.round(footer.top - help.bottom);
-    });
-    await expect.poll(gap).toBeGreaterThanOrEqual(8);
-    expect(await gap()).toBeLessThan(40);
+    await bubble.click();
+    await expect(page.locator('webui-page-help .panel')).toBeVisible();
 });

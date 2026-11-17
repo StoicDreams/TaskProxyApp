@@ -26,11 +26,13 @@ npm run capture                  # Regenerate the website's loops and videos (to
 npm run capture -- loops -g "<name>"    # One website loop
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
 pwsh ./PowerShell/Minify.ps1                      # Regenerate every .min.js and .min.css with esbuild
-pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, CI's tests, then re-record the website's media (-SkipMinify, -SkipTests, -SkipScreenshots or -SkipMedia, -Version minor)
+pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, CI's tests, then start re-recording the website's media without waiting for it (-SkipMinify, -SkipTests, -SkipScreenshots or -SkipMedia, -WaitForScreenshots, -Version minor)
 pwsh ./PowerShell/screenshots.ps1                 # Re-record every TaskProxy.com loop and video in the website checkout beside this repo (-OutputPath)
 ```
 
 Rust tests are `#[cfg(test)]` modules in `src-tauri/src`. They need `dist/` to exist, because `generate_context!` embeds it, so run `trunk build` first on a fresh checkout. Git logic is tested against real temporary repositories, so keep it in plain functions that take a `Repository`, with the `#[tauri::command]` as a thin wrapper.
+
+**Tests check what the software does, never how it looks** (the standard for every Stoic Dreams project, set 2026-11-17, in full in `Websites/CLAUDE.md`). Assert what is shown or hidden, its text, order, what an action does, and what is sent, saved, or returned. Never assert pixel positions, sizes, spacing, scroll offsets, or specific colors, fonts, or theme values: layout and look are checked by eye in the recorded screenshots and loops. `toBeVisible` and `toBeInViewport` are fine, scrolling is tested as what happens (the page not moving when a pane scrolls), and layout components are tested by their state.
 
 UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.mjs` serves the frontend straight from the repo with no build or server, and `tests/support/backend.mjs` stands in for every Tauri command through a mock `window.__TAURI__`. Each `wc/` component has a spec in `tests/components/`, and app-wide behavior is in `tests/app/`. `tests/coverage.spec.mjs` fails when a component has no spec, or when a command called from `app.js` is not registered in `lib.rs` or not mocked. Any uncaught error fails the test it happens in.
 
@@ -55,7 +57,7 @@ UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.m
 
 ## Website media
 
-TaskProxy.com's media is recorded from this app by `tools/capture/` and regenerated on every publish, unless Publish runs with `-SkipScreenshots`. An image that promotes the app or documents an action is a short loop (`loops.capture.mjs`, shown with `<webui-loop-video>`), not a screenshot. When a UI change affects what a loop shows, update its steps in `loops.capture.mjs` too. Every Stoic Dreams website should automate its media the same way.
+TaskProxy.com's media is recorded from this app by `tools/capture/` and regenerated on every publish, unless Publish runs with `-SkipScreenshots`. Publish starts the recording once the tests pass and doesn't wait for it, since it is written to the website's repo: run by Task Proxy, it shows in the "Website media" terminal, and otherwise it logs to `taskproxy-website-media.log` in the temp folder. `-WaitForScreenshots` waits for it. An image that promotes the app or documents an action is a short loop (`loops.capture.mjs`, shown with `<webui-loop-video>`), not a screenshot. When a UI change affects what a loop shows, update its steps in `loops.capture.mjs` too. Every Stoic Dreams website should automate its media the same way.
 
 ## Commit messages
 

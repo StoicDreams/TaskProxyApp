@@ -47,8 +47,8 @@ flex-direction:column;
 gap:var(--padding);
 }
 </style>
-<webui-flex style="max-width:700px" gap="var(--padding)">
-<webui-input-text label="Project Name" data-trigger="new-project-name" data-subscribe="new-project-name:value"></webui-input-text>
+<webui-flex style="max-width:700px" gap="var(--padding)" wrap align="end">
+<webui-input-text style="flex:1 1 14em;" label="Project Name" data-trigger="new-project-name" data-subscribe="new-project-name:value"></webui-input-text>
 <webui-button theme="primary">Select Project Folder</webui-button>
 <webui-button theme="secondary">Add Multiple Projects</webui-button>
 </webui-flex>

@@ -1,6 +1,6 @@
 # Website images and videos
 
-Captures the media on TaskProxy.com by driving the real UI against the mock backend from `tests/support`, filled with a made-up project from `demo.mjs`. `PowerShell/Publish.ps1` runs all of it through `PowerShell/screenshots.ps1` on every publish, so the site always shows the current UI. Leave it out with `Publish.ps1 -SkipScreenshots` (or `-SkipMedia`) when a commit's UI changes aren't worth new recordings.
+Captures the media on TaskProxy.com by driving the real UI against the mock backend from `tests/support`, filled with a made-up project from `demo.mjs`. `PowerShell/Publish.ps1` runs all of it through `PowerShell/screenshots.ps1` on every publish, so the site always shows the current UI. It starts once the tests pass, and Publish doesn't wait for it: run by Task Proxy, it records in the "Website media" terminal, and otherwise in the background with a log in the temp folder. `Publish.ps1 -WaitForScreenshots` waits for it instead. Leave it out with `Publish.ps1 -SkipScreenshots` (or `-SkipMedia`) when a commit's UI changes aren't worth new recordings.
 
 ```bash
 npm run capture                         # Everything, as screenshots.ps1 and Publish.ps1 run it

@@ -35,6 +35,16 @@
         return btn;
     }
 
+    /** Fields side by side, each at least 16em wide, wrapping onto new lines when narrow. */
+    function row(...fields) {
+        const box = el('webui-flex', { wrap: true, gap: 'var(--padding)', align: 'end', class: 'remote-row' });
+        fields.forEach(field => {
+            if (field.localName !== 'webui-button') field.style.flex = '1 1 16em';
+            box.appendChild(field);
+        });
+        return box;
+    }
+
     function dropdown(label, role, options, value) {
         const input = el('webui-dropdown', { label, 'data-role': role });
         input.setAttribute('options', JSON.stringify(options.map(option => ({ id: `${option.value}`, value: `${option.value}`, display: option.display }))));
@@ -51,7 +61,8 @@
     function listen() {
         if (listening) return;
         listening = true;
-        webui.wait(() => webui.proxy?.remoteAccess).then(() => webui.proxy.remoteAccess.onChanged(({ notice }) => {
+        // whenProxyReady waits however long the app takes to start, where webui.wait gives up after about 10 seconds.
+        whenProxyReady().then(proxy => proxy.remoteAccess.onChanged(({ notice }) => {
             if (notice?.text) webui.alert(webui.escapeHtml(notice.text), notice.severity || 'info');
             panels.forEach(panel => panel.load());
         }));
@@ -88,7 +99,7 @@
         async load() {
             const t = this;
             const load = ++t._load;
-            await webui.wait(() => webui.proxy?.remoteAccess);
+            await whenProxyReady();
             const status = await webui.proxy.remoteAccess.status(() => null);
             if (load !== t._load || !status) return;
             t._status = status;
@@ -196,7 +207,7 @@
             };
             keep.addEventListener('change', save);
             off.addEventListener('change', save);
-            part.append(keep, off);
+            part.appendChild(row(keep, off));
             return part;
         },
         renderPairing(status) {
@@ -235,7 +246,7 @@
                 level.value || 'view',
                 parseInt(days.value ?? '30', 10),
             )));
-            part.append(name, level, days, show);
+            part.append(row(name, level, days), row(show));
             return part;
         },
         renderDevices(status) {

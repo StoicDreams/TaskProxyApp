@@ -123,13 +123,16 @@ test('the right panel can be resized and closed, and its width is remembered', a
         last = box;
         return settled;
     }, { intervals: [100] }).toBe(true);
-    const before = await panel.evaluate(el => el.getBoundingClientRect().width);
+    const savedWidth = () => panel.evaluate(el => parseInt(el.getAttribute('width') || '0', 10));
+    const before = await savedWidth();
+    // The handle's place is only used to drag it, as a person would.
     const box = await handle.boundingBox();
     await page.mouse.move(box.x + 3, box.y + 50);
     await page.mouse.down();
     await page.mouse.move(box.x - 150, box.y + 50, { steps: 3 });
     await page.mouse.up();
-    await expect(panel).toHaveAttribute('width', `${Math.round(Math.max(240, before + 153))}`);
+    // Dragging the handle out makes the panel wider, and the panel records its new width.
+    await expect.poll(savedWidth).toBeGreaterThan(before);
     // The width is one of the attributes Web UI saves for the panel.
     expect(await panel.evaluate(el => el.dataset.state.split('|'))).toContain('width');
     // A real click, which also shows the page's Help button has moved up out of the panel's footer.

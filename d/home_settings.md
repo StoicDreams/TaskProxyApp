@@ -1,60 +1,34 @@
 <webui-data data-page-title="Task Proxy Settings" data-page-subtitle=""></webui-data>
 
-## Add additional projects
-
-Use this form to add additional projects as needed.
-
-<webui-page-segment>
-
-<app-add-project></app-add-project>
-
-</webui-page-segment>
-
-### Current Project: <strong data-subscribe="app-current-project.display:html"></strong>
-
-<webui-page-segment>
-
+<webui-pinned-side class="settings-layout my-3" side-width="minmax(300px, 30%)">
+<webui-tabs class="settings-tabs" vertical pad="var(--padding)" transition-timing="200" theme="primary" data-subscribe="session-settings-tab-index:setTab">
+<webui-button align="left" slot="tabs" start-icon="folder-open" class="settings-tab-projects">Projects</webui-button>
+<webui-content slot="content" nodetach class="settings-projects">
+<h3>Current project: <strong data-subscribe="app-current-project.display:html"></strong></h3>
 <app-project-manager></app-project-manager>
-
-</webui-page-segment>
-
-### Change or remove your key
-
-<webui-page-segment>
-
-Set a new security key or delete your existing security key.
-
-<webui-quote theme="warning">
-
-NOTE: Deleting your security key only removes the key from your OS' key store. Your encrypted secrets will remain and can be reloaded by using the same key that you used to encrypt them.
-
-</webui-quote>
-
-</webui-page-segment>
-
+<h3>Add a project</h3>
+<app-add-project></app-add-project>
+</webui-content>
+<webui-button align="left" slot="tabs" start-icon="key" class="settings-tab-key">Security Key</webui-button>
+<webui-content slot="content" nodetach class="settings-key">
+<p>Set a new security key, or delete the one saved in this computer's keychain.</p>
+<webui-quote theme="warning">Deleting your key only removes it from your keychain. Your encrypted secrets stay, and come back when you enter the same key again.</webui-quote>
 <app-security-key-setter></app-security-key-setter>
-
-## Remote Access
-
-<webui-page-segment>
-
+</webui-content>
+<webui-button align="left" slot="tabs" start-icon="mobile" class="settings-tab-remote">Remote Access</webui-button>
+<webui-content slot="content" nodetach class="settings-remote">
 <app-remote-access></app-remote-access>
-
-</webui-page-segment>
-
-## Plugins
-
-<webui-page-segment>
-
-Plugins add integrations such as Jira. Manage them from the puzzle piece button at the top, beside Icons & Emojis.
-
-</webui-page-segment>
-
-## Application Updates
-
-<webui-page-segment>
+</webui-content>
+</webui-tabs>
+<webui-flex slot="side" column gap="var(--padding)">
+<webui-card name="Application Updates" avatar="download|fill" theme="info" class="settings-updates">
 <app-update-manager></app-update-manager>
-</webui-page-segment>
+</webui-card>
+<webui-card name="Plugins" avatar="puzzle-piece|fill" theme="info" class="settings-plugins">
+<p>Plugins add integrations such as Jira. Manage them from the puzzle piece button at the top, beside Icons & Emojis.</p>
+</webui-card>
+</webui-flex>
+</webui-pinned-side>
 
 <webui-line></webui-line>
 

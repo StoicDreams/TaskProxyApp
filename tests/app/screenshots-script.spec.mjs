@@ -72,20 +72,60 @@ test.describe('screenshots.ps1', () => {
 });
 
 test.describe('Publish.ps1 with screenshots.ps1', () => {
-    const stub = name => `"${name}" | Add-Content -Path $env:PUBLISH_LOG
+    // PUBLISH_DELAY makes the screenshots take that many seconds, to show Publish doesn't wait for them.
+    const stub = name => `if ('${name}' -eq 'screenshots' -and $env:PUBLISH_DELAY) { Start-Sleep -Seconds $env:PUBLISH_DELAY }
+"${name}" | Add-Content -Path $env:PUBLISH_LOG
 if ($env:PUBLISH_FAIL -eq '${name}') { exit 3 }
 `;
-    function publish(args = [], env = {}, withScreenshots = true) {
+    // A TaskProxy module, as Task Proxy gives the scripts it runs, that logs the terminal it was asked to open.
+    const fakeModule = `function Test-TaskProxy { $true }
+function Start-TaskProxyTerminal { param($Name, $Command, $WorkingDirectory, [switch]$Replace)
+    "terminal $Name replace=$([bool]$Replace) $Command" | Add-Content -Path $env:PUBLISH_LOG }
+Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
+`;
+    function publish(args = [], env = {}, { withScreenshots = true, inTaskProxy = false } = {}) {
         const steps = ['IncrementVersion', 'Minify', ...(withScreenshots ? ['screenshots'] : [])];
-        const project = tempProject(Object.fromEntries(steps.map(step => [`PowerShell/${step}.ps1`, stub(step)])));
+        const files = Object.fromEntries(steps.map(step => [`PowerShell/${step}.ps1`, stub(step)]));
+        const project = tempProject(files);
         copyFileSync(join(scripts, 'Publish.ps1'), join(project.dir, 'PowerShell', 'Publish.ps1'));
         const log = join(project.parent, 'publish.log');
-        const result = pwsh(project.dir, join(project.dir, 'PowerShell', 'Publish.ps1'), args, { PUBLISH_LOG: log, ...env });
-        return { ...result, ran: lines(log) };
+        const modules = join(project.parent, 'modules');
+        if (inTaskProxy) {
+            mkdirSync(join(modules, 'TaskProxy'), { recursive: true });
+            writeFileSync(join(modules, 'TaskProxy', 'TaskProxy.psm1'), fakeModule);
+        }
+        // These tests can themselves run inside Task Proxy, whose real terminals they must never open.
+        const result = pwsh(project.dir, join(project.dir, 'PowerShell', 'Publish.ps1'), args, {
+            PUBLISH_LOG: log, TASKPROXY_URL: '', TASKPROXY_RUN: '',
+            PSModulePath: inTaskProxy ? modules : process.env.PSModulePath, ...env,
+        });
+        return { ...result, log, ran: lines(log), project };
     }
+    // The background recording finishes after Publish, so its line is waited for.
+    const settled = async (result, count) => {
+        await expect.poll(() => lines(result.log).length, { timeout: 30000 }).toBe(count);
+        return lines(result.log);
+    };
 
-    test('updates the screenshots last, once everything else has passed', () => {
-        const result = publish();
+    test('records the screenshots last, once everything else has passed, without Publish waiting for them', async () => {
+        const result = publish([], { PUBLISH_DELAY: '3' });
+        expect(result.code, result.output).toBe(0);
+        expect(result.ran, 'Publish ended before the screenshots did').toEqual(['IncrementVersion', 'Minify']);
+        expect(result.output).toContain('Recording in the background.');
+        expect(result.output).toContain('Ready to commit.');
+        expect(await settled(result, 3)).toEqual(['IncrementVersion', 'Minify', 'screenshots']);
+    });
+    test('run by Task Proxy, they record in its Website media terminal, replacing one still running', () => {
+        const result = publish([], {}, { inTaskProxy: true });
+        expect(result.code, result.output).toBe(0);
+        expect(result.ran).toEqual([
+            'IncrementVersion', 'Minify',
+            `terminal Website media replace=True & '${join(result.project.dir, 'PowerShell', 'screenshots.ps1')}'`,
+        ]);
+        expect(result.output).toContain("'Website media' terminal");
+    });
+    test('-WaitForScreenshots records them before Publish ends', () => {
+        const result = publish(['-WaitForScreenshots']);
         expect(result.code, result.output).toBe(0);
         expect(result.ran).toEqual(['IncrementVersion', 'Minify', 'screenshots']);
         expect(result.output).toContain('Ready to commit.');
@@ -97,19 +137,22 @@ if ($env:PUBLISH_FAIL -eq '${name}') { exit 3 }
             expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
         }
     });
-    test('a failed step before them means no screenshots are taken', () => {
+    test('a failed step before them means no screenshots are taken', async () => {
         const result = publish([], { PUBLISH_FAIL: 'Minify' });
         expect(result.code).not.toBe(0);
-        expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
+        expect(result.output).not.toContain('Recording');
+        // Nothing was left to record later.
+        await new Promise(done => setTimeout(done, 1500));
+        expect(lines(result.log)).toEqual(['IncrementVersion', 'Minify']);
     });
-    test('failed screenshots make Publish fail', () => {
-        const result = publish([], { PUBLISH_FAIL: 'screenshots' });
+    test('with -WaitForScreenshots, failed screenshots make Publish fail', () => {
+        const result = publish(['-WaitForScreenshots'], { PUBLISH_FAIL: 'screenshots' });
         expect(result.code).not.toBe(0);
         expect(result.output).toContain('Update the website images and videos failed');
         expect(result.output).not.toContain('Ready to commit.');
     });
     test('a project without screenshots.ps1 publishes as before', () => {
-        const result = publish([], {}, false);
+        const result = publish([], {}, { withScreenshots: false });
         expect(result.code, result.output).toBe(0);
         expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
     });

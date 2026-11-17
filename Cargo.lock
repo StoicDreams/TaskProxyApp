@@ -5314,9 +5314,9 @@ dependencies = [
 
 [[package]]
 name = "regalloc2"
-version = "0.15.2"
+version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "757712e8e61590d6d4f5d563483755538b5aa13467837a3b41cd9832509a7f85"
+checksum = "34f923657880712029496c2e68bb40bef163806b2011adde559b28bbcedc82ea"
 dependencies = [
  "allocator-api2",
  "bumpalo",
@@ -6555,7 +6555,7 @@ checksum = "8c447be3a2abfa84b2d91680c56600bd6b2873866de27b36ec911be705e291da"
 
 [[package]]
 name = "taskproxy"
-version = "0.1.147"
+version = "0.1.150"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -6604,7 +6604,7 @@ dependencies = [
 
 [[package]]
 name = "taskproxy-ui"
-version = "0.1.147"
+version = "0.1.150"
 dependencies = [
  "js-sys",
  "serde",

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Prepares Task Proxy for a commit: updates the Rust dependencies, increments the version, minifies the CSS and JavaScript, runs the tests that CI runs, and updates the website's images and videos.
+Prepares Task Proxy for a commit: updates the Rust dependencies, increments the version, minifies the CSS and JavaScript, runs the tests that CI runs, and starts updating the website's images and videos.
 
 .DESCRIPTION
 Select this script in Task Proxy's Git Controller to run it before every commit. If any step fails, the commit is cancelled.
@@ -23,6 +23,12 @@ Do not run the tests that the deploy workflow runs. They run on the minified fil
 .PARAMETER SkipScreenshots
 Do not update the TaskProxy.com images and videos with screenshots.ps1, for a commit whose UI changes are not worth
 re-recording them. Also -SkipMedia. They are updated last, once the tests pass, and only when this project has that script.
+
+.PARAMETER WaitForScreenshots
+Wait for the images and videos, and fail if they can't be recorded. Otherwise they start once the tests pass and record
+after Publish ends, so the commit doesn't wait for them: in a Task Proxy terminal named "Website media" when Task Proxy
+runs Publish, or else in the background, with a log. They are written to the TaskProxy website's repo, not this one, so
+nothing in this commit needs them. Commit them there once they finish.
 #>
 [CmdletBinding()]
 param(
@@ -33,7 +39,8 @@ param(
     [switch]$SkipMinify,
     [switch]$SkipTests,
     [Alias('SkipMedia')]
-    [switch]$SkipScreenshots
+    [switch]$SkipScreenshots,
+    [switch]$WaitForScreenshots
 )
 $ErrorActionPreference = 'Stop'
 
@@ -59,7 +66,9 @@ function Invoke-Tests {
     if (Test-Path 'src-tauri') {
         # The backend embeds dist/, so it has to exist before the Rust tests compile.
         if (-not (Test-Path 'dist')) { Invoke-Check 'Build the frontend' { trunk build } }
-        Invoke-Check 'Run the Rust tests' { cargo test -p taskproxy }
+        # --lib: the tests are all in the library. Without it, cargo also builds main.rs's test binary and the doc tests,
+        # which have none, and that doubles the build after a version bump. CI's release build still compiles main.rs.
+        Invoke-Check 'Run the Rust tests' { cargo test -p taskproxy --lib }
     }
     elseif (Test-Path 'Cargo.toml') {
         Invoke-Check 'Run the Rust tests' { cargo test }
@@ -80,6 +89,24 @@ function Invoke-Tests {
     }
 }
 
+# Starts screenshots.ps1 without waiting for it: in a Task Proxy terminal when Task Proxy runs this, so its progress and
+# result show there, or else as a process of its own that writes a log.
+function Start-Screenshots {
+    $script = Join-Path $PSScriptRoot 'screenshots.ps1'
+    $command = "& '$($script -replace "'", "''")'"
+    Write-Host '== Update the website images and videos, without holding up the commit' -ForegroundColor Cyan
+    if ((Get-Command Test-TaskProxy -ErrorAction SilentlyContinue) -and (Test-TaskProxy)) {
+        Start-TaskProxyTerminal -Name 'Website media' -Command $command -WorkingDirectory (Get-Location).ProviderPath -Replace | Out-Null
+        Write-Host "Recording in Task Proxy's 'Website media' terminal. Commit them in the website's repo once it finishes."
+        return
+    }
+    $log = Join-Path ([System.IO.Path]::GetTempPath()) 'taskproxy-website-media.log'
+    $pwsh = (Get-Process -Id $PID).Path
+    Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $script) `
+        -WorkingDirectory (Get-Location).ProviderPath -RedirectStandardOutput $log -RedirectStandardError "$log.errors" | Out-Null
+    Write-Host "Recording in the background. Its output is in $log, and any errors in $log.errors."
+}
+
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     # First, so the build and the tests below use the updated dependencies. It moves Cargo.lock to the newest
@@ -94,7 +121,8 @@ try {
     if (-not $SkipMinify) { Invoke-Step 'Minify CSS and JavaScript' 'Minify.ps1' }
     if (-not $SkipTests) { Invoke-Tests }
     if (-not $SkipScreenshots -and (Test-Path (Join-Path $PSScriptRoot 'screenshots.ps1'))) {
-        Invoke-Step 'Update the website images and videos' 'screenshots.ps1'
+        if ($WaitForScreenshots) { Invoke-Step 'Update the website images and videos' 'screenshots.ps1' }
+        else { Start-Screenshots }
     }
     Write-Host 'Ready to commit.' -ForegroundColor Green
 }
