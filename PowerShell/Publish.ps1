@@ -1,12 +1,15 @@
 <#
 .SYNOPSIS
-Prepares Task Proxy for a commit: increments the version, minifies the CSS and JavaScript, runs the tests that CI runs, and updates the website's images and videos.
+Prepares Task Proxy for a commit: updates the Rust dependencies, increments the version, minifies the CSS and JavaScript, runs the tests that CI runs, and updates the website's images and videos.
 
 .DESCRIPTION
 Select this script in Task Proxy's Git Controller to run it before every commit. If any step fails, the commit is cancelled.
 
 .PARAMETER Version
 Which part of the version to increment.
+
+.PARAMETER SkipCargoUpdate
+Do not run cargo update, so Cargo.lock keeps the dependency versions it has.
 
 .PARAMETER SkipIncrementVersion
 Leave the version as it is.
@@ -25,6 +28,7 @@ re-recording them. Also -SkipMedia. They are updated last, once the tests pass, 
 param(
     [ValidateSet('patch', 'minor', 'major')]
     [string]$Version = 'patch',
+    [switch]$SkipCargoUpdate,
     [switch]$SkipIncrementVersion,
     [switch]$SkipMinify,
     [switch]$SkipTests,
@@ -78,6 +82,9 @@ function Invoke-Tests {
 
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
+    # First, so the build and the tests below use the updated dependencies. It moves Cargo.lock to the newest
+    # semver-compatible versions, which picks up security fixes such as the ones Dependabot reports.
+    if (-not $SkipCargoUpdate -and (Test-Path 'Cargo.toml')) { Invoke-Check 'Update the Rust dependencies' { cargo update } }
     if (-not $SkipIncrementVersion) {
         $versionArguments = @{}
         if ($Version -eq 'major') { $versionArguments.major = $true }
