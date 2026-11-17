@@ -138,6 +138,14 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 
 Commits run in Rust as jobs (`services/commit_queue.rs`): the Run Before Commit script through `runs.rs`, then the commit, then a sync when asked, so a commit finishes whatever happens to the window. `git_commit` is called from there, not from the window. The Git Controller sends `commit_enqueue` and shows each job from `commit-jobs-changed`. In the mock backend, jobs record their git steps as `get_git_changes`, `git_commit` and `git_sync` calls.
 
+### Remote Access
+
+`src-tauri/src/remote/` is the gateway a paired phone or laptop will use (`Docs/RemoteAccess.md`). Nothing connects to it until Phase 2.
+
+- **Every command in `generate_handler!` must be in `remote_commands!` in `dispatch.rs`, with its level, or in `DESKTOP_ONLY`,** and the test that reads `lib.rs` fails otherwise. A remote command must also be placed in `REDACTED` or `NO_VALUES` in that file's tests, after checking whether it returns variable values.
+- **Send events with `remote::hub::broadcast`, not `app.emit`,** so devices get them. An event carrying variable values uses `broadcast_redacted`, as `data-changed` does.
+- **Devices get secrets as `{"$secret": true}`** (`services/secrets.rs`), and a patch carrying the marker keeps the real value.
+
 ### Plugins
 
 Plugins such as Jira are WebAssembly in the separate TaskProxyPlugins repo (`../TaskProxyPlugins`), run by `src-tauri/src/plugins/` with Extism, and drawn by `wc/plugin-page.js`. `Docs/Plugins.md` covers the permission model, the catalog, and signing.

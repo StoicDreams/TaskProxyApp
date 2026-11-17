@@ -12,6 +12,7 @@ pub mod datatypes;
 pub mod errors;
 pub mod plugins;
 pub mod prelude;
+pub mod remote;
 pub mod services;
 
 pub(crate) static PROJECT_LAST_SYNC: LazyLock<Mutex<Option<Instant>>> =
@@ -55,7 +56,8 @@ pub fn run() {
         .manage(crate::services::runs::Runs::default())
         .manage(crate::services::commit_queue::CommitQueue::default())
         .manage(crate::services::shared_data::DataRevs::default())
-        .manage(crate::services::task_manager::TaskManagerState::default());
+        .manage(crate::services::task_manager::TaskManagerState::default())
+        .manage(crate::remote::Remote::default());
 
     // Save data on close
     builder = builder.on_window_event(|window, event| match event {
@@ -109,8 +111,9 @@ pub fn run() {
                         println!("{:?}", result);
                     }
                 };
-                let (_save_app_result, _save_project_result) =
-                    join!(save_app_data, save_project_data);
+                let save_remote_log = crate::remote::save_log(&app_handle);
+                let (_save_app_result, _save_project_result, _save_log_result) =
+                    join!(save_app_data, save_project_data, save_remote_log);
                 println!("Saves complete - Closing window.");
                 let _ = window.close();
             });
@@ -137,6 +140,8 @@ pub fn run() {
             }
         }
         services::terminal_controller::remove_stale_temp_scripts(app.handle());
+        // The paired devices and the log of what they did, for Remote Access.
+        tauri::async_runtime::spawn(crate::remote::load(app.handle().clone()));
         // Spawn background task
         let app_handle = app.handle().clone();
         tauri::async_runtime::spawn(background_tasks(app_handle));

@@ -16,7 +16,6 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Emitter;
 use tokio::sync::oneshot;
 
 /// Output kept for each terminal, as the window keeps it, so switching terminals or reconnecting can replay it.
@@ -608,7 +607,8 @@ struct TerminalData {
 }
 
 fn emit_changed(app: &AppHandle, info: &RunInfo) {
-    let _ = app.emit(
+    crate::remote::hub::broadcast(
+        app,
         "run-changed",
         RunChanged {
             project_id: info.project_id.clone(),
@@ -619,7 +619,8 @@ fn emit_changed(app: &AppHandle, info: &RunInfo) {
 }
 
 fn emit_removed(app: &AppHandle, project_id: &str, terminal_id: &str) {
-    let _ = app.emit(
+    crate::remote::hub::broadcast(
+        app,
         "run-changed",
         RunChanged {
             project_id: project_id.into(),
@@ -636,7 +637,8 @@ pub(crate) fn output(app: &AppHandle, project_id: &str, terminal_id: &str, run: 
         Err(_) => None,
     };
     if let Some(seq) = seq {
-        let _ = app.emit(
+        crate::remote::hub::broadcast(
+            app,
             "terminal-data",
             TerminalData {
                 project_id: project_id.into(),

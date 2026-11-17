@@ -9,7 +9,6 @@ use crate::prelude::*;
 use crate::services::secrets;
 use serde_json::Map;
 use std::sync::atomic::AtomicU64;
-use tauri::Emitter;
 
 /// Project fields a patch may not change, since they say which project it is.
 const FIXED_PROJECT_FIELDS: [&str; 2] = ["id", "path"];
@@ -85,6 +84,20 @@ pub(crate) fn apply_patch<T: Serialize + DeserializeOwned>(
     Ok(())
 }
 
+/// Sends a change to every screen. Devices get it with its secrets replaced by the marker, judged by the variable
+/// definitions in force after it.
+fn send_changed(app: &AppHandle, changed: DataChanged) {
+    let for_devices = || {
+        let globals = app.state::<SharedAppData>().lock().ok()?.variables.clone();
+        let project = app.state::<CurrentProject>().lock().ok()?.variables.clone();
+        let mut redacted = changed.clone();
+        redacted.patch =
+            secrets::redact_patch(&changed.patch, changed.scope == "app", &project, &globals);
+        serde_json::to_value(redacted).ok()
+    };
+    crate::remote::hub::broadcast_redacted(app, "data-changed", changed.clone(), for_devices);
+}
+
 /// Applies a screen's change to app data, and sends it to every other screen. Returns the new revision.
 #[tauri::command]
 pub(crate) fn patch_app_data(
@@ -101,8 +114,8 @@ pub(crate) fn patch_app_data(
         apply_patch(&mut *app_data, &patch, &[])?;
         revs.app.fetch_add(1, Ordering::SeqCst) + 1
     };
-    let _ = app_handle.emit(
-        "data-changed",
+    send_changed(
+        &app_handle,
         DataChanged {
             scope: "app",
             id: String::new(),
@@ -135,8 +148,8 @@ pub(crate) fn patch_project_data(
         apply_patch(&mut *project, &patch, &FIXED_PROJECT_FIELDS)?;
         revs.project.fetch_add(1, Ordering::SeqCst) + 1
     };
-    let _ = app_handle.emit(
-        "data-changed",
+    send_changed(
+        &app_handle,
         DataChanged {
             scope: "project",
             id,

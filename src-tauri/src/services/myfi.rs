@@ -412,9 +412,11 @@ pub(crate) async fn myfi_sign_in_cancel() -> Result<(), String> {
     Ok(())
 }
 
-/// Ends the session with the API, when it can be reached, and forgets it here either way.
+/// Ends the session with the API, when it can be reached, and forgets it here either way. Remote Access turns off
+/// and every paired device is forgotten, since they were paired under this account.
 #[tauri::command]
-pub(crate) async fn myfi_sign_out() -> Result<(), String> {
+pub(crate) async fn myfi_sign_out(app: AppHandle) -> Result<(), String> {
+    crate::remote::forget_all(&app).await?;
     if let Some(stored) = read_stored().await
         && let Ok(api) = api()
     {

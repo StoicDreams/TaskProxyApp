@@ -10,6 +10,7 @@
 //! what it was shown does, keeps the real value (`restore_markers`).
 
 use crate::prelude::*;
+use crate::services::shared_data::DataPatch;
 use std::collections::HashSet;
 
 /// The key of the marker that stands in for a secret value.
@@ -52,8 +53,6 @@ fn secret_definitions(definitions: &[String]) -> HashSet<String> {
 }
 
 /// App data as a remote device is sent it: every global variable's value replaced by the marker.
-// Called by the remote gateway, for every device (Docs/RemoteAccess.md, 1.4).
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn redact_app_data(app: &TaskProxyData) -> TaskProxyData {
     let mut redacted = app.clone();
     for (key, value) in redacted.data.iter_mut() {
@@ -64,47 +63,107 @@ pub(crate) fn redact_app_data(app: &TaskProxyData) -> TaskProxyData {
     redacted
 }
 
-/// A project's data as a remote device is sent it: its secret variables, any variable that is also a global one,
-/// and the tokens replaced by the marker, in its values and in each environment's.
-// Called by the remote gateway, for every device (Docs/RemoteAccess.md, 1.4).
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn redact_project_data(
-    project: &ProjectData,
+/// The variables whose values a device is never sent: those defined as secret in the project, any that is also
+/// a global variable, and the tokens.
+pub(crate) fn secret_keys(
+    project_definitions: &[String],
     global_definitions: &[String],
-) -> ProjectData {
-    let mut secret = secret_definitions(&project.variables);
+) -> HashSet<String> {
+    let mut secret = secret_definitions(project_definitions);
     secret.extend(
         global_definitions
             .iter()
             .filter_map(|definition| definition.split('|').next())
-            .map(|key| key.trim().to_string()),
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty()),
     );
     secret.extend(TOKEN_KEYS.iter().map(|key| key.to_string()));
-    let mut redacted = project.clone();
-    for (key, value) in redacted.data.iter_mut() {
+    secret
+}
+
+/// Replaces the values of `secret` keys in `values`, and in each environment's values, with the marker.
+fn redact_values(values: &mut HashMap<String, Value>, secret: &HashSet<String>) {
+    for (key, value) in values.iter_mut() {
         if secret.contains(key) {
             *value = marker();
+        } else if key == ENVIRONMENTS_KEY {
+            redact_environments(value, secret);
         }
     }
-    if let Some(environments) = redacted
-        .data
-        .get_mut(ENVIRONMENTS_KEY)
-        .and_then(Value::as_array_mut)
-    {
-        for environment in environments {
-            if let Some(values) = environment
-                .get_mut("variables")
-                .and_then(Value::as_object_mut)
-            {
-                for (key, value) in values.iter_mut() {
-                    if secret.contains(key) {
-                        *value = marker();
-                    }
+}
+
+fn redact_environments(environments: &mut Value, secret: &HashSet<String>) {
+    for environment in environments.as_array_mut().into_iter().flatten() {
+        if let Some(values) = environment
+            .get_mut("variables")
+            .and_then(Value::as_object_mut)
+        {
+            for (key, value) in values.iter_mut() {
+                if secret.contains(key) {
+                    *value = marker();
                 }
             }
         }
     }
+}
+
+/// A project's data as a remote device is sent it: its secret variables, any variable that is also a global one,
+/// and the tokens replaced by the marker, in its values and in each environment's.
+pub(crate) fn redact_project_data(
+    project: &ProjectData,
+    global_definitions: &[String],
+) -> ProjectData {
+    let mut redacted = project.clone();
+    redact_values(
+        &mut redacted.data,
+        &secret_keys(&project.variables, global_definitions),
+    );
     redacted
+}
+
+/// A change to app or project data as a remote device is sent it. `project_definitions` and
+/// `global_definitions` are those in force after the change.
+pub(crate) fn redact_patch(
+    patch: &DataPatch,
+    app_scope: bool,
+    project_definitions: &[String],
+    global_definitions: &[String],
+) -> DataPatch {
+    let mut redacted = patch.clone();
+    if app_scope {
+        for (key, value) in redacted.set.iter_mut() {
+            if !is_app_key(key) {
+                *value = marker();
+            }
+        }
+    } else {
+        redact_values(
+            &mut redacted.set,
+            &secret_keys(project_definitions, global_definitions),
+        );
+    }
+    redacted
+}
+
+/// Refuses a change from a device that would leave a secret variable no longer secret, since the device could
+/// then read its value. Secrets are made ordinary variables on the desktop.
+pub(crate) fn keeps_secrets(
+    before: &HashSet<String>,
+    after: &HashSet<String>,
+) -> Result<(), String> {
+    let mut lost: Vec<&str> = before
+        .iter()
+        .filter(|key| !after.contains(*key))
+        .map(String::as_str)
+        .collect();
+    if lost.is_empty() {
+        return Ok(());
+    }
+    lost.sort_unstable();
+    Err(format!(
+        "{} must stay secret. Change whether a variable is secret on the desktop.",
+        lost.join(", ")
+    ))
 }
 
 /// Puts back the real values wherever `incoming` holds the marker, from the same place in `current`. A marker with
@@ -280,5 +339,64 @@ mod tests {
         let restored = restore_markers(&incoming, Some(&current)).unwrap();
         assert_eq!(restored[0]["variables"]["k"], json!("PROD"));
         assert_eq!(restored[1]["variables"]["k"], json!("DEV"));
+    }
+
+    #[test]
+    fn a_change_sent_to_a_device_hides_its_secrets() {
+        let patch: DataPatch = serde_json::from_value(json!({
+            "set": { "db_password": "NEW-PASSWORD", "server": "x", "api_key": "K",
+                "_environments": [{ "name": "dev", "variables": { "db_password": "DEV", "server": "d" } }] },
+            "remove": ["old"], "fields": { "currentPage": "/a" }
+        }))
+        .unwrap();
+        let sent = redact_patch(&patch, false, &project().variables, &app().variables);
+        assert!(is_marker(&sent.set["db_password"]));
+        assert!(
+            is_marker(&sent.set["api_key"]),
+            "a global variable's name is secret in a project too"
+        );
+        assert_eq!(sent.set["server"], json!("x"));
+        assert!(is_marker(
+            &sent.set["_environments"][0]["variables"]["db_password"]
+        ));
+        assert_eq!(
+            sent.set["_environments"][0]["variables"]["server"],
+            json!("d")
+        );
+        assert_eq!(
+            (sent.remove.clone(), sent.fields.clone()),
+            (patch.remove.clone(), patch.fields.clone())
+        );
+        let app_patch: DataPatch = serde_json::from_value(
+            json!({ "set": { "region": "eu", "app-current-project": { "value": "/r" } } }),
+        )
+        .unwrap();
+        let sent = redact_patch(&app_patch, true, &[], &[]);
+        assert!(
+            is_marker(&sent.set["region"]),
+            "every global value is secret"
+        );
+        assert_eq!(sent.set["app-current-project"], json!({ "value": "/r" }));
+    }
+
+    #[test]
+    fn a_device_cannot_make_a_secret_readable() {
+        let before = secret_keys(&project().variables, &app().variables);
+        let same = secret_keys(
+            &["db_password|secret|".into(), "extra|secret|".into()],
+            &app().variables,
+        );
+        assert!(keeps_secrets(&before, &same).is_ok());
+        let made_text = secret_keys(&["db_password|text|".into()], &app().variables);
+        assert!(
+            keeps_secrets(&before, &made_text)
+                .unwrap_err()
+                .contains("db_password")
+        );
+        let global_removed = secret_keys(&project().variables, &["github_pat|secret|".into()]);
+        assert_eq!(
+            keeps_secrets(&before, &global_removed).unwrap_err(),
+            "api_key, region must stay secret. Change whether a variable is secret on the desktop."
+        );
     }
 }

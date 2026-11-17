@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.139"
+version = "0.1.140"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -71,6 +71,8 @@ extism = { version = "1.41.0", default-features = false, features = ["wasmtime-d
 sysinfo = { version = "0.40", default-features = false, features = ["system", "user"] }
 # The ports each process listens on, for the Task Manager.
 listeners = "0.6"
+# Remote Access: the Noise handshakes and encryption between the desktop and a paired device.
+snow = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

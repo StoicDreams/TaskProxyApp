@@ -14,7 +14,6 @@ use crate::services::runs::{self, RunRequest, RunTarget, Runs};
 use crate::services::terminal_controller::TerminalManager;
 use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Emitter;
 
 /// How many ended jobs are kept, so the Queue tab can say how each went.
 const FINISHED_KEPT: usize = 20;
@@ -327,7 +326,7 @@ fn emit_jobs(app: &AppHandle) {
         }
         Err(_) => return,
     };
-    let _ = app.emit("commit-jobs-changed", jobs);
+    crate::remote::hub::broadcast(app, "commit-jobs-changed", jobs);
 }
 
 /// Changes a job and tells every screen.

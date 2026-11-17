@@ -215,7 +215,7 @@ The desktop benefits from this as well: terminals and commits no longer depend o
 
 ### 1.3 Secrets stay on the desktop
 
-*Done, apart from the sweep test, which needs the gateway's command table (1.4).*
+*Done.*
 
 - **Redaction** (`services/secrets.rs`): what a remote device is sent replaces each secret value with `{"$secret": true}`. The gateway calls `redact_app_data` and `redact_project_data` for every device.
   - Secret values are every global variable (the Variables panel already treats them all as secret), project variables defined as `key|secret|...` in the project's values and in each environment in `_environments`, and `git_pat` and `github_pat` wherever they are set.
@@ -227,23 +227,33 @@ The desktop benefits from this as well: terminals and commits no longer depend o
   - `run_page_script(terminalId, script, pageValues)` checks `app-trusted-projects`, fills in the real values, and starts the run with the masked copy shown.
   - The window sends the script's text, since a page can be run before its edits are saved, and the values typed or set on the page. Rust adds the project's and global values, so the window never needs a secret to run a script. A page value that is the marker is skipped, so the real value applies.
   - `injectVariableValues`, its regexes, Web UI's `toSnake`, and the scope switches are ported, with every case from the page handler's tests in Rust tests. The desktop uses the same commands, so there is one implementation.
-- **A test:** call every remotely allowed command that returns data, with secrets set, and fail if any secret appears in any response. `secrets.rs` checks the redaction itself now; the sweep over every command comes with the gateway's command table.
+- **Tests:** `secrets.rs` checks that no secret survives redaction, for data and for changes. `dispatch.rs` checks that every command a device may send either redacts what it returns or never returns a variable's value, so a new command can't be added without that decision. Calling every command with secrets set needs an app to call them in, which tests can't build while commands take the desktop's own `AppHandle`.
 
 ### 1.4 Remote gateway: `src-tauri/src/remote/`
 
+*Done. Nothing calls it from outside yet: Phase 2 connects devices to it.*
+
 | File | What it does |
 |---|---|
-| `mod.rs` | Remote Access on and off. The connected devices. |
-| `protocol.rs` | Messages, chunks, sequence numbers, the version check |
-| `noise.rs` | `snow` handshakes and the encrypted transport |
-| `devices.rs` | Paired devices: name, public key, MyFi account id, level, expiry, last seen. Kept in `remote-devices.enc`. |
+| `mod.rs` | The `Remote` state: paired devices, the log, and connections. `open` serves a device whose handshake finished, `receive` handles its messages, and `forget_all` runs on MyFi sign-out. |
+| `protocol.rs` | Messages, frames of up to 64 KB, the 16 MB limit on a device's message, the version check |
+| `noise.rs` | `Noise_XXpsk3` and `Noise_IK` handshakes with `snow`, both sides, with the DTLS fingerprints in the prologue, and the encrypted channel |
+| `devices.rs` | Paired devices: name, public key, MyFi account id, level, expiry, last seen, and the desktop's own key. Kept in `remote-devices.enc`. |
 | `dispatch.rs` | The command table and permission checks |
-| `hub.rs` | `broadcast(app, event, payload)` to the window and to every device allowed that event. Replaces the three `emit` calls. |
-| `audit.rs` | The log of every remote command, in `remote-log.enc`, keeping the last 1000 |
+| `hub.rs` | `broadcast` sends an event to the window and to every device. `data-changed` reaches devices with its secrets redacted. |
+| `audit.rs` | The log of every remote command, without its arguments, in `remote-log.enc`, keeping the last 1000. Saved on the autosave interval and on close. |
 
 **Dispatch:**
 - A `remote_commands!` table gives each command its permission level and a handler. The handler reads the camelCase arguments and calls the existing command with `app.state()`.
 - A Rust test reads `generate_handler!` in `lib.rs` and fails unless every command is either in the table or on the desktop-only list.
+- What a device gets that the window doesn't:
+  - `get_app_data`, `get_project_data` and `reload_project_files` are redacted.
+  - A device can't open or close a project yet, since the desktop's window would not know it changed. Phase 3 adds that.
+  - `run_script`, and `commit_enqueue` with a Run Before Commit script, need the project to be trusted, as page scripts do.
+  - A patch can't change `app-trusted-projects`, or make a secret variable ordinary, since the device could then read it.
+  - A patch from a device names its screen `remote:<device>:<screen>`, so the window applies it.
+  - A plugin's git host actions need the Commit level, and its links open on the device.
+- File previews stream from 127.0.0.1, which a device can't reach, so `get_file_server_base` is desktop-only until Phase 2 sends files over the connection.
 
 **Permission levels:**
 

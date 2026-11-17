@@ -16,7 +16,7 @@ use serde_json::Map;
 const TOKEN_KEYS: [&str; 2] = ["git_pat", "github_pat"];
 /// `$null`, `$true`, `$false` and `$_` are PowerShell's own.
 const POWERSHELL_VARIABLES: [&str; 4] = ["null", "true", "false", "_"];
-const TRUSTED_PROJECTS: &str = "app-trusted-projects";
+pub(crate) const TRUSTED_PROJECTS: &str = "app-trusted-projects";
 const PAGE_ENABLED: &str = "app-env-page-enabled";
 const PROJECT_ENABLED: &str = "app-env-project-enabled";
 const GLOBAL_ENABLED: &str = "app-env-global-enabled";
@@ -268,7 +268,7 @@ pub(crate) fn fill_script(script: &str, values: &Values, masked: bool) -> String
 }
 
 /// Whether the project at `path` is trusted to run its own scripts.
-fn is_trusted(global: &HashMap<String, Value>, path: &str) -> bool {
+pub(crate) fn is_trusted(global: &HashMap<String, Value>, path: &str) -> bool {
     let normalize = |path: &str| path.replace('\\', "/");
     global
         .get(TRUSTED_PROJECTS)
