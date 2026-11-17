@@ -140,7 +140,7 @@ Commits run in Rust as jobs (`services/commit_queue.rs`): the Run Before Commit 
 
 ### Remote Access
 
-`src-tauri/src/remote/` is the gateway a paired phone or laptop uses (`Docs/RemoteAccess.md`). Devices pair through api.myfi.ws's mailbox (`mailbox.rs`, `pairing.rs`), and `service.rs` turns Remote Access on and off and reads the mailbox. Connections over WebRTC come with 2.3, so nothing calls `Remote::open` yet.
+`src-tauri/src/remote/` is the gateway a paired phone or laptop uses (`Docs/RemoteAccess.md`). Devices pair and connect through api.myfi.ws's mailbox (`mailbox.rs`, `pairing.rs`, `connect.rs`), then talk over WebRTC with `str0m` (`webrtc.rs`, which reaches the app only through its `Hooks` trait, so its tests need no window). `service.rs` turns Remote Access on and off and reads the mailbox. Only local addresses are offered until a STUN server exists.
 
 - **Every command in `generate_handler!` must be in `remote_commands!` in `dispatch.rs`, with its level, or in `DESKTOP_ONLY`,** and the test that reads `lib.rs` fails otherwise. A remote command must also be placed in `REDACTED` or `NO_VALUES` in that file's tests, after checking whether it returns variable values.
 - **Send events with `remote::hub::broadcast`, not `app.emit`,** so devices get them. An event carrying variable values uses `broadcast_redacted`, as `data-changed` does.

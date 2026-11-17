@@ -250,7 +250,7 @@
                 const row = el('webui-flex', { column: true, gap: 'calc(var(--padding) / 2)', class: 'remote-device', 'data-device': device.id });
                 const title = el('p', { class: 'remote-device-name' });
                 title.appendChild(el('strong', {}, device.name));
-                title.appendChild(document.createTextNode(device.connected ? ' (connected now)' : ''));
+                title.appendChild(document.createTextNode(device.connected ? ` (connected now${device.route ? `: ${device.route}` : ''})` : ''));
                 row.appendChild(title);
                 row.appendChild(el('p', { class: 'remote-device-details' },
                     `Paired ${when(device.pairedAt)}. Last connected ${device.lastSeen ? when(device.lastSeen) : 'never'}. ${device.days === 0 ? 'Stays paired for good.' : `Unpaired after ${device.days} days without connecting, on ${when(device.expiresAt)}.`}`));

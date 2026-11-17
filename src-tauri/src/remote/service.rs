@@ -5,12 +5,16 @@
 //! every second while a QR code is open or a device is pairing. Every command here is desktop-only.
 
 use super::devices::{self, Device, Level, PAIRING_CHOICES};
+use super::dispatch::Caller;
 use super::mailbox::{Inbound, MailboxError};
+use super::mailbox::{Kind, decode};
 use super::pairing::{self, Desktop, Invite, Outcome};
-use super::{Remote, audit, awake, now_ms};
+use super::protocol::{DesktopMessage, DeviceMessage};
+use super::{Remote, audit, awake, connect, now_ms, webrtc};
 use crate::prelude::*;
 use crate::services::myfi::{self, MyFiApi};
 use tauri::Emitter;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 const SLOW_POLL: Duration = Duration::from_secs(10);
 const FAST_POLL: Duration = Duration::from_secs(1);
@@ -39,6 +43,8 @@ pub(crate) struct DeviceStatus {
     #[serde(flatten)]
     pub device: Device,
     pub connected: bool,
+    /// How it reached the desktop while connected, such as Direct (same network).
+    pub route: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -95,6 +101,7 @@ pub(crate) fn status(app: &AppHandle) -> Result<RemoteStatus, String> {
     let remote = app.state::<Remote>();
     let store = lock(&remote.devices)?.clone();
     let connected = remote.connected_devices();
+    let routes = remote.routes();
     let invite = lock(&remote.invite_status)?
         .clone()
         .filter(|invite| invite.expires_at > now_ms());
@@ -114,6 +121,10 @@ pub(crate) fn status(app: &AppHandle) -> Result<RemoteStatus, String> {
             .into_iter()
             .map(|device| DeviceStatus {
                 connected: connected.contains(&device.id),
+                route: routes
+                    .get(&device.id)
+                    .filter(|route| !route.is_empty())
+                    .cloned(),
                 device,
             })
             .collect(),
@@ -439,6 +450,10 @@ async fn signed_out(app: &AppHandle) {
 
 /// Answers one message from the mailbox.
 async fn answer(app: &AppHandle, api: &MyFiApi, session: &str, desktop_id: &str, inbound: Inbound) {
+    if matches!(decode(&inbound.message), Some((Kind::Connect1, _))) {
+        connect_device(app, api, session, desktop_id, inbound).await;
+        return;
+    }
     let remote = app.state::<Remote>();
     let outcome = (|| {
         let mut store = lock(&remote.devices)?;
@@ -497,6 +512,150 @@ async fn answer(app: &AppHandle, api: &MyFiApi, session: &str, desktop_id: &str,
         .await;
     if notice.is_some() {
         changed(app, notice);
+    }
+}
+
+/// A paired device asking to connect: checks it, answers its offer, and serves the connection in the background.
+async fn connect_device(
+    app: &AppHandle,
+    api: &MyFiApi,
+    session: &str,
+    desktop_id: &str,
+    inbound: Inbound,
+) {
+    let remote = app.state::<Remote>();
+    let accepted = (|| {
+        let mut store = lock(&remote.devices)?;
+        let account = store.account_id.clone().unwrap_or_default();
+        let keys = store.desktop_keys()?;
+        let name = desktop_name();
+        let desktop = Desktop {
+            keys: &keys,
+            id: desktop_id,
+            name: &name,
+            account: &account,
+        };
+        Ok::<_, String>(connect::accept(&desktop, &inbound, &store, now_ms()))
+    })();
+    let reply = inbound.reply.as_str();
+    let refused = |reason: String| async move {
+        record(app, "", "Unknown device", "connect", Err(reason.clone()));
+        let _ = api
+            .send_reply(
+                session,
+                desktop_id,
+                reply,
+                &super::mailbox::encode(Kind::Refused, reason.as_bytes()),
+            )
+            .await;
+        changed(
+            app,
+            Some(Notice {
+                text: format!("A device was refused: {}", reason),
+                severity: "warning",
+            }),
+        );
+    };
+    let accepted = match accepted {
+        Ok(Ok(accepted)) => accepted,
+        Ok(Err(Outcome::Refused { reason, .. })) => return refused(reason).await,
+        _ => return,
+    };
+    remote.touch();
+    let answered = match webrtc::answer_offer(&accepted.offer, &webrtc::local_addresses()).await {
+        Ok(answered) => answered,
+        Err(reason) => return refused(reason).await,
+    };
+    let device = accepted.device.clone();
+    let (body, channel) = match accepted.answer(&answered.answer) {
+        Ok(answer) => answer,
+        Err(reason) => return refused(reason).await,
+    };
+    if api
+        .send_reply(session, desktop_id, reply, &body)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let hooks = AppHooks {
+        app: app.clone(),
+        device,
+    };
+    tauri::async_runtime::spawn(webrtc::serve(answered, channel, hooks));
+}
+
+/// A connection's place in the app: the gateway, the paired device's record, the log, and the panel.
+struct AppHooks {
+    app: AppHandle,
+    device: Device,
+}
+
+impl webrtc::Hooks for AppHooks {
+    fn open(&mut self, route: &str) -> (u64, UnboundedReceiver<DesktopMessage>) {
+        let remote = self.app.state::<Remote>();
+        // The device as it is now, since its name or level may have changed since it paired.
+        if let Ok(mut store) = remote.devices.lock() {
+            store.connected(&self.device.id, now_ms());
+            if let Some(device) = store
+                .devices
+                .iter()
+                .find(|device| device.id == self.device.id)
+            {
+                self.device = device.clone();
+            }
+        }
+        let (id, outgoing) = remote.open(Caller {
+            device_id: self.device.id.clone(),
+            name: self.device.name.clone(),
+            level: self.device.level,
+        });
+        remote.set_route(id, route);
+        record(
+            &self.app,
+            &self.device.id,
+            &self.device.name,
+            "connect",
+            Ok(()),
+        );
+        let app = self.app.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = save(&app).await;
+        });
+        changed(
+            &self.app,
+            Some(Notice {
+                text: format!("{} connected: {}.", self.device.name, route),
+                severity: "info",
+            }),
+        );
+        (id, outgoing)
+    }
+
+    fn message(&mut self, id: u64, message: DeviceMessage) {
+        super::receive(&self.app, id, message);
+    }
+
+    fn closed(&mut self, id: Option<u64>, reason: &str) {
+        if let Some(id) = id {
+            self.app.state::<Remote>().close(id);
+            record(
+                &self.app,
+                &self.device.id,
+                &self.device.name,
+                "disconnect",
+                Ok(()),
+            );
+        } else {
+            record(
+                &self.app,
+                &self.device.id,
+                &self.device.name,
+                "connect",
+                Err(reason.into()),
+            );
+        }
+        changed(&self.app, None);
     }
 }
 

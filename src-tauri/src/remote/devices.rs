@@ -11,6 +11,8 @@ const FILE: &str = "remote-devices.enc";
 const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 /// How long a pairing lasts without a connection, unless another time was chosen.
 pub(crate) const PAIRING_DAYS: u32 = 30;
+// Only tests count in milliseconds.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const PAIRING_MS: u64 = PAIRING_DAYS as u64 * DAY_MS;
 /// The times a pairing can last without a connection. 0 is for good.
 pub(crate) const PAIRING_CHOICES: &[u32] = &[7, 30, 90, 0];
@@ -94,6 +96,7 @@ impl DeviceStore {
     }
 
     /// Saves a device that finished pairing, at the View level for 30 days. Pairing again with the same key replaces it.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn pair(
         &mut self,
         name: &str,

@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.146"
+version = "0.1.147"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -68,7 +68,7 @@ minisign-verify = "0.3"
 # Runs plugins. Without its own HTTP and file access, so a plugin only reaches Task Proxy through its host calls.
 extism = { version = "1.41.0", default-features = false, features = ["wasmtime-default-features"] }
 # The Task Manager: processes on Linux, macOS, and Windows, read only for what it shows.
-sysinfo = { version = "0.40", default-features = false, features = ["system", "user"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system", "user", "network"] }
 # The ports each process listens on, for the Task Manager.
 listeners = "0.6"
 # Remote Access: the Noise handshakes and encryption between the desktop and a paired device.
@@ -77,6 +77,9 @@ snow = "0.10"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Remote Access: keeps the computer from sleeping while it is on. Its system libraries are already built for Tauri.
 keepawake = "0.6"
+# Remote Access: WebRTC to a paired device. Its OpenSSL backend reuses the OpenSSL git2 already vendors, so it adds the
+# least to the app (Docs/RemoteAccess.md, 2.3).
+str0m = { version = "0.25", default-features = false, features = ["openssl", "vendored"] }
 
 [dev-dependencies]
 tempfile = "3"

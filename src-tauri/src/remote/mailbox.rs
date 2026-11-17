@@ -22,6 +22,10 @@ pub(crate) enum Kind {
     Paired = 4,
     /// The desktop refusing a message before any encryption, as plain text.
     Refused = 5,
+    /// A paired device's first connection message, with its WebRTC offer (`connect.rs`).
+    Connect1 = 6,
+    /// The desktop's answer, with its WebRTC answer.
+    Connect2 = 7,
 }
 
 impl Kind {
@@ -32,6 +36,8 @@ impl Kind {
             3 => Self::Pair3,
             4 => Self::Paired,
             5 => Self::Refused,
+            6 => Self::Connect1,
+            7 => Self::Connect2,
             _ => return None,
         })
     }

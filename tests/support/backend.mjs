@@ -330,7 +330,7 @@ function setup(state) {
     }
     const remote = {
         enabled: !!state.remote?.enabled,
-        devices: (state.remote?.devices || []).map(device => ({ days: 30, pairedAt: 1, expiresAt: Date.now() + 30 * 86400000, lastSeen: null, connected: false, ...device })),
+        devices: (state.remote?.devices || []).map(device => ({ days: 30, pairedAt: 1, expiresAt: Date.now() + 30 * 86400000, lastSeen: null, connected: false, route: null, ...device })),
         log: state.remote?.log || [],
         keepAwake: state.remote?.keepAwake ?? true,
         awakeError: state.remote?.awakeError ?? null,

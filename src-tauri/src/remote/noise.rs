@@ -4,8 +4,10 @@
 //!   that scanned it can finish. Each side learns the other's static key, which the desktop keeps for the device.
 //! - **Later connections** are `Noise_IK`: the device already knows the desktop's key, and the desktop finds the
 //!   device by the key in its first message, before it answers.
-//! - Both handshakes take a prologue holding each side's WebRTC DTLS fingerprint. A party in the middle, such as
-//!   a relay or the API that introduces the devices, would see other fingerprints, so the handshake fails.
+//! - Both handshakes take a prologue holding the desktop's id and the mailbox the device reads answers from, so a
+//!   message can't be moved to another desktop or another attempt. Each side's WebRTC DTLS fingerprint travels in
+//!   its offer or answer inside the handshake (`connect.rs`), which authenticates it, so a party in the middle, such
+//!   as a relay or the API that introduces the devices, can't put its own certificate in place of either side's.
 //!
 //! The device starts both handshakes. The device's side is here too, for tests and as the reference for the
 //! browser's implementation.
@@ -66,13 +68,13 @@ pub(crate) fn generate_keys() -> Result<Keys, String> {
     })
 }
 
-/// What both sides bind into a handshake: the protocol and each side's DTLS certificate fingerprint.
-pub(crate) fn prologue(desktop_fingerprint: &str, device_fingerprint: &str) -> Vec<u8> {
+/// What both sides bind into a handshake: the protocol version, the desktop's id, and the device's reply mailbox.
+pub(crate) fn prologue(desktop_id: &str, reply: &str) -> Vec<u8> {
     format!(
         "TaskProxy remote {}\ndesktop {}\ndevice {}",
         super::protocol::VERSION,
-        desktop_fingerprint.trim().to_ascii_uppercase(),
-        device_fingerprint.trim().to_ascii_uppercase()
+        desktop_id.trim().to_ascii_uppercase(),
+        reply.trim().to_ascii_uppercase()
     )
     .into_bytes()
 }
@@ -184,6 +186,7 @@ pub(crate) struct Channel {
 
 impl Channel {
     /// The other side's static key.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn remote_key(&self) -> Option<Vec<u8>> {
         self.state.get_remote_static().map(<[u8]>::to_vec)
     }
@@ -268,7 +271,7 @@ mod tests {
 
     #[test]
     fn a_handshake_fails_when_someone_stands_in_the_middle() {
-        // A party between the two has its own DTLS certificate, so each side sees a different fingerprint.
+        // A message moved to another desktop or another attempt has a different prologue on each side.
         let (desktop, device) = (generate_keys().unwrap(), generate_keys().unwrap());
         let mut desk =
             Handshake::connect_desktop(&desktop, &prologue("AA:BB:CC", "11:22:33")).unwrap();

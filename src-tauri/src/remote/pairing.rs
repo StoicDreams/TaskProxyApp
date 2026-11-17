@@ -122,7 +122,7 @@ pub(crate) enum Outcome {
     Refused { reason: String, answer: String },
 }
 
-fn refuse(reason: &str) -> Outcome {
+pub(crate) fn refuse(reason: &str) -> Outcome {
     Outcome::Refused {
         reason: reason.into(),
         answer: encode(Kind::Refused, reason.as_bytes()),
@@ -149,6 +149,7 @@ impl Pairing {
     }
 
     /// The open QR code, if it still works.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn invite(&mut self, now: u64) -> Option<&Invite> {
         self.expire(now);
         self.invite.as_ref()

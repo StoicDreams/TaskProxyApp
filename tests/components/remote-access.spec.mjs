@@ -108,6 +108,11 @@ test('a connected device can be disconnected and stays paired', async ({ page })
     expect(await calls(page, 'remote_device_disconnect')).toEqual([{ id: 'device-1' }]);
 });
 
+test('a connected device shows how it reached the desktop', async ({ page }) => {
+    const el = await panel(page, { remote: { enabled: true, devices: [{ ...DEVICE, connected: true, route: 'Direct (same network)' }] } });
+    await expect(el.locator('.remote-device-name')).toContainText('Pixel 9 (connected now: Direct (same network))');
+});
+
 test('a pairing that lasts for good says so', async ({ page }) => {
     const el = await panel(page, { remote: { enabled: true, devices: [{ ...DEVICE, days: 0 }] } });
     await expect(el.locator('.remote-device-details')).toContainText('Stays paired for good.');

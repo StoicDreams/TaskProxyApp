@@ -8,15 +8,13 @@
 //! - `mailbox.rs` talks to api.myfi.ws, `pairing.rs` pairs a device through it, and `service.rs` turns Remote Access
 //!   on and off and reads the mailbox.
 //!
-//! Nothing listens for connections yet. Phase 2 carries a connection over WebRTC: once its handshake finishes and
-//! `devices.rs` has found the device, it calls `Remote::open`, passes each message it decrypts to `receive`, and
-//! sends what the returned receiver yields.
-
-// Phase 2 connects devices, and calls what nothing calls yet. Remove this then.
-#![allow(dead_code)]
+//! A device connects through the mailbox (`connect.rs`) and then over WebRTC (`webrtc.rs`): once its data channel
+//! opens, the connection calls `Remote::open`, passes each message it decrypts to `receive`, and sends what the
+//! returned receiver yields.
 
 pub(crate) mod audit;
 pub(crate) mod awake;
+pub(crate) mod connect;
 pub(crate) mod devices;
 pub(crate) mod dispatch;
 pub(crate) mod hub;
@@ -25,6 +23,7 @@ pub(crate) mod noise;
 pub(crate) mod pairing;
 pub(crate) mod protocol;
 pub(crate) mod service;
+pub(crate) mod webrtc;
 
 use crate::prelude::*;
 use dispatch::Caller;
@@ -40,6 +39,8 @@ struct Connection {
     ready: bool,
     /// The last event's number.
     seq: u64,
+    /// How it reached the desktop, such as Direct (same network).
+    route: String,
 }
 
 /// Remote Access's state: the paired devices, the log, and the devices connected now.
@@ -92,6 +93,7 @@ impl Remote {
                     sender,
                     ready: false,
                     seq: 0,
+                    route: String::new(),
                 },
             );
         }
@@ -112,6 +114,33 @@ impl Remote {
 
     pub(crate) fn last_activity(&self) -> u64 {
         self.last_activity.load(Ordering::SeqCst)
+    }
+
+    /// Notes how a connection reached the desktop, shown with its device.
+    pub(crate) fn set_route(&self, id: u64, route: &str) {
+        if let Ok(mut connections) = self.connections.lock()
+            && let Some(connection) = connections.get_mut(&id)
+        {
+            connection.route = route.into();
+        }
+    }
+
+    /// How each connected device reached the desktop, by device id.
+    pub(crate) fn routes(&self) -> HashMap<String, String> {
+        self.connections
+            .lock()
+            .map(|connections| {
+                connections
+                    .values()
+                    .map(|connection| {
+                        (
+                            connection.caller.device_id.clone(),
+                            connection.route.clone(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The ids of the devices connected now.

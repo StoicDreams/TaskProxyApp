@@ -237,7 +237,7 @@ The desktop benefits from this as well: terminals and commits no longer depend o
 |---|---|
 | `mod.rs` | The `Remote` state: paired devices, the log, and connections. `open` serves a device whose handshake finished, `receive` handles its messages, and `forget_all` runs on MyFi sign-out. |
 | `protocol.rs` | Messages, frames of up to 64 KB, the 16 MB limit on a device's message, the version check |
-| `noise.rs` | `Noise_XXpsk3` and `Noise_IK` handshakes with `snow`, both sides, with the DTLS fingerprints in the prologue, and the encrypted channel |
+| `noise.rs` | `Noise_XXpsk3` and `Noise_IK` handshakes with `snow`, both sides, with the desktop's id and the reply mailbox in the prologue, and the encrypted channel |
 | `devices.rs` | Paired devices: name, public key, MyFi account id, level, expiry, last seen, and the desktop's own key. Kept in `remote-devices.enc`. |
 | `dispatch.rs` | The command table and permission checks |
 | `hub.rs` | `broadcast` sends an event to the window and to every device. `data-changed` reaches devices with its secrets redacted. |
@@ -397,22 +397,45 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 ### 2.3 WebRTC on the desktop
 
-**The library:**
-- **`str0m`** is the recommendation: it does no I/O itself, so it fits Tokio.
-- **`webrtc` (webrtc-rs)** is the alternative.
-- **Measure the binary size,** as was done for Extism.
+*The desktop's side is done, for devices on the same network or VPN. Connections across the internet wait for a STUN server (below). A device can connect once 2.4 builds the client.*
 
-**How a connection is made:**
-1. The phone posts the first Noise message, carrying its SDP offer, to the desktop's mailbox.
-2. The desktop checks the sender's account and replies with the second message, carrying its answer, to the reply mailbox.
-3. ICE candidates go back and forth the same way.
-4. The data channel opens, and the protocol above runs over it.
+**The library: `str0m` 0.25, with its OpenSSL backend.** It does no I/O itself, so it fits Tokio. `webrtc` (webrtc-rs) was the alternative.
 
-**The gateway:** dispatch, permissions and events from 1.4 don't change.
+**Binary size, measured on 2026-11-17** with the app's release settings (LTO, `opt-level = "s"`, stripped). Each program sets up two peers in one process and sends a message over the data channel, so all of ICE, DTLS, SCTP and the channel is linked in:
 
-**How it connected:** shown on both sides as **Direct (same network)**, **Direct (internet)**, or **Relayed**, read from the ICE candidate pair in use.
+| Program | Size | Crates new to Task Proxy |
+|---|---|---|
+| The crypto Task Proxy already has (vendored OpenSSL, ring) | 4.99 MB | |
+| With str0m, OpenSSL backend (`features = ["openssl", "vendored"]`) | 7.37 MB (+2.4 MB) | 10: str0m, str0m-proto, str0m-openssl, sctp-proto, dimpl, and small helpers |
+| With str0m, pure-Rust backend (`rust-crypto`) | 7.80 MB (+2.8 MB) | 38, including a second crypto library (aws-lc) |
 
-**On the same network,** or over Tailscale or WireGuard, host candidates make the connection direct.
+- **The OpenSSL backend reuses the OpenSSL git2 already vendors,** so it adds the least. +2.4 MB is the most it can add to the app, since the measuring programs share less with str0m than Task Proxy does.
+- Both backends connected the two peers, with the message arriving after 0.3 s of simulated time.
+
+**How a connection is made** (`remote/connect.rs`, `remote/webrtc.rs`), one message each way through the mailbox:
+1. **`Connect1`:** the phone posts the first `Noise_IK` message to the desktop's mailbox, carrying `{offer}`, its WebRTC offer with all its addresses.
+2. **`Connect2`:** the desktop checks the sender's account, finds the device by its key (paired, not expired, on this account, Remote Access on), and answers with `{answer}`, carrying all of its own addresses. A refusal says why, as with pairing.
+3. The data channel opens, and the protocol above runs over it. Each message on it is a frame of the Noise channel the handshake finished, inside WebRTC's own DTLS.
+
+**Decided on 2026-11-17:**
+- **The DTLS fingerprints travel in the offer and answer, inside the Noise handshake,** which authenticates them, rather than in the prologue. The phone writes the first message before it can know the desktop's fingerprint, so the prologue can't hold both. The prologue holds the desktop's id and the reply mailbox instead. WebRTC then refuses a DTLS peer whose certificate doesn't match its side's fingerprint.
+- **Candidates aren't trickled:** each side sends all of its addresses at once, so a connection takes two mailbox messages, and the browser waits for its own addresses before sending its offer.
+- **Same network first:** the desktop offers its local IPv4 addresses (each interface except loopback, from `sysinfo`), one UDP socket each, so it knows which address each packet arrived on. That covers the same Wi-Fi, Tailscale and WireGuard. **A STUN server,** for connections across the internet, becomes a setting once one runs on coturn. Until then, the same network or a VPN is needed.
+
+**The connection's life:**
+- The data channel must open within 30 s of the answer. A connected device that goes 45 s without a message (it pings every 15 s) is dropped, as is one whose network goes away.
+- Unpairing or disconnecting a device on the desktop ends its connection at once.
+- Each connection, disconnection and refusal goes in the Activity log, and a connection raises a notice.
+
+**The gateway:** dispatch, permissions and events from 1.4 don't change. `webrtc.rs` reaches the app only through its `Hooks` trait, so its tests run a real connection without a window.
+
+**How it connected:** the panel shows **Direct (same network)** or **Direct (internet)**, read from the addresses the connection uses: both on a private network, a VPN such as Tailscale (100.64.0.0/10), or this computer, is the same network. **Relayed** comes with TURN.
+
+**Tests** (`cargo test -p taskproxy remote::`):
+- A paired device connects over real UDP on this computer, says hello, runs a command and gets its reply, all inside the Noise channel, and is cut off when the desktop drops it.
+- An answer with a swapped DTLS fingerprint never connects.
+- Accepting a connection: an unpaired device, another account, an expired pairing, Remote Access off, a message for another desktop or moved to another mailbox, and one without an offer.
+- Reading the route from the addresses.
 
 ### 2.4 The client on TaskProxy.com
 
@@ -463,12 +486,12 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
   - a signed-out post is refused
 - **Limits,** expiry, and registration.
 
-**Desktop:**
-- signaling against a fake API
-- two `str0m` peers in one process over loopback
-- a swapped DTLS fingerprint is refused
-- a message whose account id doesn't match is refused
-- signing out removes every device
+**Desktop:** *done, in `src-tauri/src/remote/`.*
+- signaling against a fake API (`mailbox.rs`)
+- a phone and the desktop connecting over UDP on this computer (`webrtc.rs`)
+- a swapped DTLS fingerprint is refused (`webrtc.rs`)
+- a message whose account id doesn't match is refused (`pairing.rs`, `connect.rs`)
+- signing out removes every device (`devices.rs`)
 
 **Website:**
 - **The pairing page:**
