@@ -3341,6 +3341,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "keepawake"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d950f8c457c023d71a2b7fa0a3550e8eb5127811895b666086ff10304911d9a"
+dependencies = [
+ "cfg-if",
+ "derive_builder",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "thiserror 2.0.21",
+ "windows",
+ "zbus 5.19.0",
+]
+
+[[package]]
 name = "keyboard-types"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4132,7 +4147,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
 dependencies = [
  "bitflags 2.13.2",
+ "block2",
  "dispatch2",
+ "libc",
  "objc2",
 ]
 
@@ -4225,7 +4242,11 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
 dependencies = [
+ "bitflags 2.13.2",
+ "block2",
+ "dispatch2",
  "libc",
+ "objc2",
  "objc2-core-foundation",
 ]
 
@@ -6406,7 +6427,7 @@ checksum = "8c447be3a2abfa84b2d91680c56600bd6b2873866de27b36ec911be705e291da"
 
 [[package]]
 name = "taskproxy"
-version = "0.1.145"
+version = "0.1.146"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -6417,6 +6438,7 @@ dependencies = [
  "git2",
  "hex",
  "ignore",
+ "keepawake",
  "keyring",
  "libc",
  "listeners",
@@ -6453,7 +6475,7 @@ dependencies = [
 
 [[package]]
 name = "taskproxy-ui"
-version = "0.1.145"
+version = "0.1.146"
 dependencies = [
  "js-sys",
  "serde",
@@ -9051,9 +9073,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.1"
+version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+checksum = "85ccff8a4805aba1eaa4cd4afcd49f7557dd2cf5fd79ffc37f8959466effc5aa"
 dependencies = [
  "zeroize_derive",
 ]

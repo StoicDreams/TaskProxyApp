@@ -162,3 +162,38 @@ test('turning on fails with the reason the backend gives', async ({ page }) => {
     await expect.poll(() => alerts(page)).toEqual([expect.stringContaining('answered with something unexpected')]);
     await expect(el.locator('.remote-state')).toContainText('Remote Access is off.');
 });
+
+test('while on, the computer is kept awake, and the panel says so', async ({ page }) => {
+    const el = await panel(page, { remote: { enabled: true } });
+    await expect(el.locator('.remote-awake')).toContainText('This computer is kept awake');
+    await expect.poll(() => role(el, 'keep-awake').evaluate(d => d.value)).toBe('awake');
+    await expect.poll(() => role(el, 'off-after').evaluate(d => d.value)).toBe('0');
+});
+
+test('letting it sleep and turning off after idle hours are saved', async ({ page }) => {
+    const el = await panel(page, { remote: { enabled: true } });
+    await pick(role(el, 'keep-awake'), 'sleep');
+    await expect.poll(() => calls(page, 'remote_settings')).toEqual([{ settings: { keepAwake: false, offAfterHours: 0 } }]);
+    await expect(el.locator('.remote-awake')).toHaveCount(0);
+    await pick(role(el, 'off-after'), '8');
+    await expect.poll(() => calls(page, 'remote_settings')).toEqual([
+        { settings: { keepAwake: false, offAfterHours: 0 } },
+        { settings: { keepAwake: false, offAfterHours: 8 } },
+    ]);
+    await expect.poll(() => role(el, 'off-after').evaluate(d => d.value)).toBe('8');
+});
+
+test('when the computer can not be kept awake, it says devices may lose it', async ({ page }) => {
+    const el = await panel(page, { remote: { enabled: true, awakeError: 'This computer could not be kept awake: no login manager.' } });
+    await expect(el.locator('.remote-awake-error')).toContainText("no login manager. It may sleep, and devices can't reach it while it does.");
+});
+
+test('turning off after idle hours raises the notice the backend sends', async ({ page }) => {
+    await panel(page, { remote: { enabled: true, offAfterHours: 1 } });
+    await page.evaluate(() => {
+        window.__backend.remote.enabled = false;
+        window.__backend.remote.changed({ text: 'Remote Access turned off after an hour without a device connecting. Turn it on again in Settings.', severity: 'info' });
+    });
+    await expect(page.locator('#r .remote-state')).toContainText('Remote Access is off.');
+    await expect.poll(() => alerts(page)).toContain('Remote Access turned off after an hour without a device connecting. Turn it on again in Settings.');
+});

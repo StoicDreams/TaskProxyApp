@@ -49,7 +49,8 @@
  *   it out for signed out. myfi_sign_in_wait waits until a test calls window.__backend.myfi.approve(account) or
  *   .end(reason), or the app cancels. myfiStartError: why myfi_sign_in_start fails, when it should.
  * - remote: Remote Access as services/remote's commands keep it: { enabled, devices: [{ id, name, level, days,
- *   pairedAt, expiresAt, lastSeen, connected }], log, reachability, enableError }. Turning it on needs a MyFi
+ *   pairedAt, expiresAt, lastSeen, connected }], log, reachability, enableError, keepAwake, awakeError,
+ *   offAfterHours }. Turning it on needs a MyFi
  *   account. window.__backend.remote.pair(name) pairs a device with the open QR code, as a phone would, and
  *   .changed(notice) sends remote-changed.
  *
@@ -331,6 +332,9 @@ function setup(state) {
         enabled: !!state.remote?.enabled,
         devices: (state.remote?.devices || []).map(device => ({ days: 30, pairedAt: 1, expiresAt: Date.now() + 30 * 86400000, lastSeen: null, connected: false, ...device })),
         log: state.remote?.log || [],
+        keepAwake: state.remote?.keepAwake ?? true,
+        awakeError: state.remote?.awakeError ?? null,
+        offAfterHours: state.remote?.offAfterHours ?? 0,
         reachability: state.remote?.reachability || { reachable: !!state.remote?.enabled, error: null },
         invite: null,
         status() {
@@ -344,6 +348,11 @@ function setup(state) {
                 invite: this.invite,
                 devices: this.devices.map(device => ({ ...device })),
                 pairingDays: [7, 30, 90, 0],
+                keepAwake: this.keepAwake,
+                awake: this.enabled && this.keepAwake && !this.awakeError,
+                awakeError: this.enabled && this.keepAwake ? this.awakeError : null,
+                offAfterHours: this.offAfterHours,
+                offAfterChoices: [0, 1, 4, 8, 12, 24, 48],
             };
         },
         changed(notice) {
@@ -817,6 +826,12 @@ function setup(state) {
                 return remote.status();
             },
             remote_log: () => remote.log,
+            remote_settings: ({ settings }) => {
+                if (![0, 1, 4, 8, 12, 24, 48].includes(settings.offAfterHours)) throw 'Choose never, or 1, 4, 8, 12, 24 or 48 hours.';
+                remote.keepAwake = settings.keepAwake;
+                remote.offAfterHours = settings.offAfterHours;
+                return remote.status();
+            },
             plugin_host_action: ({ action }) => action.type === 'git.createBranch' ? `Branch '${action.name}' created.` : '',
         },
     };

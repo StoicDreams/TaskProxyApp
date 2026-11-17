@@ -411,7 +411,8 @@
          * Remote Access: pairing phones and laptops, signed in to the same account, to use this desktop's Task Proxy.
          * Each resolves with the panel's status: { enabled, signedIn, desktopName, desktopId, fingerprint,
          * reachability: { reachable, error }, invite: { link, svg, name, level, days, expiresAt } or null,
-         * devices: [{ id, name, level, days, pairedAt, expiresAt, lastSeen, connected }], pairingDays }.
+         * devices: [{ id, name, level, days, pairedAt, expiresAt, lastSeen, connected }], pairingDays, keepAwake,
+         * awake, awakeError, offAfterHours, offAfterChoices }.
          */
         remoteAccess = {
             status: (err) => tauri.core.invoke('remote_status').catch(err ?? defaultErrHandler),
@@ -425,6 +426,8 @@
             disconnectDevice: (id, err) => tauri.core.invoke('remote_device_disconnect', { id }).catch(err ?? defaultErrHandler),
             /** The latest commands devices sent, newest first: [{ at, deviceId, deviceName, cmd, ok, error }]. */
             log: (err) => tauri.core.invoke('remote_log').catch(err ?? defaultErrHandler),
+            /** Whether the computer is kept awake while on, and the hours without a connection before it turns off (0 never). */
+            settings: (keepAwake, offAfterHours, err) => tauri.core.invoke('remote_settings', { settings: { keepAwake: !!keepAwake, offAfterHours } }).catch(err ?? defaultErrHandler),
             /** Calls back with { notice: { text, severity } or null } whenever what the panel shows changes. */
             onChanged: (callback) => tauri.event.listen('remote-changed', event => callback(event.payload ?? {})),
         }

@@ -213,6 +213,7 @@ pub fn run() {
             remote::service::remote_device_remove,
             remote::service::remote_device_disconnect,
             remote::service::remote_log,
+            remote::service::remote_settings,
             services::projects::greet,
             services::projects::add_project,
             services::projects::add_projects_multi,

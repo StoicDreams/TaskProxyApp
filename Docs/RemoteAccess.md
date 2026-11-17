@@ -342,7 +342,7 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 ### 2.2 Pairing
 
-*The desktop's side is done. Keeping the computer awake and turning off after idle hours are still to do. A device can pair once 2.4 builds the page the QR code opens.*
+*The desktop's side is done. A device can pair once 2.4 builds the page the QR code opens.*
 
 **Remote Access panel:** `wc/remote-access.js`, in Settings, and in the header as a button that shows while a device is connected and opens the panel in a dialog.
 
@@ -351,7 +351,8 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 2. Turning it on registers the desktop with its name and key, and reads its mailbox every 10 s, or every second while a QR code is open or a device is pairing.
 3. At startup it reads the mailbox again if it was on. Without a network it keeps trying. If api.myfi.ws no longer has the desktop, it registers again. If the session ended, it turns off with a notice.
 4. Turning it off stops reading, removes the desktop from api.myfi.ws, ends connections and any QR code, and keeps the paired devices for next time.
-5. **Still to do:** asking the OS not to sleep (systemd-inhibit on Linux, an IOPMAssertion on macOS, `SetThreadExecutionState` on Windows), and a setting that turns it off after a number of hours with no connection.
+5. **While it's on, the computer is kept awake** (`remote/awake.rs`, the `keepawake` crate): systemd's inhibitor locks on Linux, a power assertion on macOS, and `SetThreadExecutionState` on Windows, held on a thread of its own since Windows keeps a computer awake only for the thread that asked. The screen can still turn off. A setting lets it sleep as usual, and the panel says when it couldn't be kept awake.
+6. **It can turn off by itself** after 1, 4, 8, 12, 24 or 48 hours without a device connecting, sending, or pairing, counted from turning on or the setting's last change. Never while a device is connected or pairing. It's off (never) unless chosen, and turning off raises a notice.
 
 **Pairing a device** (`remote/pairing.rs`), through the mailbox, so it needs no direct connection:
 1. Choose a name, a level, and how long it stays paired without connecting: 7, 30 or 90 days, or for good. A connection renews it.
@@ -392,7 +393,7 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 **Signing out on the desktop**, or signing in as someone else, turns Remote Access off, deletes this desktop from the API, and removes every paired device.
 
-**Commands,** all desktop-only: `remote_status`, `remote_set_enabled`, `remote_invite`, `remote_invite_cancel`, `remote_device_update`, `remote_device_remove`, `remote_device_disconnect`, `remote_log`. `remote-changed` tells the window to refresh, with a notice when there is one.
+**Commands,** all desktop-only: `remote_status`, `remote_set_enabled`, `remote_invite`, `remote_invite_cancel`, `remote_device_update`, `remote_device_remove`, `remote_device_disconnect`, `remote_log`, `remote_settings`. `remote-changed` tells the window to refresh, with a notice when there is one.
 
 ### 2.3 WebRTC on the desktop
 

@@ -57,6 +57,7 @@ pub(crate) const DESKTOP_ONLY: &[&str] = &[
     "remote_device_remove",
     "remote_device_disconnect",
     "remote_log",
+    "remote_settings",
     "myfi_sign_in_cancel",
     "myfi_sign_out",
     "plugin_install_catalog",

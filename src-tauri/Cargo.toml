@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.145"
+version = "0.1.146"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -75,6 +75,8 @@ listeners = "0.6"
 snow = "0.10"
 # Remote Access: the pairing QR code, drawn as SVG.
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# Remote Access: keeps the computer from sleeping while it is on. Its system libraries are already built for Tauri.
+keepawake = "0.6"
 
 [dev-dependencies]
 tempfile = "3"

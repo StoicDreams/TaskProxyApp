@@ -16,6 +16,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod audit;
+pub(crate) mod awake;
 pub(crate) mod devices;
 pub(crate) mod dispatch;
 pub(crate) mod hub;
@@ -57,6 +58,11 @@ pub(crate) struct Remote {
     /// Reading the mailbox, while Remote Access is on.
     pub poller: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     pub reachability: Mutex<service::Reachability>,
+    /// Held while the computer is kept awake, and why it couldn't be when it failed.
+    pub awake: Mutex<Option<awake::Awake>>,
+    pub awake_error: Mutex<Option<String>>,
+    /// When a device last connected, sent something, or paired, or Remote Access turned on, for turning off when idle.
+    last_activity: AtomicU64,
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -75,6 +81,7 @@ impl Remote {
 
     /// Starts serving a device whose handshake finished. Returns the connection's id, and what to send it.
     pub(crate) fn open(&self, caller: Caller) -> (u64, UnboundedReceiver<DesktopMessage>) {
+        self.touch();
         let (sender, receiver) = unbounded_channel();
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
         if let Ok(mut connections) = self.connections.lock() {
@@ -92,9 +99,19 @@ impl Remote {
     }
 
     pub(crate) fn close(&self, id: u64) {
+        self.touch();
         if let Ok(mut connections) = self.connections.lock() {
             connections.remove(&id);
         }
+    }
+
+    /// Notes activity now, which keeps Remote Access from turning off as idle.
+    pub(crate) fn touch(&self) {
+        self.last_activity.store(now_ms(), Ordering::SeqCst);
+    }
+
+    pub(crate) fn last_activity(&self) -> u64 {
+        self.last_activity.load(Ordering::SeqCst)
     }
 
     /// The ids of the devices connected now.
@@ -195,6 +212,7 @@ impl Remote {
     /// Answers what needs no command, such as a hello or a ping, and returns a request to run.
     pub(crate) fn handle(&self, id: u64, message: DeviceMessage) -> Option<Command> {
         let (caller, ready) = self.caller(id)?;
+        self.touch();
         match message {
             DeviceMessage::Hello { hello } => {
                 let welcome = protocol::welcome(&hello);

@@ -119,6 +119,7 @@
             const t = this;
             const box = el('webui-flex', { column: true, gap: 'var(--padding)', class: 'remote-access' });
             box.appendChild(t.renderSwitch(status));
+            box.appendChild(t.renderWhileOn(status));
             if (status.enabled) {
                 box.appendChild(t.renderPairing(status));
             }
@@ -166,6 +167,36 @@
                 actions.appendChild(signIn);
             }
             part.appendChild(actions);
+            return part;
+        },
+        renderWhileOn(status) {
+            const t = this;
+            const part = el('div', { class: 'remote-while-on' });
+            part.appendChild(el('h3', {}, "While It's On"));
+            if (status.enabled && status.keepAwake) {
+                if (status.awakeError) {
+                    const alert = el('webui-alert', { show: true, severity: 'warning', class: 'remote-awake-error' });
+                    alert.textContent = `${status.awakeError} It may sleep, and devices can't reach it while it does.`;
+                    part.appendChild(alert);
+                } else if (status.awake) {
+                    part.appendChild(el('p', { class: 'remote-awake' }, 'This computer is kept awake, so your devices can reach it. Its screen can still turn off.'));
+                }
+            }
+            const keep = dropdown('Sleep', 'keep-awake', [
+                { value: 'awake', display: 'Keep this computer awake' },
+                { value: 'sleep', display: 'Let this computer sleep as usual' },
+            ], status.keepAwake ? 'awake' : 'sleep');
+            const hourName = hours => hours === 0 ? 'Never' : hours === 1 ? 'After an hour without a device connecting' : `After ${hours} hours without a device connecting`;
+            const off = dropdown('Turn off by itself', 'off-after', (status.offAfterChoices || [0]).map(hours => ({ value: hours, display: hourName(hours) })), status.offAfterHours || 0);
+            const save = () => {
+                const keepAwake = (keep.value || 'awake') === 'awake';
+                const hours = parseInt(off.value ?? '0', 10) || 0;
+                if (keepAwake === status.keepAwake && hours === (status.offAfterHours || 0)) return;
+                t.apply(() => webui.proxy.remoteAccess.settings(keepAwake, hours));
+            };
+            keep.addEventListener('change', save);
+            off.addEventListener('change', save);
+            part.append(keep, off);
             return part;
         },
         renderPairing(status) {

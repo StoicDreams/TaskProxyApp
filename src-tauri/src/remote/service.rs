@@ -7,7 +7,7 @@
 use super::devices::{self, Device, Level, PAIRING_CHOICES};
 use super::mailbox::{Inbound, MailboxError};
 use super::pairing::{self, Desktop, Invite, Outcome};
-use super::{Remote, audit, now_ms};
+use super::{Remote, audit, awake, now_ms};
 use crate::prelude::*;
 use crate::services::myfi::{self, MyFiApi};
 use tauri::Emitter;
@@ -16,6 +16,14 @@ const SLOW_POLL: Duration = Duration::from_secs(10);
 const FAST_POLL: Duration = Duration::from_secs(1);
 /// The event the Remote Access panel and the header's indicator follow.
 pub(crate) const CHANGED: &str = "remote-changed";
+/// The hours without a connection after which Remote Access can turn itself off. 0 never does.
+pub(crate) const OFF_AFTER_CHOICES: &[u32] = &[0, 1, 4, 8, 12, 24, 48];
+const HOUR_MS: u64 = 60 * 60 * 1000;
+
+/// Whether Remote Access has gone unused for `hours` and should turn off. Never while a device is connected.
+pub(crate) fn idle_off_due(hours: u32, last_activity: u64, now: u64, connected: bool) -> bool {
+    hours > 0 && !connected && now.saturating_sub(last_activity) >= hours as u64 * HOUR_MS
+}
 
 /// Whether the mailbox can be read, as the panel shows it.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -57,6 +65,13 @@ pub(crate) struct RemoteStatus {
     pub invite: Option<InviteStatus>,
     pub devices: Vec<DeviceStatus>,
     pub pairing_days: Vec<u32>,
+    /// Whether the computer is kept from sleeping while Remote Access is on.
+    pub keep_awake: bool,
+    /// Whether it is kept awake right now, and why not when that failed.
+    pub awake: bool,
+    pub awake_error: Option<String>,
+    pub off_after_hours: u32,
+    pub off_after_choices: Vec<u32>,
 }
 
 /// Something the window shows in the Alerts panel, as well as a desktop notification.
@@ -103,7 +118,38 @@ pub(crate) fn status(app: &AppHandle) -> Result<RemoteStatus, String> {
             })
             .collect(),
         pairing_days: PAIRING_CHOICES.to_vec(),
+        keep_awake: !store.allow_sleep,
+        awake: lock(&remote.awake)?.is_some(),
+        awake_error: lock(&remote.awake_error)?.clone(),
+        off_after_hours: store.off_after_hours,
+        off_after_choices: OFF_AFTER_CHOICES.to_vec(),
     })
+}
+
+/// Keeps the computer awake while Remote Access is on and that is wanted, and lets it sleep otherwise.
+fn apply_awake(remote: &Remote) {
+    let wanted = remote
+        .devices
+        .lock()
+        .is_ok_and(|store| store.enabled && !store.allow_sleep);
+    let Ok(mut awake) = remote.awake.lock() else {
+        return;
+    };
+    if !wanted {
+        awake.take();
+        if let Ok(mut error) = remote.awake_error.lock() {
+            *error = None;
+        }
+        return;
+    }
+    if awake.is_some() {
+        return;
+    }
+    let held = awake::hold();
+    if let Ok(mut error) = remote.awake_error.lock() {
+        *error = held.as_ref().err().cloned();
+    }
+    *awake = held.ok();
 }
 
 /// Tells the window that something the panel shows changed, with a notice to raise if there is one.
@@ -174,6 +220,9 @@ pub(crate) async fn turn_on(app: &AppHandle) -> Result<(), String> {
     let desktop_id = register(app, &api, &session).await?;
     lock(&app.state::<Remote>().devices)?.enabled = true;
     save(app).await?;
+    let remote = app.state::<Remote>();
+    remote.touch();
+    apply_awake(&remote);
     start_polling(app, api, session, desktop_id);
     changed(app, None);
     Ok(())
@@ -189,6 +238,7 @@ pub(crate) async fn turn_off(app: &AppHandle) -> Result<(), String> {
         store.enabled = false;
         store.desktop_id = None;
     }
+    apply_awake(&app.state::<Remote>());
     save(app).await?;
     changed(app, None);
     Ok(())
@@ -199,6 +249,7 @@ fn end_sessions(remote: &Remote) -> Result<(), String> {
     lock(&remote.pairing)?.close();
     *lock(&remote.invite_status)? = None;
     remote.disconnect_all();
+    lock(&remote.awake)?.take();
     Ok(())
 }
 
@@ -233,6 +284,9 @@ pub(crate) async fn resume(app: AppHandle) {
     if let Ok(mut current) = app.state::<Remote>().session.lock() {
         *current = Some(session.clone());
     }
+    let remote = app.state::<Remote>();
+    remote.touch();
+    apply_awake(&remote);
     start_polling(&app, api, session, desktop_id);
     changed(&app, None);
 }
@@ -305,6 +359,9 @@ async fn poll(app: AppHandle, api: MyFiApi, session: String, mut desktop_id: Str
         if changed_now {
             changed(&app, None);
         }
+        if went_idle(&app).await {
+            return;
+        }
         let fast = app
             .state::<Remote>()
             .pairing
@@ -312,6 +369,45 @@ async fn poll(app: AppHandle, api: MyFiApi, session: String, mut desktop_id: Str
             .is_ok_and(|mut pairing| pairing.is_active(now_ms()));
         sleep(if fast { FAST_POLL } else { SLOW_POLL }).await;
     }
+}
+
+/// Turns Remote Access off when it went unused for longer than its setting. Returns whether it did, which ends the
+/// mailbox loop this runs in.
+async fn went_idle(app: &AppHandle) -> bool {
+    let remote = app.state::<Remote>();
+    let hours = remote
+        .devices
+        .lock()
+        .map(|store| store.off_after_hours)
+        .unwrap_or(0);
+    let connected = remote.has_connections()
+        || remote
+            .pairing
+            .lock()
+            .is_ok_and(|mut pairing| pairing.is_active(now_ms()));
+    if !idle_off_due(hours, remote.last_activity(), now_ms(), connected) {
+        return false;
+    }
+    if let Ok(mut poller) = remote.poller.lock() {
+        // This runs inside the loop, so it lets the loop end instead of stopping it part way.
+        poller.take();
+    }
+    let _ = turn_off(app).await;
+    changed(
+        app,
+        Some(Notice {
+            text: format!(
+                "Remote Access turned off after {} without a device connecting. Turn it on again in Settings.",
+                if hours == 1 {
+                    String::from("an hour")
+                } else {
+                    format!("{} hours", hours)
+                }
+            ),
+            severity: "info",
+        }),
+    );
+    true
 }
 
 /// The session ended while reading the mailbox: Remote Access turns off, as signing out turns it off.
@@ -360,6 +456,9 @@ async fn answer(app: &AppHandle, api: &MyFiApi, session: &str, desktop_id: &str,
     let Ok(outcome) = outcome else {
         return;
     };
+    if outcome != Outcome::Nothing {
+        remote.touch();
+    }
     let (answer, notice) = match outcome {
         Outcome::Nothing => return,
         Outcome::Answer(answer) => (answer, None),
@@ -474,6 +573,39 @@ pub(crate) struct InviteRequest {
 pub(crate) struct DeviceChange {
     pub name: Option<String>,
     pub level: Option<Level>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RemoteSettings {
+    pub keep_awake: bool,
+    pub off_after_hours: u32,
+}
+
+/// Whether the computer is kept awake while Remote Access is on, and after how many hours without a connection it
+/// turns off.
+#[tauri::command]
+pub(crate) async fn remote_settings(
+    app: AppHandle,
+    settings: RemoteSettings,
+) -> Result<RemoteStatus, String> {
+    if !OFF_AFTER_CHOICES.contains(&settings.off_after_hours) {
+        return Err(String::from(
+            "Choose never, or 1, 4, 8, 12, 24 or 48 hours.",
+        ));
+    }
+    let remote = app.state::<Remote>();
+    {
+        let mut store = lock(&remote.devices)?;
+        store.allow_sleep = !settings.keep_awake;
+        store.off_after_hours = settings.off_after_hours;
+    }
+    // A new limit counts from now, so turning it on doesn't turn Remote Access off at once.
+    remote.touch();
+    apply_awake(&remote);
+    save(&app).await?;
+    changed(&app, None);
+    status(&app)
 }
 
 /// What the Remote Access panel shows.
@@ -600,4 +732,37 @@ pub(crate) async fn remote_log(app: AppHandle) -> Result<Vec<audit::Entry>, Stri
     let mut entries = lock(&app.state::<Remote>().log)?.latest();
     entries.truncate(200);
     Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_turns_off_only_after_the_chosen_hours_unused() {
+        assert!(
+            !idle_off_due(0, 0, u64::MAX, false),
+            "never, when no limit is set"
+        );
+        assert!(!idle_off_due(4, 0, 4 * HOUR_MS - 1, false));
+        assert!(idle_off_due(4, 0, 4 * HOUR_MS, false));
+        assert!(
+            !idle_off_due(4, 0, 100 * HOUR_MS, true),
+            "never while a device is connected"
+        );
+        assert!(
+            !idle_off_due(1, 10 * HOUR_MS, 10 * HOUR_MS + 5, false),
+            "counted from the last activity"
+        );
+        assert!(
+            !idle_off_due(1, 10, 0, false),
+            "a clock that went back doesn't count as idle"
+        );
+    }
+
+    #[test]
+    fn the_choices_offered_include_never() {
+        assert_eq!(OFF_AFTER_CHOICES[0], 0);
+        assert!(OFF_AFTER_CHOICES.windows(2).all(|pair| pair[0] < pair[1]));
+    }
 }

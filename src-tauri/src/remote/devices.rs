@@ -76,6 +76,12 @@ pub(crate) struct DeviceStore {
     /// The MyFi account Remote Access was turned on under. Signing in to another account forgets every device.
     #[serde(default)]
     pub account_id: Option<String>,
+    /// Whether the computer may sleep while Remote Access is on. It is kept awake unless this is set.
+    #[serde(default)]
+    pub allow_sleep: bool,
+    /// Turns Remote Access off after this many hours without a connection or pairing. 0 never does.
+    #[serde(default)]
+    pub off_after_hours: u32,
 }
 
 impl DeviceStore {
