@@ -54,7 +54,7 @@ test('new notifications pop up, and ones read elsewhere go away', async ({ page 
     await setNotifications(page, [assigned]);
     await refresh(page);
     await expect.poll(() => bellCount(page)).toBe('1');
-    expect(await calls(page, 'plugin_notification_read')).toEqual([]);
+    await expect.poll(() => calls(page, 'plugin_notification_read')).toEqual([]);
     // A plugin that fails keeps what it showed.
     await page.evaluate(() => { window.__backend.handlers.plugin_notifications = () => [{ id: 'test', name: 'Test Plugin', error: 'Jira is down' }]; });
     await refresh(page);

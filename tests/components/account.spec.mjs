@@ -46,13 +46,13 @@ test('while Stoic Dreams cannot be reached, it shows the saved account and says 
 
 test('signing in shows the code to check, and finishes once it is approved in the browser', async ({ page }) => {
     await startSignIn(page);
-    expect(await calls(page, 'myfi_sign_in_start')).toHaveLength(1);
+    await expect.poll(() => calls(page, 'myfi_sign_in_start')).toHaveLength(1);
     await expect.poll(async () => (await calls(page, 'myfi_sign_in_wait')).length).toBe(1);
     await page.evaluate(account => window.__backend.myfi.approve(account), ACCOUNT);
     await expect(openDialog(page)).toHaveCount(0);
     await expect(button(page)).toHaveAttribute('data-state', 'signed-in');
     await expect.poll(() => alerts(page)).toContain('Signed in as Test User.');
-    expect(await calls(page, 'myfi_sign_in_cancel')).toEqual([]);
+    await expect.poll(() => calls(page, 'myfi_sign_in_cancel')).toEqual([]);
 });
 
 test('the approval page can be opened again while it waits', async ({ page }) => {
@@ -68,7 +68,11 @@ test('cancelling stops waiting and stays signed out', async ({ page }) => {
     await expect.poll(async () => (await calls(page, 'myfi_sign_in_cancel')).length).toBe(1);
     await expect(openDialog(page)).toHaveCount(0);
     await expect(button(page)).toHaveAttribute('data-state', 'signed-out');
-    expect(await alerts(page)).toEqual([]);
+    // Signing in can only start again once the cancelled one has ended, which it did without a message.
+    await button(page).click();
+    await expect.poll(async () => (await calls(page, 'myfi_sign_in_start')).length).toBe(2);
+    await expect(openDialog(page)).toContainText('M7A-JQF');
+    await expect.poll(() => alerts(page)).toEqual([]);
 });
 
 test('a refused or expired sign-in says why, and its reason is never markup', async ({ page }) => {
@@ -78,7 +82,7 @@ test('a refused or expired sign-in says why, and its reason is never markup', as
     await expect(openDialog(page)).toHaveCount(0);
     await expect.poll(() => alerts(page)).toContain('Refused &lt;img src=x onerror=&quot;window.__hacked=1&quot;&gt;');
     await expect(button(page)).toHaveAttribute('data-state', 'signed-out');
-    expect(await page.evaluate(() => window.__hacked)).toBeUndefined();
+    await expect.poll(() => page.evaluate(() => window.__hacked)).toBeUndefined();
 });
 
 test('a sign-in that cannot start says why, with nothing to wait for', async ({ page }) => {
@@ -86,7 +90,7 @@ test('a sign-in that cannot start says why, with nothing to wait for', async ({ 
     await spyOnAlerts(page);
     await button(page).click();
     await expect.poll(() => alerts(page)).toContain('Could not reach api.myfi.ws');
-    expect(await calls(page, 'myfi_sign_in_wait')).toEqual([]);
+    await expect.poll(() => calls(page, 'myfi_sign_in_wait')).toEqual([]);
     await expect(openDialog(page)).toHaveCount(0);
 });
 
@@ -106,5 +110,5 @@ test("the account's name is shown as text, never markup", async ({ page }) => {
     await button(page).click();
     await expect(openDialog(page)).toContainText('<img src=x onerror="window.__hacked=1">');
     await expect(openDialog(page).locator('.myfi-account img')).toHaveCount(0);
-    expect(await page.evaluate(() => window.__hacked)).toBeUndefined();
+    await expect.poll(() => page.evaluate(() => window.__hacked)).toBeUndefined();
 });

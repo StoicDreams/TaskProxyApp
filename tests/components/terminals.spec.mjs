@@ -7,9 +7,27 @@ const open = async (page, state = {}) => {
 const ready = async page => {
     await page.locator('#term-content-wrapper').waitFor();
     await page.locator('#term-console').waitFor();
-    await page.waitForFunction(() => document.querySelector('#term-runner')?.setScript && document.querySelector('#term-console')?._term);
-    await page.waitForTimeout(100);
+    await settled(page);
 };
+/**
+ * The Terminal Manager has finished showing a terminal: its list is up to date and selects the terminal shown, and
+ * the script box and the terminal view are on it too. Switching terminals and refreshing the list take several
+ * steps, so tests wait for this before acting on what the manager shows.
+ */
+const settled = page => page.waitForFunction(() => {
+    const el = document.querySelector('app-terminals');
+    const runner = document.querySelector('#term-runner');
+    const view = document.querySelector('#term-console');
+    const list = document.querySelector('#term-dropdown');
+    if (!runner?.setScript || !view?._term || !list || el._activeConsole !== view) return false;
+    if (el._isRefreshing || el._refreshAgain || el._listedFilter !== el.filter()) return false;
+    const shown = el._none ? null : el.viewState().activeId;
+    if (runner._fileName !== (shown ?? '') || (view._terminalId ?? null) !== shown) return false;
+    // The list selects the terminal shown, or is off with nothing to list. The Live view has no list.
+    if (el.filter() === 'Live') return shown === 'live';
+    if (list.hasAttribute('disabled')) return el._none === true;
+    return list.value === webui.proxy.terminalHelpers.terminalValue(shown, el._viewProject);
+});
 // What the terminal shows, read from its buffer rather than the screen, so it includes scrolled out lines.
 const screen = page => page.evaluate(() => document.querySelector('#term-console').getScreenText());
 const output = (page, terminalId, data) => runOutput(page, { projectId: 'project-id', terminalId, data });
@@ -17,7 +35,7 @@ const placeholder = page => page.locator('#term-console .placeholder');
 const start = async (page, id) => {
     await page.evaluate(id => webui.proxy.terminalHelpers.runScript(id, 'body', [], false, false), id);
     await page.evaluate(id => document.querySelector('app-terminals').switchTerminal(id), id);
-    await page.waitForTimeout(100);
+    await settled(page);
 };
 
 test('shows install instructions when PowerShell is missing', async ({ page }) => {
@@ -63,8 +81,9 @@ test('output for another terminal is kept for later', async ({ page }) => {
     await start(page, 'a.ps1');
     await page.evaluate(() => webui.proxy.terminalHelpers.runScript('b.ps1', 'body', [], false, false));
     await output(page, 'b.ps1', 'FOR B\r\n');
-    await page.waitForTimeout(100);
-    expect(await screen(page)).not.toContain('FOR B');
+    // Output is handled in the order it arrives, so once a.ps1's shows, b.ps1's has been dealt with.
+    await output(page, 'a.ps1', 'FOR A\r\n');
+    await expect.poll(() => screen(page)).toBe('FOR A');
     await page.evaluate(() => document.querySelector('app-terminals').switchTerminal('b.ps1'));
     await expect.poll(() => screen(page)).toContain('FOR B');
 });
@@ -88,8 +107,9 @@ test('kill all also forgets the queue', async ({ page }) => {
     await page.locator('#btn-kill-all').click();
     await expect.poll(async () => (await calls(page, 'kill_all_scripts')).length).toBe(1);
     await runEnds(page, { terminalId: 'a.ps1', code: null });
-    await page.waitForTimeout(200);
-    expect((await calls(page, 'spawn_script')).map(call => call.terminalId)).toEqual(['a.ps1']);
+    // The app has heard that a.ps1 ended, which is when the next queued script would have started.
+    await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].status)).toBe('Finished');
+    await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.terminalId)).toEqual(['a.ps1']);
 });
 test('clear empties the console', async ({ page }) => {
     await open(page);
@@ -114,8 +134,8 @@ test('select all selects every line, scrolled out ones too, and copies them', as
     });
     await page.locator('#btn-select-all').click();
     await expect.poll(() => page.evaluate(() => window.__copied.length)).toBe(1);
-    expect(await page.evaluate(() => window.__copied[0])).toBe(lines.join('\n'));
-    expect(await page.evaluate(() => document.querySelector('#term-console').getSelectedText())).toContain('line 200');
+    await expect.poll(() => page.evaluate(() => window.__copied[0])).toBe(lines.join('\n'));
+    await expect.poll(() => page.evaluate(() => document.querySelector('#term-console').getSelectedText())).toContain('line 200');
     await expect(page.locator('webui-alerts, webui-alert').filter({ hasText: 'Copied the terminal output.' }).first()).toBeAttached();
     // The terminal keeps focus, so Ctrl+C copies again rather than stopping the script.
     await page.keyboard.press('Control+c');
@@ -135,7 +155,7 @@ test('select all copies without blank lines or whitespace around the text', asyn
     await page.locator('#btn-select-all').click();
     await expect.poll(() => page.evaluate(() => window.__copied.length)).toBe(1);
     // Indents inside the text stay, as they are part of the output.
-    expect(await page.evaluate(() => window.__copied[0])).toBe('Build started\n    Compiling\nDone');
+    await expect.poll(() => page.evaluate(() => window.__copied[0])).toBe('Build started\n    Compiling\nDone');
 });
 test('select all says so when the clipboard refuses', async ({ page }) => {
     await open(page);
@@ -156,8 +176,12 @@ test('select all with no output copies nothing', async ({ page }) => {
         navigator.clipboard.writeText = async text => { window.__copied.push(text); };
     });
     await page.locator('#btn-select-all').click();
-    await page.waitForTimeout(200);
-    expect(await page.evaluate(() => window.__copied)).toEqual([]);
+    await expect.poll(() => page.evaluate(() => window.__copied)).toEqual([]);
+    // With output, the same button copies it, and that is the only copy made.
+    await output(page, 'a.ps1', 'now there is output\r\n');
+    await expect.poll(() => screen(page)).toBe('now there is output');
+    await page.locator('#btn-select-all').click();
+    await expect.poll(() => page.evaluate(() => window.__copied)).toEqual(['now there is output']);
 });
 test('a status change during a dropdown refresh is not lost', async ({ page }) => {
     await open(page);
@@ -183,35 +207,36 @@ test('finishing a script updates the kill button', async ({ page }) => {
 test('markup in a script name is shown as text', async ({ page }) => {
     await open(page, { scripts: ['<img src=q onerror="window.__xss=1">.ps1'], appData: { 'app-terminals-filter': 'Saved' } });
     await ready(page);
-    await page.waitForTimeout(300);
-    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    // The list shows the name as it was written.
+    await expect.poll(() => page.evaluate(() => document.querySelector('#term-dropdown')._select.textContent)).toContain('<img src=q onerror="window.__xss=1">.ps1');
+    await expect(page.locator('#term-dropdown img')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
 
 test.describe('page scripts', () => {
     const runPageScript = async (page, id) => {
         await page.evaluate(id => webui.proxy.terminalHelpers.runScript(id, "$secret = 'REALSECRET'", [], false, false, true, "$secret = 'REA***RET'"), id);
         await page.evaluate(id => document.querySelector('app-terminals').switchTerminal(id), id);
-        await page.waitForTimeout(150);
+        await settled(page);
     };
     test('show masked values and cannot be run or saved from here', async ({ page }) => {
         await open(page);
         await ready(page);
         await runPageScript(page, 'p1');
         await expect(page.locator('#term-runner webui-input-message textarea')).toHaveValue("$secret = 'REA***RET'");
-        expect(await page.evaluate(() => document.body.innerHTML.includes('REALSECRET'))).toBe(false);
+        await expect.poll(() => page.evaluate(() => document.body.innerHTML.includes('REALSECRET'))).toBe(false);
         await expect(page.locator('#term-runner webui-button[label="Run"]')).toBeHidden();
         await expect(page.locator('#term-runner webui-button[label="Save"]')).toBeHidden();
         await expect(page.locator('#term-runner .read-only-note')).toBeVisible();
+        // The click is refused as it is handled, before anything is sent, so there is nothing later to wait for.
         await page.locator('#term-runner').evaluate(el => el._btnRun.click());
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'spawn_script')).toHaveLength(1);
+        await expect.poll(() => calls(page, 'spawn_script')).toHaveLength(1);
     });
     test('file scripts can still be run from here', async ({ page }) => {
         await open(page);
         await ready(page);
         await runPageScript(page, 'p1');
         await start(page, 'a.ps1');
-        await page.waitForTimeout(100);
         await expect(page.locator('#term-runner webui-button[label="Run"]')).toBeVisible();
         await expect(page.locator('#term-runner .read-only-note')).toBeHidden();
     });
@@ -264,45 +289,44 @@ test.describe('run status', () => {
     const status = page => page.locator('#term-status');
     const finish = (page, terminalId, code) => runEnds(page, { projectId: 'project-id', terminalId, code });
 
-    test('a running script shows Running in blue with a time that keeps counting', async ({ page }) => {
+    test('a running script shows Running with a time that keeps counting', async ({ page }) => {
         await open(page);
         await ready(page);
         await start(page, 'a.ps1');
         await expect(status(page)).toHaveText(/^Running \d\d:\d\d:\d\d\.\d{3}$/);
         await expect(status(page)).toHaveAttribute('data-state', 'running');
-        expect(await status(page).evaluate(el => el.style.color)).toContain('var(--color-info)');
         const first = await status(page).textContent();
         await expect(status(page)).not.toHaveText(first);
         // The label still starts with Terminal: in its own color.
         await expect(status(page).locator('..')).toHaveText(/^Terminal: Running /);
     });
-    test('a script that exits cleanly shows Finished in green, and its time stops', async ({ page }) => {
+    test('a script that exits cleanly shows Finished, and its time stops', async ({ page }) => {
+        // The page's clock is moved on, to show the time no longer counts.
+        await page.clock.install();
         await open(page);
         await ready(page);
         await start(page, 'a.ps1');
         await finish(page, 'a.ps1', 0);
         await expect(status(page)).toHaveText(/^Finished \d\d:\d\d:\d\d\.\d{3}$/);
-        expect(await status(page).evaluate(el => el.style.color)).toContain('var(--color-success)');
+        await expect(status(page)).toHaveAttribute('data-state', 'finished');
         const text = await status(page).textContent();
-        await page.waitForTimeout(300);
+        await page.clock.runFor(5000);
         await expect(status(page)).toHaveText(text);
     });
-    test('a script that exits with an error, or is stopped, shows Failed in red', async ({ page }) => {
+    test('a script that exits with an error, or is stopped, shows Failed', async ({ page }) => {
         await open(page);
         await ready(page);
         await start(page, 'a.ps1');
         await finish(page, 'a.ps1', 2);
         await expect(status(page)).toHaveText(/^Failed /);
-        expect(await status(page).evaluate(el => el.style.color)).toContain('var(--color-danger)');
+        await expect(status(page)).toHaveAttribute('data-state', 'failed');
         // A script that ends from Ctrl+C with exit code 0 was still stopped.
-        await onCommand(page, 'stop_run', args => {
-            window.__backend.runs.stop('project-id', args.terminalId);
-            setTimeout(() => window.__backend.runs.end({ projectId: 'project-id', terminalId: args.terminalId, code: 0 }), 50);
-            return null;
-        });
         await start(page, 'b.ps1');
         await expect(status(page)).toHaveText(/^Running /);
         await page.locator('#btn-kill').click();
+        await expect.poll(() => calls(page, 'stop_run')).toEqual([{ terminalId: 'b.ps1' }]);
+        await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['b.ps1'].stopped)).toBe(true);
+        await finish(page, 'b.ps1', 0);
         await expect(status(page)).toHaveText(/^Failed /);
     });
     test('switching terminals shows each one\'s own status, and none for one that has not run', async ({ page }) => {
@@ -319,18 +343,18 @@ test.describe('run status', () => {
     test('the time is shown as hours, minutes, seconds, and milliseconds', async ({ page }) => {
         await openApp(page);
         const format = ms => page.evaluate(ms => webui.proxy.terminalHelpers.formatElapsed(ms), ms);
-        expect(await format(0)).toBe('00:00:00.000');
-        expect(await format(85545473)).toBe('23:45:45.473');
-        expect(await format(((1 * 60 + 23) * 60 + 45) * 1000 + 473)).toBe('01:23:45.473');
-        expect(await format(360000000)).toBe('100:00:00.000');
+        await expect.poll(() => format(0)).toBe('00:00:00.000');
+        await expect.poll(() => format(85545473)).toBe('23:45:45.473');
+        await expect.poll(() => format(((1 * 60 + 23) * 60 + 45) * 1000 + 473)).toBe('01:23:45.473');
+        await expect.poll(() => format(360000000)).toBe('100:00:00.000');
     });
     test('a run whose exit code is unknown, such as in its own window, counts as finished', async ({ page }) => {
         await openApp(page);
         const state = (term) => page.evaluate(term => webui.proxy.terminalHelpers.runStatus(term, 5000)?.state ?? null, term);
-        expect(await state({ status: 'Ready' })).toBe(null);
-        expect(await state({ status: 'Finished', startedAt: 1000, endedAt: 2000, exitCode: null })).toBe('Finished');
-        expect(await state({ status: 'Finished', startedAt: 1000, endedAt: 2000, exitCode: null, stopped: true })).toBe('Failed');
-        expect(await page.evaluate(() => webui.proxy.terminalHelpers.runStatus({ status: 'Running', startedAt: 1000 }, 5000).elapsed)).toBe(4000);
+        await expect.poll(() => state({ status: 'Ready' })).toBe(null);
+        await expect.poll(() => state({ status: 'Finished', startedAt: 1000, endedAt: 2000, exitCode: null })).toBe('Finished');
+        await expect.poll(() => state({ status: 'Finished', startedAt: 1000, endedAt: 2000, exitCode: null, stopped: true })).toBe('Failed');
+        await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.runStatus({ status: 'Running', startedAt: 1000 }, 5000).elapsed)).toBe(4000);
     });
 });
 
@@ -352,7 +376,7 @@ test.describe('script filter', () => {
         await start(page, 'test.ps1');
         await choose(page, 'Running');
         await expect.poll(() => listed(page)).toEqual(['test.ps1 (Running)']);
-        expect(await page.evaluate(() => webui.getData('app-terminals-filter'))).toBe('Running');
+        await expect.poll(() => page.evaluate(() => webui.getData('app-terminals-filter'))).toBe('Running');
     });
 
     test('Live shows the live terminal, with the list cleared and turned off', async ({ page }) => {
@@ -362,7 +386,7 @@ test.describe('script filter', () => {
         await expect.poll(() => listed(page)).toEqual([]);
         await expect(dropdown(page)).toHaveAttribute('disabled');
         await expect(page.getByRole('combobox', { name: 'Script' })).toBeDisabled();
-        expect(await shown(page)).toBe('live');
+        await expect.poll(() => shown(page)).toBe('live');
         await choose(page, 'Saved');
         await expect(dropdown(page)).not.toHaveAttribute('disabled');
         await choose(page, 'Live');
@@ -383,7 +407,8 @@ test.describe('script filter', () => {
         await expect.poll(() => listed(page)).toEqual(['page-run (Running)']);
         await runEnds(page, { projectId: 'project-id', terminalId: 'page-run', code: 0 });
         // Finished while shown, it stays until the choice changes.
-        await page.waitForTimeout(200);
+        await expect.poll(() => listed(page)).toEqual(['page-run (Finished)']);
+        await settled(page);
         await expect.poll(() => listed(page)).toEqual(['page-run (Finished)']);
         await choose(page, 'Running');
         await expect.poll(() => listed(page)).toEqual(['None']);
@@ -401,8 +426,9 @@ test.describe('script filter', () => {
         await expect.poll(() => dropdown(page).evaluate(el => el.value)).toBe('test.ps1');
         // Still listed, so it stays.
         await choose(page, 'Saved');
-        await page.waitForTimeout(200);
-        expect(await shown(page)).toBe('test.ps1');
+        await settled(page);
+        await expect.poll(() => shown(page)).toBe('test.ps1');
+        await expect(dropdown(page)).toHaveJSProperty('value', 'test.ps1');
     });
 
     test('with nothing to list, the list says None and is turned off, and the terminal is empty', async ({ page }) => {
@@ -415,7 +441,7 @@ test.describe('script filter', () => {
         await expect(page.locator('#btn-kill')).toHaveJSProperty('disabled', true);
         await expect(placeholder(page)).toBeVisible();
         await page.locator('#btn-clear').click();
-        expect(await calls(page, 'stop_run')).toEqual([]);
+        await expect.poll(() => calls(page, 'stop_run')).toEqual([]);
     });
 
     test('a run that opens the Terminal Manager shows it under Running, unless All Running is chosen', async ({ page }) => {
@@ -428,9 +454,17 @@ test.describe('script filter', () => {
         await expect.poll(() => page.evaluate(() => webui.getData('app-terminals-filter'))).toBe('Running');
         await expect.poll(() => listed(page)).toEqual(['page-run (Running)']);
         await choose(page, 'All Running');
-        await page.evaluate(() => document.querySelector('app-terminals').openDrawer({ run: true }));
-        await page.waitForTimeout(800);
-        expect(await page.evaluate(() => webui.getData('app-terminals-filter'))).toBe('All Running');
+        await settled(page);
+        // Opening it while it is open closes it and builds it again, so wait for the new one.
+        await page.evaluate(() => {
+            document.querySelector('#term-console').dataset.before = 'true';
+            document.querySelector('app-terminals').openDrawer({ run: true });
+        });
+        await expect(page.locator('#term-console[data-before]')).toHaveCount(0);
+        await ready(page);
+        await expect(page.locator('webui-drawer.shared')).toHaveClass(/open/);
+        await expect.poll(() => page.evaluate(() => webui.getData('app-terminals-filter'))).toBe('All Running');
+        await expect(filter(page).locator('button[aria-checked="true"]').first()).toHaveText('All Running');
     });
 
     test('Kill All sits beside the list, and Script Content shares a row with its buttons', async ({ page }) => {

@@ -51,19 +51,24 @@ test('installing from a folder shows the permissions first, and Cancel installs 
     await expect(dialog).toContainText('not signed');
     await dialogButton(page, 'Cancel').click();
     await expect(dialog).toHaveCount(0);
-    expect(await calls(page, 'plugin_install_folder')).toEqual([]);
+    await expect.poll(() => calls(page, 'plugin_install_folder')).toEqual([]);
     await manager.locator('webui-button', { hasText: 'Install from folder' }).click();
     await dialogButton(page, 'Install').click();
     await expect(manager.locator('[data-plugin="jira"] .plugin-badge')).toHaveText('From a folder');
-    expect(await calls(page, 'plugin_install_folder')).toEqual([{ folder: '/home/me/jira' }]);
+    await expect.poll(() => calls(page, 'plugin_install_folder')).toEqual([{ folder: '/home/me/jira' }]);
     await expect(page.locator('webui-nav.plugin-nav [url="/plugin/jira/issues"]')).toHaveCount(1);
 });
 
 test('choosing no folder does nothing', async ({ page }) => {
-    const manager = await openManager(page, { pickedFolder: null });
+    const manager = await openManager(page, { pickedFolder: null, pluginFolder: { manifest: jira } });
     await manager.locator('webui-button', { hasText: 'Install from folder' }).click();
     await expect(openDialog(page)).toHaveCount(0);
-    expect(await calls(page, 'plugin_inspect_folder')).toEqual([]);
+    await expect.poll(() => calls(page, 'plugin_inspect_folder')).toEqual([]);
+    // Choosing a folder the next time reads only that folder, so the first time read nothing.
+    await page.evaluate(() => { webui.proxy.plugins.pickFolder = async () => '/home/me/jira'; });
+    await manager.locator('webui-button', { hasText: 'Install from folder' }).click();
+    await expect(openDialog(page)).toContainText('Jira 0.1.0');
+    await expect.poll(() => calls(page, 'plugin_inspect_folder')).toEqual([{ folder: '/home/me/jira' }]);
 });
 
 test('settings keep a saved secret unless a new one is typed', async ({ page }) => {
@@ -97,13 +102,13 @@ test('a plugin can be turned off and removed', async ({ page }) => {
     const card = manager.locator('[data-plugin="jira"]');
     await card.locator('webui-button', { hasText: 'Turn off' }).click();
     await expect(card).toContainText('Turned off');
-    expect(await calls(page, 'plugin_set_enabled')).toEqual([{ id: 'jira', enabled: false }]);
+    await expect.poll(() => calls(page, 'plugin_set_enabled')).toEqual([{ id: 'jira', enabled: false }]);
     await expect(page.locator('webui-nav.plugin-nav [url="/plugin/jira/issues"]')).toHaveCount(0);
     await card.locator('webui-button', { hasText: 'Remove' }).click();
     await expect(openDialog(page)).toContainText('with its settings and saved data');
     await dialogButton(page, 'Confirm').click();
     await expect(manager.locator('[data-plugin="jira"]')).toHaveCount(0);
-    expect(await calls(page, 'plugin_remove')).toEqual([{ id: 'jira' }]);
+    await expect.poll(() => calls(page, 'plugin_remove')).toEqual([{ id: 'jira' }]);
 });
 
 test("a plugin's settings link opens its settings", async ({ page }) => {
@@ -129,7 +134,7 @@ test.describe('catalog', () => {
         await dialogButton(page, 'Install').click();
         await expect(card.locator('.plugin-badge')).toHaveText('Installed');
         await expect(manager.locator('[data-plugin="jira"] .plugin-badge').first()).toHaveText('Signed');
-        expect(await calls(page, 'plugin_install_catalog')).toEqual([{ id: 'jira' }]);
+        await expect.poll(() => calls(page, 'plugin_install_catalog')).toEqual([{ id: 'jira' }]);
     });
 
     test('a newer version is offered as an update', async ({ page }) => {

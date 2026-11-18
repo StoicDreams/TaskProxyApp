@@ -392,87 +392,89 @@
                             </webui-grid>
                         </div>
                     `;
-                    webui.dialog({
+                    // Clicks are handled from the document until the dialog closes, so its buttons work as soon as they
+                    // show. A listener put on the dialog's content once it had been drawn missed a click made before then.
+                    const onManageClick = (ev) => {
+                        let manageContainer = webui.querySelector(`#manage-envs-${dialogId}`);
+                        if (!manageContainer || !ev.composedPath().includes(manageContainer)) return;
+                        let saveBtn = webui.closest(ev.target, '.env-save-btn');
+                        if (saveBtn) {
+                            let oldName = saveBtn.getAttribute('data-env');
+                            let grid = webui.closest(saveBtn, 'webui-grid');
+                            let input = grid.querySelector('webui-input-text');
+                            if (!input) return;
+                            let newName = input.value.trim();
+                            if (!newName || newName === oldName) return;
+                            let envs = getEnvironments();
+                            if (envs.some(e => e.name.toLowerCase() === newName.toLowerCase())) {
+                                webui.dialog.alert('Environment name already exists', 'warning');
+                                return;
+                            }
+                            let env = envs.find(e => e.name === oldName);
+                            if (env) {
+                                env.name = newName;
+                                if (getActiveEnvName() === oldName) {
+                                    setActiveEnvName(newName);
+                                }
+                                webui.proxy.syncProjectData();
+                                webui.alert('Environment renamed', 'success');
+                                saveBtn.setAttribute('data-env', newName);
+                                let delBtn = grid.querySelector('.env-del-btn');
+                                if (delBtn) delBtn.setAttribute('data-env', newName);
+                                renderAllLists();
+                            }
+                            return;
+                        }
+                        let delBtn = webui.closest(ev.target, '.env-del-btn');
+                        if (delBtn) {
+                            let envName = delBtn.getAttribute('data-env');
+                            let envs = getEnvironments();
+                            if (envs.length <= 1) {
+                                webui.dialog.alert('You must have at least one environment.', 'warning');
+                                return;
+                            }
+                            webui.projectData.data._environments = envs.filter(e => e.name !== envName);
+                            if (getActiveEnvName() === envName) {
+                                const nextEnv = webui.projectData.data._environments[0];
+                                setActiveEnvName(nextEnv.name);
+                                loadEnvironmentValues(nextEnv);
+                            }
+                            webui.proxy.syncProjectData();
+                            let grid = webui.closest(delBtn, 'webui-grid');
+                            if (grid) grid.remove();
+                            webui.dialog.alert('Environment deleted', 'success');
+                            renderAllLists();
+                            return;
+                        }
+                        let addBtn = webui.closest(ev.target, `#btn-add-env-${dialogId}`);
+                        if (addBtn) {
+                            let input = webui.querySelector(`#new-env-input-${dialogId}`);
+                            if (!input) return;
+                            let envName = input.value.trim();
+                            if (!envName) return;
+                            let envs = getEnvironments();
+                            if (envs.some(e => e.name.toLowerCase() === envName.toLowerCase())) {
+                                webui.dialog.alert('Environment already exists', 'warning');
+                                return;
+                            }
+                            envs.push({ name: envName, variables: {} });
+                            webui.proxy.syncProjectData();
+                            input.value = '';
+                            webui.dialog.alert('Environment added', 'success');
+                            let newGrid = webui.createFromHTML(envRowHtml(envName).trim());
+                            let flex = manageContainer.querySelector('webui-flex');
+                            if (flex) flex.appendChild(newGrid);
+                            renderAllLists();
+                            return;
+                        }
+                    };
+                    document.addEventListener('click', onManageClick);
+                    const stopManaging = () => document.removeEventListener('click', onManageClick);
+                    Promise.resolve(webui.dialog({
                         title: 'Manage Environments',
                         content: content,
                         cancel: 'Done'
-                    });
-                    setTimeout(() => {
-                        let manageContainer = webui.querySelector(`#manage-envs-${dialogId}`);
-                        if(!manageContainer) return;
-                        manageContainer.addEventListener('click', (ev) => {
-                            let saveBtn = webui.closest(ev.target, '.env-save-btn');
-                            if (saveBtn) {
-                                let oldName = saveBtn.getAttribute('data-env');
-                                let grid = webui.closest(saveBtn, 'webui-grid');
-                                let input = grid.querySelector('webui-input-text');
-                                if (!input) return;
-                                let newName = input.value.trim();
-                                if (!newName || newName === oldName) return;
-                                let envs = getEnvironments();
-                                if (envs.some(e => e.name.toLowerCase() === newName.toLowerCase())) {
-                                    webui.dialog.alert('Environment name already exists', 'warning');
-                                    return;
-                                }
-                                let env = envs.find(e => e.name === oldName);
-                                if (env) {
-                                    env.name = newName;
-                                    if (getActiveEnvName() === oldName) {
-                                        setActiveEnvName(newName);
-                                    }
-                                    webui.proxy.syncProjectData();
-                                    webui.alert('Environment renamed', 'success');
-                                    saveBtn.setAttribute('data-env', newName);
-                                    let delBtn = grid.querySelector('.env-del-btn');
-                                    if (delBtn) delBtn.setAttribute('data-env', newName);
-                                    renderAllLists();
-                                }
-                                return;
-                            }
-                            let delBtn = webui.closest(ev.target, '.env-del-btn');
-                            if (delBtn) {
-                                let envName = delBtn.getAttribute('data-env');
-                                let envs = getEnvironments();
-                                if (envs.length <= 1) {
-                                    webui.dialog.alert('You must have at least one environment.', 'warning');
-                                    return;
-                                }
-                                webui.projectData.data._environments = envs.filter(e => e.name !== envName);
-                                if (getActiveEnvName() === envName) {
-                                    const nextEnv = webui.projectData.data._environments[0];
-                                    setActiveEnvName(nextEnv.name);
-                                    loadEnvironmentValues(nextEnv);
-                                }
-                                webui.proxy.syncProjectData();
-                                let grid = webui.closest(delBtn, 'webui-grid');
-                                if (grid) grid.remove();
-                                webui.dialog.alert('Environment deleted', 'success');
-                                renderAllLists();
-                                return;
-                            }
-                            let addBtn = webui.closest(ev.target, `#btn-add-env-${dialogId}`);
-                            if (addBtn) {
-                                let input = webui.querySelector(`#new-env-input-${dialogId}`);
-                                if (!input) return;
-                                let envName = input.value.trim();
-                                if (!envName) return;
-                                let envs = getEnvironments();
-                                if (envs.some(e => e.name.toLowerCase() === envName.toLowerCase())) {
-                                    webui.dialog.alert('Environment already exists', 'warning');
-                                    return;
-                                }
-                                envs.push({ name: envName, variables: {} });
-                                webui.proxy.syncProjectData();
-                                input.value = '';
-                                webui.dialog.alert('Environment added', 'success');
-                                let newGrid = webui.createFromHTML(envRowHtml(envName).trim());
-                                let flex = manageContainer.querySelector('webui-flex');
-                                if (flex) flex.appendChild(newGrid);
-                                renderAllLists();
-                                return;
-                            }
-                        });
-                    }, 100);
+                    })).then(stopManaging, stopManaging);
                 });
             }
             container.addEventListener('click', (ev) => {

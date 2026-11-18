@@ -375,15 +375,20 @@
             const cached = pageCache.get(key);
             // Drawn from the cache, the plugin's answer only replaces it if it changed. Otherwise, such as for a
             // refresh, the answer is drawn.
-            const fromCache = !!cached && t._shownKey !== key;
-            if (fromCache) t.draw(cached, key);
-            else if (!content.firstChild) content.replaceChildren(el('webui-flex', { align: 'center', gap: 'var(--padding)' }, 'Loading…'));
+            // A page can be asked to load twice at once, as going Back does. The second load takes over from the first,
+            // which had drawn the cached page, so it must also leave the page alone when the answer is the same.
+            const fromCache = !!cached && (t._shownKey !== key || t._cachedKey === key);
+            t._cachedKey = fromCache ? key : null;
+            if (fromCache) {
+                if (t._shownKey !== key) t.draw(cached, key);
+            } else if (!content.firstChild) content.replaceChildren(el('webui-flex', { align: 'center', gap: 'var(--padding)' }, 'Loading…'));
             // A plugin's settings belong to projects, so one not set up for this project shows how to set it up.
             const plugins = await webui.proxy.plugins.list(() => undefined);
             if (load !== t._load) return;
             const info = (plugins || []).find(item => item.id === plugin);
             t._info = info;
             if (info && !info.configured) {
+                t._cachedKey = null;
                 t.showSetup(info);
                 return;
             }
@@ -395,6 +400,7 @@
             let error = null;
             const node = await webui.proxy.plugins.render(plugin, page, t._params, err => { error = `${err}`; });
             if (load !== t._load) return;
+            t._cachedKey = null;
             if (error) {
                 // A page showing from the cache stays, and says it could not be brought up to date.
                 if (fromCache && t._shownKey === key) webui.alert(escape(error), 'danger');

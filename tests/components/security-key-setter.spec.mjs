@@ -1,11 +1,10 @@
-import { test, expect, openApp, mount, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, mount, calls, dialogButton, openDialog } from '../support/app.mjs';
 
 async function setter(page, state = {}) {
     await openApp(page, { project: null, ...state });
     const root = await mount(page, '<app-security-key-setter id="s"></app-security-key-setter>');
     const el = root.locator('#s');
     await expect.poll(async () => (await calls(page, 'has_securitykey')).length).toBeGreaterThan(0);
-    await page.waitForTimeout(100);
     return el;
 }
 test('a short key is refused', async ({ page }) => {
@@ -13,7 +12,7 @@ test('a short key is refused', async ({ page }) => {
     await el.locator('webui-input-message textarea').fill('too short');
     await el.locator('webui-button[theme="primary"]').click();
     await expect(el.locator('webui-alert')).toContainText('at least 20');
-    expect(await calls(page, 'set_securitykey')).toEqual([]);
+    await expect.poll(() => calls(page, 'set_securitykey')).toEqual([]);
 });
 test('a long enough key is saved', async ({ page }) => {
     const el = await setter(page);
@@ -26,10 +25,10 @@ test('generate fills in a long enough key, different each time', async ({ page }
     const el = await setter(page);
     const value = () => el.locator('webui-input-message').evaluate(node => node.value);
     await el.locator('webui-button[theme="secondary"]').click();
+    await expect.poll(async () => (await value()).length).toBeGreaterThanOrEqual(20);
     const first = await value();
-    expect(first.length).toBeGreaterThanOrEqual(20);
     await el.locator('webui-button[theme="secondary"]').click();
-    expect(await value()).not.toBe(first);
+    await expect.poll(value).not.toBe(first);
 });
 test('delete is hidden when there is no key', async ({ page }) => {
     const el = await setter(page, { hasKey: false });
@@ -38,8 +37,9 @@ test('delete is hidden when there is no key', async ({ page }) => {
 test('delete asks first, because saved data depends on the key', async ({ page }) => {
     const el = await setter(page);
     await el.locator('webui-button[theme="danger"]').click();
-    await page.waitForTimeout(150);
-    expect(await calls(page, 'delete_securitykey')).toEqual([]);
+    // It has asked, and deletes nothing until that is answered.
+    await expect(dialogButton(page, 'Confirm')).toBeVisible();
+    await expect.poll(() => calls(page, 'delete_securitykey')).toEqual([]);
     await dialogButton(page, 'Confirm').click();
     await expect.poll(async () => (await calls(page, 'delete_securitykey')).length).toBe(1);
 });
@@ -47,6 +47,8 @@ test('cancelling a delete keeps the key', async ({ page }) => {
     const el = await setter(page);
     await el.locator('webui-button[theme="danger"]').click();
     await dialogButton(page, 'Cancel').click();
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'delete_securitykey')).toEqual([]);
+    await expect(openDialog(page)).toHaveCount(0);
+    await expect.poll(() => calls(page, 'delete_securitykey')).toEqual([]);
+    // The button is still there to ask again, which it would not be had the key gone.
+    await expect(el.locator('webui-button[theme="danger"]')).toBeVisible();
 });

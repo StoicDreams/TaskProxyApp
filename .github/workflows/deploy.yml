@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.152
+  VERSION: 0.1.153
 
 jobs:
   test:
@@ -52,6 +52,14 @@ jobs:
       # The minified files are what the app loads, so test those.
       - name: run UI tests
         run: npm run test:min
+      # The report has each failed test's trace and screenshot.
+      - name: keep the UI test report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
   build-tauri-windows:
     needs: test
     permissions:

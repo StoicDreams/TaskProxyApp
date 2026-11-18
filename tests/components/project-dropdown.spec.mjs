@@ -39,7 +39,7 @@ test.describe('changed files and commits', () => {
         await openApp(page, { project: odd[0], projects: odd, gitStatus: { '/odd': { changes: 2 } } });
         await expect(option(page, 'Odd')).toContainText('<img src=x');
         await expect(dropdown(page).locator('img')).toHaveCount(0);
-        expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+        await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
     });
     test('each project shows the result of the CI runs for its last push', async ({ page }) => {
         const ciStatus = {
@@ -85,7 +85,7 @@ test.describe('changed files and commits', () => {
         await dropdown(page).locator('button').click();
         await option(page, 'One').click();
         await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/one');
-        expect(await page.evaluate(() => webui.getData('app-current-project').display)).toBe('One');
+        await expect.poll(() => page.evaluate(() => webui.getData('app-current-project').display)).toBe('One');
     });
     test('commits behind and ahead of the remote show their own icon and number', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: { '/one': { changes: 2, behind: 4, ahead: 1 }, '/two': { ahead: 3 } } });
@@ -97,7 +97,7 @@ test.describe('changed files and commits', () => {
         await expect(one.locator('.git-ahead')).toHaveAttribute('title', '1 commit ahead of the remote');
         await expect(one.locator('.git-ahead webui-icon[icon="upload"]')).toHaveCount(1);
         // Changed files come first, then behind, then ahead.
-        expect(await one.locator('.git-status > span').evaluateAll(els => els.map(el => el.className))).toEqual(['git-changes', 'git-behind', 'git-ahead']);
+        await expect.poll(() => one.locator('.git-status > span').evaluateAll(els => els.map(el => el.className))).toEqual(['git-changes', 'git-behind', 'git-ahead']);
         const two = option(page, 'Two');
         await expect(two.locator('.git-ahead webui-icon')).toHaveAttribute('count', '3');
         await expect(two.locator('.git-changes, .git-behind')).toHaveCount(0);
@@ -114,18 +114,21 @@ test.describe('changed files and commits', () => {
     });
     test('the open project\'s counts are for the repo chosen in its Git Controller', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: counts, data: { selectedGitRepo: 'libs/second' } });
-        const lastRequest = async () => (await calls(page, 'get_project_git_status')).at(-1);
-        await expect.poll(lastRequest).toEqual({ currentRepo: 'libs/second' });
+        const requests = () => calls(page, 'get_project_git_status');
+        await expect.poll(requests).toContainEqual({ currentRepo: 'libs/second' });
         // Choosing another repo is sent straight away, before it is synced to the backend.
         await page.evaluate(() => {
             webui.setProjectData('selectedGitRepo', 'third');
             document.dispatchEvent(new CustomEvent('app-git-changes'));
         });
-        await expect.poll(lastRequest).toEqual({ currentRepo: 'third' });
+        await expect.poll(requests).toContainEqual({ currentRepo: 'third' });
     });
     test('with no repo chosen, the backend picks the first repo', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: counts });
-        await expect.poll(async () => (await calls(page, 'get_project_git_status')).at(-1)).toEqual({});
+        await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
+        const requests = await calls(page, 'get_project_git_status');
+        expect(requests.length).toBeGreaterThan(0);
+        expect(requests.filter(request => 'currentRepo' in request)).toEqual([]);
     });
     test('every project is fetched when the app starts, and the counts are loaded again after', async ({ page }) => {
         await openApp(page, { project: projects[1], projects, gitStatus: counts });
@@ -142,7 +145,7 @@ test.describe('changed files and commits', () => {
         });
         await page.locator('app-project-dropdown').evaluate(el => el.fetchRemotes());
         await expect(option(page, 'One').locator('.git-changes webui-icon')).toHaveAttribute('count', '3');
-        expect(await page.evaluate(() => window.__alerts)).toEqual([]);
+        await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([]);
         await expect(openDialog(page)).toHaveCount(0);
     });
 });

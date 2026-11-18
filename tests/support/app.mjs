@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, request as apiRequest } from '@playwright/test';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,11 +33,48 @@ function resolveFile(pathname, useMinified) {
     return null;
 }
 
+// Each framework file is downloaded from cdn.myfi.ws once per test worker and kept, instead of once per test, as the
+// websites' tests do. Thousands of requests per run meant a dropped or stalled connection now and then, which failed
+// whichever test it hit. A failed download is retried, and if it never succeeds the browser asks itself.
+const liveCdn = new Map();
+let liveCdnClient;
+// A file takes well under a second, so a download that stalls is given up on soon enough to retry within one test.
+const LIVE_CDN_ATTEMPTS = 4;
+const LIVE_CDN_TIMEOUT = 5000;
+
+async function downloadLiveCdn(url) {
+    liveCdnClient ??= await apiRequest.newContext();
+    for (let attempt = 1; ; attempt++) {
+        try {
+            const response = await liveCdnClient.get(url, { timeout: LIVE_CDN_TIMEOUT });
+            if (response.status() < 500 || attempt === LIVE_CDN_ATTEMPTS) {
+                return { status: response.status(), contentType: response.headers()['content-type'], body: await response.body() };
+            }
+        } catch (error) {
+            if (attempt === LIVE_CDN_ATTEMPTS) return null;
+        }
+        await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+    }
+}
+
+async function serveLiveCdn(route) {
+    const request = route.request();
+    if (request.method() !== 'GET') return route.continue();
+    const url = `https://cdn.myfi.ws${new URL(request.url()).pathname}`;
+    if (!liveCdn.has(url)) liveCdn.set(url, downloadLiveCdn(url));
+    const file = await liveCdn.get(url);
+    if (!file) {
+        liveCdn.delete(url);
+        return route.continue();
+    }
+    return route.fulfill({ status: file.status, contentType: file.contentType, body: file.body, headers: { 'access-control-allow-origin': '*' } });
+}
+
 function serve(route, useMinified) {
     const url = new URL(route.request().url());
     // Components load from the live CDN, as they do in the app, so a breaking deploy fails these tests.
     if (url.hostname === 'cdn.myfi.ws') {
-        if (!CDN_ROOT) return route.continue();
+        if (!CDN_ROOT) return serveLiveCdn(route);
         const file = normalize(join(CDN_ROOT, decodeURIComponent(url.pathname)));
         const source = !useMinified && file.endsWith('.min.js') ? file.replace(/\.min\.js$/, '.js') : file;
         const found = [source, file].find(candidate => existsSync(candidate) && statSync(candidate).isFile());
@@ -96,17 +133,21 @@ export const PROJECT = { name: 'Repo', path: '/repo' };
 export async function openApp(page, state = {}, path = '/') {
     await installBackend(page, state);
     await serveProjectFiles(page, state);
-    // Opening a project reloads its page by going to _reloading and back. Record that it happened.
+    // Opening, switching, or closing a project reloads its page by going to _reloading and back. Count each
+    // reload, so pageSettled can tell when the last one has finished.
     await page.addInitScript(() => {
+        const reload = window.__projectReload = { started: 0, navigated: 0, before: [] };
         const pushState = history.pushState;
         history.pushState = function (...args) {
             const result = pushState.apply(this, args);
             if (`${args[2]}`.includes('_reloading')) {
-                window.__projectReloading = true;
+                reload.started++;
                 // The page shown before the reload, which the loader removes once the reloaded page is ready.
                 const app = document.querySelector('webui-app');
-                window.__pageBeforeReload = app ? [...app.children].filter(el => !el.slot && el.localName !== 'webui-page-footer') : [];
-            } else if (window.__projectReloading) window.__projectReloaded = true;
+                reload.before = app ? [...app.children].filter(el => !el.slot && el.localName !== 'webui-page-footer') : [];
+            } else {
+                reload.navigated = reload.started;
+            }
             return result;
         };
     });
@@ -116,16 +157,58 @@ export async function openApp(page, state = {}, path = '/') {
     if (hasProject) {
         await page.waitForFunction(() => webui.proxy.projects.isLoaded);
         // The reload replaces the page's components and clears page level data, so tests must start after it.
-        // The loader swaps the page in at least 300ms after navigating, so wait for the old page to go and
-        // the transition to end. Waiting only for the navigation let tests act on the old page on a busy machine.
-        await page.waitForFunction(() => {
-            const app = document.querySelector('webui-app');
-            return window.__projectReloaded === true
-                && window.__pageBeforeReload.every(el => !el.isConnected)
-                && !!app && !app.main.classList.contains('transition');
-        });
-        await page.waitForTimeout(150);
+        await page.waitForFunction(() => window.__projectReload.started > 0);
+        await pageSettled(page);
     }
+    return page;
+}
+
+/**
+ * Resolves once the page shown is the one that stays: every project reload that started has finished, the loader
+ * has swapped the new page in and ended its transition, and the page's components are defined. Until then the
+ * page's components are about to be replaced, and page level data is about to be cleared, so anything a test did
+ * to them would be lost.
+ *
+ * `openApp`, `switchProject`, and `goToPage` already wait for this. Call it after anything else that changes the
+ * page, such as a click on a link, before acting on the new page.
+ */
+export async function pageSettled(page) {
+    await page.waitForFunction(() => {
+        const reload = window.__projectReload;
+        const app = document.querySelector('webui-app');
+        if (!reload || !app || !app.main) return false;
+        // A reload goes to _reloading, then on to the project's page shortly after.
+        if (reload.navigated !== reload.started) return false;
+        // The loader fades the old page out, swaps the new one in, syncs its data, and only then ends the transition.
+        if (reload.before.some(el => el.isConnected) || app.main.classList.contains('transition')) return false;
+        return [...app.children].every(el => el.slot || !/^(app|webui)-/.test(el.localName) || el.matches(':defined'));
+    });
+    return page;
+}
+
+/**
+ * Switch to another project, as choosing it in the project dropdown does, and wait until it has loaded and its
+ * start page has replaced the page that was showing. Pass `{ name, path }` of a project in the state's `projects`,
+ * or null to close the open project. The project must not be the one already open, which reloads nothing.
+ */
+export async function switchProject(page, project) {
+    const path = project?.path ?? null;
+    const reloads = await page.evaluate(project => {
+        const before = window.__projectReload.started;
+        webui.setData('app-current-project', project ? { value: project.path, display: project.name } : null);
+        return before;
+    }, project);
+    // The project's data is in place before its page reloads.
+    await page.waitForFunction(({ path, reloads }) => (webui.projectData.path ?? null) === path && window.__projectReload.started > reloads, { path, reloads });
+    await pageSettled(page);
+    return page;
+}
+
+/** Go to another page of the app, as a link to it does, and wait until that page has replaced the one showing. */
+export async function goToPage(page, path) {
+    // The loader starts the transition as it navigates, so the page is settled only once the new page is in.
+    await page.evaluate(path => webui.navigateTo(path), path);
+    await pageSettled(page);
     return page;
 }
 

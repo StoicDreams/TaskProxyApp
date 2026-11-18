@@ -1,23 +1,40 @@
-import { test, expect, openApp, calls, callOrder, onCommand, dialogButton, openDialog } from '../support/app.mjs';
+import { test, expect, openApp, switchProject, goToPage, calls, callOrder, onCommand, dialogButton, openDialog } from '../support/app.mjs';
 
 const open = async (page, git = {}, state = {}) => {
     await openApp(page, { currentPage: '/git-controller', git: { changes: ['M  a.txt', '?? b.txt', ' D c.txt'], ...git }, ...state, files: { 'a.txt': 'one', 'b.txt': 'two', ...(state.files || {}) } }, '/git-controller');
     await page.locator('app-git-manager .files button.file').first().waitFor();
 };
 const manager = page => page.locator('app-git-manager');
+const alertBox = page => manager(page).locator('webui-alert').first();
+const messageBox = page => manager(page).locator('webui-input-message[label="Commit Message"] textarea');
+// The repo's saved message is put in the box before its files are listed, so once `open` has returned, or the list
+// has loaded again after choosing another repo, what is typed stays.
 const commit = async (page, message = 'msg') => {
-    // On a slow load the textarea can take text before the component listens to it, so fill until it has the message.
-    await expect(async () => {
-        await manager(page).locator('webui-input-message[label="Commit Message"] textarea').fill(message);
-        expect(await manager(page).evaluate(el => el._message.value)).toBe(message);
-    }).toPass({ timeout: 5000 });
+    await messageBox(page).fill(message);
     await manager(page).locator('webui-button[label="Commit"]').click();
 };
-// A click on a tab is ignored until the tabs have loaded, so click until the branch list shows.
-const openBranches = page => expect(async () => {
-    await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Branches' }).click();
-    await expect(manager(page).locator('webui-button.btn-switch').first()).toBeVisible({ timeout: 1000 });
-}).toPass({ timeout: 10000 });
+const tab = (page, name) => manager(page).locator('webui-button[slot="tabs"]', { hasText: name });
+// The tabs mark the one showing once they have loaded, and only take clicks from then on.
+const openTab = async (page, name) => {
+    await expect(manager(page).locator('webui-button[slot="tabs"][aria-current="true"]')).toHaveCount(1);
+    await tab(page, name).click();
+    await expect(tab(page, name)).toHaveAttribute('aria-current', 'true');
+};
+const openBranches = async page => {
+    await openTab(page, 'Branches');
+    await expect(manager(page).locator('webui-button.btn-switch').first()).toBeVisible();
+};
+/**
+ * Loading the files again builds the list again. Mark the rows listed now with `markFiles` before doing what loads
+ * them again, and `filesReloaded` passes once those rows are gone, which is when the new list is in place.
+ */
+const markFiles = page => manager(page).locator('.files .file-row').first().evaluate(row => row.setAttribute('data-listed-before', ''));
+const filesReloaded = page => expect(manager(page).locator('.files .file-row[data-listed-before]')).toHaveCount(0);
+const refresh = async page => {
+    await markFiles(page);
+    await manager(page).locator('webui-button[label="Refresh"]').click();
+    await filesReloaded(page);
+};
 // Rows are found by data-path, because Web UI moves title into aria-label once the mouse is over it.
 const include = (page, file) => manager(page).locator(`.files .file-row[data-path="${file}"] select.include`);
 
@@ -53,16 +70,17 @@ test.describe('repo dropdown', () => {
         await page.evaluate(() => { window.__backend.git.ciStatus = { '': { state: 'success', service: 'GitHub Actions', url: '' } }; });
         await page.clock.runFor(61000);
         await expect(repoOption(page, '').locator('.git-ci-success')).toHaveCount(1);
+        // The run has finished, and the clock only moves when the test moves it, so nothing asks in between.
         const asked = (await calls(page, 'get_git_repo_ci_status')).length;
         await page.clock.runFor(180000);
-        expect((await calls(page, 'get_git_repo_ci_status')).length).toBe(asked);
+        await expect.poll(async () => (await calls(page, 'get_git_repo_ci_status')).length).toBe(asked);
     });
     test('a repo name is shown as text, not markup', async ({ page }) => {
         const odd = '<img src=x onerror="window.__xss=1">';
         await open(page, { repos: ['', odd], repoStatus: { [odd]: { changes: 1 } } });
         await expect(repoDropdown(page).locator('[role="option"] .git-changes webui-icon')).toHaveAttribute('count', '1');
         await expect(repoDropdown(page).locator('img')).toHaveCount(0);
-        expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+        await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
     });
     test('counts update after the changes reload, such as after a fetch or commit', async ({ page }) => {
         await open(page, { repos: ['', 'libs/api'], repoStatus });
@@ -78,7 +96,33 @@ test.describe('repo dropdown', () => {
         await repoDropdown(page).locator('button').first().click();
         await repoOption(page, 'libs/api').click();
         await expect.poll(() => repoDropdown(page).evaluate(el => el.value)).toBe('libs/api');
-        await expect.poll(async () => (await calls(page, 'get_git_changes')).at(-1)?.path).toBe('libs/api');
+        await expect.poll(async () => (await calls(page, 'get_git_changes')).map(call => call.path)).toContain('libs/api');
+    });
+    test('a commit made before the chosen repo\'s changes are listed is refused, not made from the list of the repo before', async ({ page }) => {
+        await open(page, { repos: ['', 'libs/api'], repoStatus });
+        await page.evaluate(() => {
+            // The first answer with the changes of libs/api is held until the test lets it go.
+            const original = window.__backend.handlers.get_git_changes;
+            let held = false;
+            window.__backend.handlers.get_git_changes = async args => {
+                if (args.path === 'libs/api' && !held) {
+                    held = true;
+                    await new Promise(resolve => { window.__releaseChanges = resolve; });
+                }
+                return original(args);
+            };
+        });
+        await markFiles(page);
+        await repoDropdown(page).locator('button').first().click();
+        await repoOption(page, 'libs/api').click();
+        await expect.poll(() => page.evaluate(() => typeof window.__releaseChanges)).toBe('function');
+        await commit(page);
+        await expect(alertBox(page)).toContainText('still loading');
+        await page.evaluate(() => window.__releaseChanges());
+        await filesReloaded(page);
+        await commit(page);
+        // Only the commit made once the repo's own changes were listed went through.
+        await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.repo)).toEqual(['libs/api']);
     });
 });
 
@@ -91,10 +135,10 @@ test('changes are listed with their type', async ({ page }) => {
 test('commit sends the included files, and does not push unless asked', async ({ page }) => {
     await open(page);
     await commit(page);
-    await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
-    expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt', 'b.txt', 'c.txt'], message: 'msg' });
-    await page.waitForTimeout(200);
-    expect(await calls(page, 'git_sync')).toEqual([]);
+    await expect.poll(() => calls(page, 'git_commit')).toEqual([{ repo: '', files: ['a.txt', 'b.txt', 'c.txt'], message: 'msg' }]);
+    // The commit says how it ended once nothing is left to do, and a sync would have come before that.
+    await expect(alertBox(page)).toContainText('Commit successful.');
+    await expect.poll(() => calls(page, 'git_sync')).toEqual([]);
 });
 test('sync after commit syncs when switched on', async ({ page }) => {
     await open(page, {}, { appData: { 'app-git-autosync': true } });
@@ -129,14 +173,14 @@ test.describe('commits Rust runs', () => {
         await expect(manager(page).locator('#tab-queue')).toHaveText('Queue (1)');
         await page.evaluate(() => window.__finishCommit());
         await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
-        await expect(manager(page).locator('webui-alert').first()).toContainText('Commit successful.');
-        expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt'], message: 'from the phone' });
+        await expect(alertBox(page)).toContainText('Commit successful.');
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([{ repo: '', files: ['a.txt'], message: 'from the phone' }]);
     });
     test('a Git Controller that opens while a commit runs shows it', async ({ page }) => {
         await openApp(page, { git: { changes: ['M  a.txt'] }, files: { 'a.txt': 'one' } });
         await onCommand(page, 'git_commit', () => new Promise(() => { }));
         await enqueue(page);
-        await page.evaluate(() => webui.navigateTo('/git-controller'));
+        await goToPage(page, '/git-controller');
         await manager(page).locator('.files button.file').first().waitFor();
         await expect(commitState(page)).toHaveText('Processing Commit');
         await expect(manager(page).locator('webui-button[label="Commit"]')).toBeHidden();
@@ -145,59 +189,65 @@ test.describe('commits Rust runs', () => {
         await open(page, {}, { data: { _gitIgnoreFiles: ['/b.txt'] } });
         await include(page, 'c.txt').selectOption('0');
         await commit(page);
-        await expect.poll(async () => (await calls(page, 'commit_enqueue')).length).toBe(1);
-        expect((await calls(page, 'commit_enqueue'))[0]).toEqual({
+        await expect.poll(() => calls(page, 'commit_enqueue')).toEqual([{
             project: '/repo', repo: '', message: 'msg', files: ['a.txt'], excluded: ['c.txt'], ignored: ['/b.txt'], syncAfter: false, script: null, queue: false,
-        });
+        }]);
     });
 });
 test('a commit needs a message', async ({ page }) => {
     await open(page);
     await commit(page, '   ');
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'git_commit')).toEqual([]);
+    // The commit is refused before anything is sent, and says why.
+    await expect(alertBox(page)).toContainText('You forgot to set your message!');
+    await expect.poll(() => calls(page, 'commit_enqueue')).toEqual([]);
+    await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
 });
 test('a commit with nothing selected is refused', async ({ page }) => {
     await open(page);
     await manager(page).locator('webui-button[label="Toggle All"]').click();
     await commit(page);
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'git_commit')).toEqual([]);
-    await expect(manager(page).locator('webui-alert').first()).toContainText('Select at least one file');
+    await expect(alertBox(page)).toContainText('Select at least one file');
+    await expect.poll(() => calls(page, 'commit_enqueue')).toEqual([]);
+    await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
 });
 test('excluded files are left out of the commit', async ({ page }) => {
     await open(page);
     await include(page, 'b.txt').selectOption('0');
     await commit(page);
-    await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
-    expect((await calls(page, 'git_commit'))[0].files).toEqual(['a.txt', 'c.txt']);
+    await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.files)).toEqual([['a.txt', 'c.txt']]);
 });
 test('files marked ignore stay out of later commits', async ({ page }) => {
     await open(page, {}, { data: { _gitIgnoreFiles: ['/b.txt'] } });
     await commit(page);
-    await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
-    expect((await calls(page, 'git_commit'))[0].files).toEqual(['a.txt', 'c.txt']);
+    await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.files)).toEqual([['a.txt', 'c.txt']]);
 });
 test('marking a file ignored is stored with the project', async ({ page }) => {
     await open(page);
     await include(page, 'a.txt').selectOption('2');
-    expect(await page.evaluate(() => webui.projectData.data._gitIgnoreFiles)).toEqual(['/a.txt']);
+    await expect.poll(() => page.evaluate(() => webui.projectData.data._gitIgnoreFiles)).toEqual(['/a.txt']);
     await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data._gitIgnoreFiles)).toEqual(['/a.txt']);
 });
 test('markup in a file name is shown as text', async ({ page }) => {
     const name = 'x<img src=q onerror="window.__xss=1">.txt';
     await open(page, { changes: [`M  ${name}`] }, { files: { [name]: 'x' } });
-    await page.waitForTimeout(300);
-    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    // The name shows in the list, and above the comparison once the file has loaded, so any markup in it has been drawn.
+    await expect(manager(page).locator('.files button.file .name')).toHaveText(name);
+    await expect(manager(page).locator('.preview h2')).toHaveText(`Modify ${name}`);
     await expect(manager(page).locator('.files img')).toHaveCount(0);
-    await expect(manager(page).locator('h3 img')).toHaveCount(0);
+    await expect(manager(page).locator('.preview h2 img')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
 test('markup in a branch name is shown as text', async ({ page }) => {
-    await open(page, { branches: [{ name: 'main', isCurrent: true, updatedDate: '' }, { name: '<img/src=q/onerror=window.__xss=1>', isCurrent: false, updatedDate: '' }] });
+    const names = ['<img/src=q/onerror=window.__xss=1>', 'x"onmouseover="window.__xss=2"data-x="'];
+    await open(page, { branches: [{ name: 'main', isCurrent: true, updatedDate: '' }, ...names.map(name => ({ name, isCurrent: false, updatedDate: '' }))] });
     await openBranches(page);
-    await page.waitForTimeout(300);
-    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    // The names show in the table, so any markup in them has been drawn.
+    for (const name of names) await expect(manager(page).locator('webui-table')).toContainText(name);
     await expect(manager(page).locator('webui-table img')).toHaveCount(0);
+    // A quote in a name does not end the attribute its buttons keep the name in.
+    await expect(manager(page).locator('webui-button.btn-switch[onmouseover]')).toHaveCount(0);
+    await expect.poll(() => manager(page).locator('webui-button.btn-switch').evaluateAll(buttons => buttons.map(button => button.dataset.branch).sort())).toEqual([...names].sort());
+    await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
 test('markup in the remote url is shown as text, and a token in it is hidden', async ({ page }) => {
     await open(page, { status: { hasUpstream: true, upstreamName: '<b>x</b>', ahead: 0, behind: 0, remoteUrl: 'https://user:TOKEN@example.com/<img src=q>.git' } });
@@ -220,34 +270,50 @@ test('a binary file does not interrupt with a popup', async ({ page }) => {
         const original = webui.alert;
         webui.alert = function (...args) { window.__alerts.push(args); return original.apply(this, args); };
         window.__backend.git.changes = ['M  logo.png'];
-        webui.navigateTo('/git-controller');
     });
+    await goToPage(page, '/git-controller');
     await page.locator('app-git-manager .files button.file').first().waitFor();
     // It shows in the file preview instead, with no warning.
     await expect(manager(page).locator('webui-file-preview')).toBeVisible();
-    await expect(manager(page).locator('webui-alert').first()).not.toContainText('valid UTF-8');
-    expect(await page.evaluate(() => window.__alerts)).toEqual([]);
+    await expect(alertBox(page)).not.toContainText('valid UTF-8');
+    await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([]);
 });
 test('a slow diff cannot replace the file selected after it', async ({ page }) => {
     await open(page);
+    const heading = manager(page).locator('.preview h2');
+    await expect(heading).toHaveText('Modify a.txt');
     await page.evaluate(() => {
+        // The diff of a.txt is held until the test lets it go.
         const original = window.__backend.handlers.get_git_file_diff;
         window.__backend.handlers.get_git_file_diff = async args => {
-            if (args.file === 'a.txt') await new Promise(resolve => setTimeout(resolve, 400));
+            if (args.file === 'a.txt') await new Promise(resolve => { window.__releaseDiff = resolve; });
             return original(args);
         };
+        // Every file shown as loaded above the comparison, in order.
+        window.__shown = [];
+        const name = document.querySelector('app-git-manager')._fileName;
+        new MutationObserver(() => {
+            const text = name.textContent.trim();
+            if (text && !text.startsWith('Loading') && window.__shown.at(-1) !== text) window.__shown.push(text);
+        }).observe(name, { childList: true, characterData: true, subtree: true });
     });
     await manager(page).locator('.files button.file[title="a.txt"]').click();
+    await expect.poll(() => page.evaluate(() => typeof window.__releaseDiff)).toBe('function');
     await manager(page).locator('.files button.file[title="b.txt"]').click();
-    await page.waitForTimeout(700);
-    await expect.poll(() => manager(page).evaluate(el => el._fileName.textContent)).toContain('b.txt');
+    await expect(heading).toHaveText('Add b.txt');
+    // The slow diff arrives now. Had it been shown, it would be asked for before the next file selected, so it
+    // would be drawn before that one is.
+    await page.evaluate(() => window.__releaseDiff());
+    await manager(page).locator('.files button.file[title="c.txt"]').click();
+    await expect(heading).toHaveText('Delete c.txt');
+    await expect.poll(() => page.evaluate(() => window.__shown)).toEqual(['Add b.txt', 'Delete c.txt']);
 });
 test('reverting a modified file restores it, and removing a new file deletes it', async ({ page }) => {
     await open(page);
     await manager(page).locator('.files button.revert[title="Revert changes to this file"]').first().click();
     await dialogButton(page, 'Revert').click();
-    await expect.poll(async () => (await calls(page, 'git_restore_file')).length).toBe(1);
-    expect((await calls(page, 'git_restore_file'))[0]).toEqual({ repo: '', file: 'a.txt' });
+    await expect.poll(() => calls(page, 'git_restore_file')).toEqual([{ repo: '', file: 'a.txt' }]);
+    await expect(openDialog(page)).toHaveCount(0);
     await manager(page).locator('.files button.revert[title="Delete new file"]').first().click();
     await dialogButton(page, 'Delete').click();
     await expect.poll(async () => (await calls(page, 'git_delete_file')).length).toBe(1);
@@ -255,7 +321,8 @@ test('reverting a modified file restores it, and removing a new file deletes it'
 test('revert all asks first', async ({ page }) => {
     await open(page);
     await manager(page).locator('#btn-revert-all').click();
-    expect(await calls(page, 'git_restore_all')).toEqual([]);
+    await expect(dialogButton(page, 'Revert All')).toBeVisible();
+    await expect.poll(() => calls(page, 'git_restore_all')).toEqual([]);
     await dialogButton(page, 'Revert All').click();
     await expect.poll(async () => (await calls(page, 'git_restore_all')).length).toBe(1);
 });
@@ -263,9 +330,8 @@ test('branches cannot change with uncommitted work', async ({ page }) => {
     await open(page, { branches: [{ name: 'main', isCurrent: true, updatedDate: '' }, { name: 'other', isCurrent: false, updatedDate: '' }] });
     await openBranches(page);
     await manager(page).locator('webui-button.btn-switch').click();
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'git_switch_branch')).toEqual([]);
-    await expect(manager(page).locator('webui-alert').first()).toContainText('uncommitted changes');
+    await expect(alertBox(page)).toContainText('uncommitted changes');
+    await expect.poll(() => calls(page, 'git_switch_branch')).toEqual([]);
 });
 test('deleting a remote branch says so', async ({ page }) => {
     await open(page, { branches: [{ name: 'main', isCurrent: true, updatedDate: '' }, { name: 'origin/old', isCurrent: false, updatedDate: '' }] });
@@ -282,14 +348,25 @@ test('pull, push, sync, and fetch call the backend', async ({ page }) => {
         await expect.poll(async () => (await calls(page, command)).length, label).toBeGreaterThan(before);
     }
 });
+test('cancelling the request for a token ends the git command, and says so', async ({ page }) => {
+    await open(page);
+    await onCommand(page, 'git_pull', () => { throw 'Credentials Missing/Invalid'; });
+    await manager(page).locator('webui-button[label="Pull"]').click();
+    await expect(dialogButton(page, 'Save & Retry')).toBeVisible();
+    await dialogButton(page, 'Cancel').click();
+    await expect(openDialog(page)).toHaveCount(0);
+    await expect(alertBox(page)).toContainText('Git operation cancelled: Authentication required.');
+    await expect.poll(async () => (await calls(page, 'git_pull')).length).toBe(1);
+});
 test('a saved token shows masked, and only reaches the project', async ({ page }) => {
     await open(page);
-    await manager(page).locator('#tab-remote').click();
+    await openTab(page, 'Auth');
     await manager(page).locator('input#input-git-pat').fill('abcdefghijkl');
     await manager(page).locator('#btn-save-pat').click();
     await expect.poll(() => page.evaluate(() => webui.getProjectData('git_pat'))).toBe('abcdefghijkl');
-    expect(await page.evaluate(() => webui.getData('git_pat'))).toBeUndefined();
+    // The masked token shows once saving has finished.
     await expect(manager(page).locator('input#input-git-pat')).toHaveAttribute('placeholder', 'abc***jkl');
+    await expect.poll(() => page.evaluate(() => webui.getData('git_pat'))).toBeUndefined();
 });
 test('ahead and behind counts are shown', async ({ page }) => {
     await open(page, { status: { hasUpstream: true, upstreamName: 'origin/main', ahead: 2, behind: 3, remoteUrl: 'x' } });
@@ -320,7 +397,7 @@ test.describe('branches', () => {
         await expect(openDialog(page)).toContainText("Create New Branch from 'other'");
         await dialogButton(page, 'Create').click();
         await expect(openDialog(page)).toContainText('Branch name cannot be empty.');
-        expect(await calls(page, 'git_create_branch')).toEqual([]);
+        await expect.poll(() => calls(page, 'git_create_branch')).toEqual([]);
         await openDialog(page).locator('webui-input-text[name="branchName"] input').fill('  feature  ');
         await dialogButton(page, 'Create').click();
         await expect.poll(async () => (await calls(page, 'git_create_branch'))).toEqual([{ repo: '', branch: 'feature', baseBranch: 'other' }]);
@@ -338,8 +415,8 @@ test.describe('branches', () => {
         await row(page, 'other').and(page.locator('.btn-merge')).click();
         await expect(openDialog(page)).toContainText('merge other into the current branch (main)');
         await dialogButton(page, 'Cancel').click();
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'git_merge_branch')).toEqual([]);
+        await expect(openDialog(page)).toHaveCount(0);
+        await expect.poll(() => calls(page, 'git_merge_branch')).toEqual([]);
         await row(page, 'other').and(page.locator('.btn-merge')).click();
         await dialogButton(page, 'Merge').click();
         await expect.poll(async () => (await calls(page, 'git_merge_branch'))).toEqual([{ repo: '', branch: 'other' }]);
@@ -384,8 +461,8 @@ test.describe('stash and force pull', () => {
         await openApp(page, { currentPage: '/git-controller', git: { changes: [] } }, '/git-controller');
         await expect(manager(page).locator('#val-commit-files')).toHaveText('No changes');
         await manager(page).locator('#btn-stash').click();
-        await expect(manager(page).locator('webui-alert').first()).toContainText('No pending changes to stash.');
-        expect(await calls(page, 'git_stash')).toEqual([]);
+        await expect(alertBox(page)).toContainText('No pending changes to stash.');
+        await expect.poll(() => calls(page, 'git_stash')).toEqual([]);
     });
     test('pop stash calls the backend and refreshes the files', async ({ page }) => {
         await open(page);
@@ -406,8 +483,8 @@ test.describe('stash and force pull', () => {
         await manager(page).locator('#btn-pull-overwrite').click();
         await expect(openDialog(page)).toContainText('overwrite all local changes');
         await dialogButton(page, 'Cancel').click();
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'git_pull_overwrite')).toEqual([]);
+        await expect(openDialog(page)).toHaveCount(0);
+        await expect.poll(() => calls(page, 'git_pull_overwrite')).toEqual([]);
         await manager(page).locator('#btn-pull-overwrite').click();
         await dialogButton(page, 'Overwrite').click();
         await expect.poll(async () => (await calls(page, 'git_pull_overwrite'))).toEqual([{ repo: '' }]);
@@ -422,24 +499,16 @@ test.describe('stash and force pull', () => {
 });
 
 test.describe('commit message memory', () => {
-    const textarea = page => manager(page).locator('webui-input-message[label="Commit Message"] textarea');
-    const typeMessage = (page, message) => expect(async () => {
-        await textarea(page).fill(message);
-        expect(await manager(page).evaluate(el => el._message.value)).toBe(message);
-    }).toPass({ timeout: 5000 });
+    const textarea = messageBox;
+    const typeMessage = (page, message) => textarea(page).fill(message);
     const waitForFiles = page => manager(page).locator('.files button.file').first().waitFor();
-    const goTo = async (page, path) => {
-        await page.evaluate(path => webui.navigateTo(path), path);
-        await page.waitForURL(`**${path}`);
-    };
-    // Loading a project opens its last page shortly after, so wait for that page.
-    const switchProject = async (page, path, name, startPage) => {
-        await page.evaluate(([path, name]) => webui.setData('app-current-project', { value: path, display: name }), [path, name]);
-        await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe(path);
-        await expect.poll(() => page.evaluate(() => location.pathname)).toBe(startPage);
-        await page.waitForTimeout(100);
-    };
+    const goTo = goToPage;
     const projects = [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }];
+    // Loading a project opens the page it was last on.
+    const openProject = async (page, project, startPage) => {
+        await switchProject(page, project);
+        await expect(page).toHaveURL(url => url.pathname === startPage);
+    };
 
     test('a message is kept after leaving the page and coming back', async ({ page }) => {
         await open(page);
@@ -464,7 +533,7 @@ test.describe('commit message memory', () => {
         await manager(page).locator('webui-button[label="Commit"]').click();
         await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
         await expect(textarea(page)).toHaveValue('');
-        expect(await page.evaluate(() => webui.projectData.data._gitCommitMessages[''])).toBeUndefined();
+        await expect.poll(() => page.evaluate(() => webui.projectData.data._gitCommitMessages[''])).toBeUndefined();
     });
     test('a failed commit keeps the message', async ({ page }) => {
         await open(page);
@@ -472,9 +541,10 @@ test.describe('commit message memory', () => {
         await typeMessage(page, 'try again');
         await manager(page).locator('webui-button[label="Commit"]').click();
         await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
-        await page.waitForTimeout(200);
+        // The commit says how it ended, which is when a sent message would be cleared.
+        await expect(alertBox(page)).toContainText('Commit failed');
         await expect(textarea(page)).toHaveValue('try again');
-        expect(await page.evaluate(() => webui.projectData.data._gitCommitMessages[''])).toBe('try again');
+        await expect.poll(() => page.evaluate(() => webui.projectData.data._gitCommitMessages[''])).toBe('try again');
     });
     test('each repo keeps its own message', async ({ page }) => {
         await open(page, { repos: ['', 'sub'] });
@@ -494,15 +564,15 @@ test.describe('commit message memory', () => {
     test('switching projects keeps each project\'s message', async ({ page }) => {
         await open(page, {}, { projects });
         await typeMessage(page, 'repo message');
-        await switchProject(page, '/other', 'Other', '/');
+        await openProject(page, projects[1], '/');
         await goTo(page, '/git-controller');
         await waitForFiles(page);
         await expect(textarea(page)).toHaveValue('');
         await typeMessage(page, 'other message');
-        await switchProject(page, '/repo', 'Repo', '/git-controller');
+        await openProject(page, projects[0], '/git-controller');
         await waitForFiles(page);
         await expect(textarea(page)).toHaveValue('repo message');
-        await switchProject(page, '/other', 'Other', '/git-controller');
+        await openProject(page, projects[1], '/git-controller');
         await waitForFiles(page);
         await expect(textarea(page)).toHaveValue('other message');
     });
@@ -559,7 +629,7 @@ test.describe('pending commit stats', () => {
         await manager(page).locator('webui-button[label="Refresh"]').click();
         await expect(linesStat(page)).toHaveText('Unavailable');
         await expect(filesStat(page)).toHaveText('1 of 1');
-        expect(await page.evaluate(() => window.__alerts)).toEqual([]);
+        await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([]);
     });
     test('counts are refreshed with the file list', async ({ page }) => {
         await open(page, { lineStats });
@@ -577,17 +647,7 @@ test.describe('pending commit stats', () => {
 test.describe('file list', () => {
     const changes = ['M  src/app/main.cs', 'M  docs/main.cs', '?? src/app/new.cs', ' D old.txt'];
     const files = { 'src/app/main.cs': 'a', 'docs/main.cs': 'b', 'src/app/new.cs': 'c' };
-    // Loading the project reopens its start page shortly after startup, which replaces the component,
-    // so wait for one that stays before interacting with it.
-    const openList = async (page, git = {}) => {
-        await open(page, { changes, ...git }, { files });
-        await expect(async () => {
-            await manager(page).evaluate(el => { el.__marker ??= Math.random(); window.__marker = el.__marker; });
-            await page.waitForTimeout(400);
-            expect(await manager(page).evaluate(el => el.__marker === window.__marker)).toBe(true);
-        }).toPass({ timeout: 10000 });
-        await manager(page).locator('.files button.file').first().waitFor();
-    };
+    const openList = (page, git = {}) => open(page, { changes, ...git }, { files });
     const row = (page, path) => manager(page).locator(`.files .file-row[data-path="${path}"]`);
     const selected = page => manager(page).evaluate(el => el.shadowRoot.querySelector('.file-row.selected')?.dataset.path);
 
@@ -618,27 +678,27 @@ test.describe('file list', () => {
         // With old.txt filtered out, new.cs is the last file shown, so Down stays put.
         await manager(page).locator('.file-filter').fill('.cs');
         await row(page, 'src/app/new.cs').locator('button.file').click();
+        await expect.poll(() => selected(page)).toBe('src/app/new.cs');
         await page.keyboard.press('ArrowDown');
-        await page.waitForTimeout(100);
-        expect(await selected(page)).toBe('src/app/new.cs');
+        // Up then goes to the file above new.cs, so Down moved nowhere.
         await page.keyboard.press('ArrowUp');
         await expect.poll(() => selected(page)).toBe('docs/main.cs');
+        await expect(row(page, 'docs/main.cs').locator('button.file')).toBeFocused();
     });
     test('the open file stays open after a refresh', async ({ page }) => {
         await openList(page);
         await row(page, 'src/app/new.cs').locator('button.file').click();
         await expect.poll(() => selected(page)).toBe('src/app/new.cs');
-        await manager(page).locator('webui-button[label="Refresh"]').click();
-        await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(1);
-        await page.waitForTimeout(200);
-        expect(await selected(page)).toBe('src/app/new.cs');
+        await refresh(page);
+        await expect.poll(() => selected(page)).toBe('src/app/new.cs');
+        await expect(manager(page).locator('.preview h2')).toHaveText('Add new.cs src/app');
     });
     test('a filter and include choices are applied to a refreshed list', async ({ page }) => {
         await openList(page);
         await manager(page).locator('.file-filter').fill('docs');
-        await manager(page).locator('webui-button[label="Refresh"]').click();
-        await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(1);
-        await page.waitForTimeout(200);
+        await expect(manager(page).locator('.files .file-row:not([hidden])')).toHaveCount(1);
+        await refresh(page);
+        await expect(manager(page).locator('.files .file-row')).toHaveCount(4);
         await expect(manager(page).locator('.files .file-row:not([hidden])')).toHaveCount(1);
     });
     // How the panes look is checked by eye. These check what a person can see and reach while using them.
@@ -677,6 +737,7 @@ test.describe('file list', () => {
     });
     test('the panes keep showing when something else holds the page taller than them', async ({ page }) => {
         await page.setViewportSize({ width: 1400, height: 800 });
+        await page.clock.install();
         await openList(page);
         const firstFile = manager(page).locator('.files .file-row').first();
         await expect(firstFile).toBeInViewport();
@@ -685,8 +746,8 @@ test.describe('file list', () => {
             const hidden = el.shadowRoot.querySelectorAll('webui-tabs > [slot="content"]')[1];
             hidden.style.cssText = 'height:1500px !important;min-height:1500px !important;';
         });
-        // Every fit is a chance to shrink further, so give it several.
-        await page.waitForTimeout(2000);
+        // The panes are fitted again every half second, and every fit is a chance to shrink further, so give it many.
+        await page.clock.runFor(10000);
         await expect(firstFile).toBeInViewport();
         await expect(manager(page).locator('webui-content-compare')).toBeInViewport();
         await expect(manager(page).locator('webui-button[label="Commit"]')).toBeInViewport();
@@ -710,7 +771,7 @@ test.describe('files that are not text', () => {
         await expect(preview(page).locator('img')).toHaveAttribute('alt', 'logo.png');
         await expect.poll(() => preview(page).locator('img').evaluate(img => img.naturalWidth)).toBe(1);
         await expect(manager(page).locator('webui-content-compare')).toBeHidden();
-        expect((await calls(page, 'get_project_file_size'))[0]).toEqual({ filePath: 'logo.png' });
+        await expect.poll(() => calls(page, 'get_project_file_size')).toContainEqual({ filePath: 'logo.png' });
         await expect(preview(page).locator('img')).toHaveAttribute('src', 'http://files.localhost/token/logo.png');
     });
     test('a modified file that cannot be read as text shows in the preview, without a warning', async ({ page }) => {
@@ -736,9 +797,10 @@ test.describe('files that are not text', () => {
         // These bytes are not a real video, so the player gives up, but only after loading it from the backend's file server.
         await expect.poll(() => page.__fileRequests.map(request => request.path)).toContain('media/demo clip.mp4');
         await expect(preview(page)).toContainText('video/mp4 - 12 Bytes');
-        expect(await calls(page, 'get_project_file')).not.toContainEqual({ filePath: 'media/demo clip.mp4' });
-        expect(await calls(page, 'get_git_file_diff')).not.toContainEqual(expect.objectContaining({ file: 'media/demo clip.mp4' }));
-        expect(await calls(page, 'get_project_file_size')).toContainEqual({ filePath: 'media/demo clip.mp4' });
+        // The preview is the last step of showing a file, so anything read as text was read before it showed.
+        await expect.poll(() => calls(page, 'get_project_file_size')).toContainEqual({ filePath: 'media/demo clip.mp4' });
+        await expect.poll(() => calls(page, 'get_project_file')).not.toContainEqual({ filePath: 'media/demo clip.mp4' });
+        await expect.poll(() => calls(page, 'get_git_file_diff')).not.toContainEqual(expect.objectContaining({ file: 'media/demo clip.mp4' }));
     });
     test('a file too large to read as text is previewed instead, without a warning', async ({ page }) => {
         await open(page, { changes: ['M  huge.txt', 'M  a.txt'] }, { files: { 'huge.txt': 'line one' } });
@@ -811,13 +873,13 @@ Write-Host 'done'
         await openWith(page);
         await pick(manager(page).locator('#before-commit-script'), SCRIPT);
         await expect(field(page, 'Version')).toHaveCount(1);
-        expect(await manager(page).locator('.before-commit-params [data-param]').evaluateAll(els => els.map(el => `${el.localName}:${el.dataset.param}`))).toEqual([
+        await expect.poll(() => manager(page).locator('.before-commit-params [data-param]').evaluateAll(els => els.map(el => `${el.localName}:${el.dataset.param}`))).toEqual([
             'webui-dropdown:Version', 'webui-toggle-icon:SkipMinify', 'webui-input-text:Note', 'webui-input-text:Tags', 'webui-input-text:Count', 'webui-toggle-icon:Check',
         ]);
         // Starting values come from the script's defaults.
         await expect.poll(() => field(page, 'Version').evaluate(el => el.value)).toBe('minor');
-        expect(await field(page, 'Check').evaluate(el => el.value)).toBe(true);
-        expect(await field(page, 'SkipMinify').evaluate(el => el.value)).toBe(false);
+        await expect.poll(() => field(page, 'Check').evaluate(el => el.value)).toBe(true);
+        await expect.poll(() => field(page, 'SkipMinify').evaluate(el => el.value)).toBe(false);
         await expect(field(page, 'Note')).toHaveAttribute('label', 'Note (required)');
         await expect(field(page, 'Count')).toHaveAttribute('placeholder', '2');
         await expect(field(page, 'Version')).toHaveAttribute('title', 'Which part of the version to increment.');
@@ -833,9 +895,9 @@ Write-Host 'done'
         await openWith(page, saved);
         await expect.poll(() => manager(page).locator('#before-commit-script').evaluate(el => el.value)).toBe(SCRIPT);
         await expect.poll(() => field(page, 'Version').evaluate(el => el.value)).toBe('major');
-        expect(await field(page, 'SkipMinify').evaluate(el => el.value)).toBe(true);
-        expect(await field(page, 'Note').evaluate(el => el.value)).toBe("it's");
-        expect(await field(page, 'Check').evaluate(el => el.value)).toBe(false);
+        await expect.poll(() => field(page, 'SkipMinify').evaluate(el => el.value)).toBe(true);
+        await expect.poll(() => field(page, 'Note').evaluate(el => el.value)).toBe("it's");
+        await expect.poll(() => field(page, 'Check').evaluate(el => el.value)).toBe(false);
     });
     test('choosing Nothing stops running a script before commits', async ({ page }) => {
         await openWith(page, saved);
@@ -844,28 +906,27 @@ Write-Host 'done'
         await expect(manager(page).locator('.before-commit-params [data-param]')).toHaveCount(0);
         await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data._gitBeforeCommit?.scripts)).toEqual({});
         await commit(page);
+        // A script would have run before the commit was made.
         await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
-        expect(await calls(page, 'spawn_script')).toEqual([]);
+        await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
     });
     test('commit runs the script first in the Terminals panel, then commits what it changed once it succeeds', async ({ page }) => {
         await openWith(page, saved);
         await expect(field(page, 'Version')).toHaveCount(1);
         await include(page, 'b.txt').selectOption('0');
         await commit(page);
-        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
-        const started = (await calls(page, 'spawn_script'))[0];
-        expect(started.terminalId).toBe('Before Commit');
-        expect(started.scriptContent).toBe(WRAPPER);
+        await expect.poll(async () => (await calls(page, 'spawn_script')).map(({ terminalId, scriptContent }) => ({ terminalId, scriptContent })))
+            .toEqual([{ terminalId: 'Before Commit', scriptContent: WRAPPER }]);
         await expect(drawerOpen(page)).toHaveCount(1);
         await expect(page.locator('webui-drawer.shared app-terminal-view')).toHaveCount(1);
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'git_commit')).toEqual([]);
+        // The commit waits on the script, which is running now, and only ends when the test ends it.
+        await expect(commitState(page)).toHaveText('Running Publish.ps1');
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
         // The script changes a file, which the refresh after it adds to the commit.
         await page.evaluate(() => window.__backend.git.changes.push(' M a.min.txt'));
         await finish(page, 0);
-        await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
         // The file left out before the script stays out.
-        expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt', 'c.txt', 'a.min.txt'], message: 'msg' });
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([{ repo: '', files: ['a.txt', 'c.txt', 'a.min.txt'], message: 'msg' }]);
         await expect(drawerOpen(page)).toHaveCount(0);
     });
     test('a script that fails cancels the commit, and leaves its output showing', async ({ page }) => {
@@ -874,12 +935,13 @@ Write-Host 'done'
         await commit(page);
         await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
         await finish(page, 1);
-        await expect(manager(page).locator('webui-alert').first()).toContainText(`${SCRIPT} failed with exit code 1, so nothing was committed`);
-        await page.waitForTimeout(200);
-        expect(await calls(page, 'git_commit')).toEqual([]);
+        // The commit has ended once it says how, so nothing more is sent after this.
+        await expect(alertBox(page)).toContainText(`${SCRIPT} failed with exit code 1, so nothing was committed`);
+        await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
         await expect(drawerOpen(page)).toHaveCount(1);
         // The message stays, ready to try again.
-        expect(await manager(page).evaluate(el => el._message.value)).toBe('msg');
+        await expect(messageBox(page)).toHaveValue('msg');
     });
     test('a stopped script cancels the commit', async ({ page }) => {
         await openWith(page, saved);
@@ -887,8 +949,9 @@ Write-Host 'done'
         await commit(page);
         await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
         await finish(page, null);
-        await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
-        expect(await calls(page, 'git_commit')).toEqual([]);
+        await expect(alertBox(page)).toContainText('was stopped, so nothing was committed');
+        await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
     });
     test.describe('switching projects while the script runs', () => {
         const projects = [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }];
@@ -904,17 +967,11 @@ Write-Host 'done'
                 window.__alerts = [];
                 const original = webui.alert;
                 webui.alert = function (...args) { window.__alerts.push(args); return original.apply(this, args); };
-                webui.setData('app-current-project', { value: '/other', display: 'Other' });
             });
-            await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/other');
             // The other project opens its last page, then the user goes to its Git Controller.
-            await expect.poll(() => page.evaluate(() => location.pathname)).toBe('/');
-            await page.waitForTimeout(100);
-            // On a busy machine the other project can still be swapping its start page in, which undoes the navigation.
-            await expect(async () => {
-                await page.evaluate(() => webui.navigateTo('/git-controller'));
-                await expect.poll(() => page.evaluate(() => location.pathname), { timeout: 2000 }).toBe('/git-controller');
-            }).toPass({ timeout: 15000 });
+            await switchProject(page, projects[1]);
+            await expect(page).toHaveURL(url => url.pathname === '/');
+            await goToPage(page, '/git-controller');
             await manager(page).locator('.files button.file').first().waitFor();
         };
         const alerts = page => page.evaluate(() => window.__alerts);
@@ -929,20 +986,21 @@ Write-Host 'done'
             await switchToOther(page);
             await page.evaluate(() => window.__backend.git.changes.push(' M a.min.txt'));
             await finish(page, 0);
-            await expect.poll(async () => (await calls(page, 'git_commit')).length).toBe(1);
             // The file left out and the ignored file stay out, and the script's change goes in.
-            expect((await calls(page, 'git_commit'))[0]).toEqual({ repo: '', files: ['a.txt', 'a.min.txt'], message: 'msg', project: '/repo' });
+            await expect.poll(() => calls(page, 'git_commit')).toEqual([{ repo: '', files: ['a.txt', 'a.min.txt'], message: 'msg', project: '/repo' }]);
             // The files were read from that project just before committing. The open Git Controller can also be loading its own.
-            const order = await callOrder(page, 'get_git_changes', 'git_commit');
-            const commitAt = order.findIndex(call => call.command === 'git_commit');
-            expect(order.slice(0, commitAt).findLast(call => call.args.project)).toEqual({ command: 'get_git_changes', args: { path: '', project: '/repo' } });
+            await expect.poll(async () => {
+                const order = await callOrder(page, 'get_git_changes', 'git_commit');
+                const commitAt = order.findIndex(call => call.command === 'git_commit');
+                return order.slice(0, commitAt).findLast(call => call.args.project);
+            }).toEqual({ command: 'get_git_changes', args: { path: '', project: '/repo' } });
             // Sync after commit is on, so the project the script started in is synced, not the open one.
             await expect.poll(() => alerts(page)).toEqual([['Repo: Commit and Sync successful!', 'success']]);
-            expect(await calls(page, 'git_sync')).toEqual([{ repo: '', project: '/repo' }]);
+            await expect.poll(() => calls(page, 'git_sync')).toEqual([{ repo: '', project: '/repo' }]);
             // The sent message is cleared from the project it was written in.
             await expect.poll(async () => (await calls(page, 'save_project_data')).filter(call => call.data.path === '/repo').at(-1)?.data.data._gitCommitMessages).toEqual({});
-            expect(page.url()).toContain('/git-controller');
-            expect(await page.evaluate(() => webui.projectData.path)).toBe('/other');
+            await expect(page).toHaveURL(url => url.pathname === '/git-controller');
+            await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/other');
         });
         test('without sync after commit, the project is only committed', async ({ page }) => {
             await openBoth(page);
@@ -952,8 +1010,9 @@ Write-Host 'done'
             await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await switchToOther(page);
             await finish(page, 0);
+            // The commit says how it ended once nothing is left to do, and a sync would have come before that.
             await expect.poll(() => alerts(page)).toEqual([['Repo: Commit successful.', 'success']]);
-            expect(await calls(page, 'git_sync')).toEqual([]);
+            await expect.poll(() => calls(page, 'git_sync')).toEqual([]);
         });
         test('a sync that fails after switching says why, and does not ask for a token for the open project', async ({ page }) => {
             await openBoth(page);
@@ -982,15 +1041,16 @@ Write-Host 'done'
             await switchToOther(page);
             // The other project runs the same script before its commits.
             await page.evaluate(saved => { webui.projectData.data._gitBeforeCommit = saved._gitBeforeCommit; }, saved);
+            // Queue is remembered as on, and the other project's Git Controller shows it once it has its settings.
+            await expect.poll(() => manager(page).evaluate(el => el._toggleQueue.value)).toBe(true);
             await commit(page, 'second');
             await expect(commitState(page)).toHaveText('Currently Queued');
             // Back in the first project, its script finishes, and the next commit's script starts in the other one.
-            await page.evaluate(() => webui.setData('app-current-project', { value: '/repo', display: 'Repo' }));
-            await expect.poll(() => page.evaluate(() => webui.projectData.path)).toBe('/repo');
+            await switchProject(page, projects[0]);
             await finish(page, 0);
             await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.message)).toEqual(['first']);
-            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(2);
-            expect((await calls(page, 'spawn_script'))[1]).toMatchObject({ terminalId: 'Before Commit', project: '/other' });
+            await expect.poll(async () => (await calls(page, 'spawn_script')).map(({ terminalId, project }) => ({ terminalId, project })))
+                .toEqual([{ terminalId: 'Before Commit' }, { terminalId: 'Before Commit', project: '/other' }]);
             await page.evaluate(() => window.__backend.runs.end({ projectId: 'id-/other', terminalId: 'Before Commit', code: 0 }));
             await expect.poll(async () => (await calls(page, 'git_commit')).map(call => `${call.message}:${call.project ?? ''}`)).toEqual(['first:', 'second:/other']);
         });
@@ -1001,9 +1061,9 @@ Write-Host 'done'
             await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await switchToOther(page);
             await finish(page, 1);
+            // The commit has ended once it says how, so nothing more is sent after this.
             await expect.poll(() => alerts(page)).toEqual([[`Repo: ${SCRIPT} failed with exit code 1, so nothing was committed. Its output is in the Terminals panel.`, 'danger']]);
-            await page.waitForTimeout(200);
-            expect(await calls(page, 'git_commit')).toEqual([]);
+            await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
         });
     });
     test('Cancel stops the script, and nothing is committed, even when PowerShell exits with 0', async ({ page }) => {
@@ -1018,10 +1078,9 @@ Write-Host 'done'
         // Rust stops the script the commit waits on, which marks the run stopped.
         await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['Before Commit']?.stopped)).toBe(true);
         await finish(page, 0);
-        await expect(manager(page).locator('webui-alert').first()).toContainText('was stopped, so nothing was committed');
+        await expect(alertBox(page)).toContainText('was stopped, so nothing was committed');
         await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
-        await page.waitForTimeout(200);
-        expect(await calls(page, 'git_commit')).toEqual([]);
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
     });
     test.describe('queue', () => {
         const repoDropdown = page => manager(page).locator('webui-dropdown[label="Repo"]');
@@ -1035,8 +1094,11 @@ Write-Host 'done'
             await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
             await expect(commitState(page)).toHaveText('Running Publish.ps1');
             await page.evaluate(() => document.querySelector('webui-drawer.shared')?.classList.remove('open'));
+            // The other repo's message and files load before a commit is typed for it.
+            await markFiles(page);
             await pick(repoDropdown(page), 'libs/api');
             await expect.poll(() => repoDropdown(page).evaluate(el => el.value)).toBe('libs/api');
+            await filesReloaded(page);
             await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
             await commit(page, 'second');
             await expect(commitState(page)).toHaveText('Currently Queued');
@@ -1044,9 +1106,9 @@ Write-Host 'done'
         };
 
         test('a queued commit waits for the one before it, so commits run one at a time and in order', async ({ page }) => {
+            // The first commit waits on its script, which only ends when the test ends it, and the second waits on the first.
             await startFirst(page);
-            await page.waitForTimeout(200);
-            expect(await calls(page, 'git_commit')).toEqual([]);
+            await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
             await finish(page, 0);
             await expect.poll(async () => (await calls(page, 'git_commit')).map(call => `${call.repo}:${call.message}`)).toEqual([':first', 'libs/api:second']);
             await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
@@ -1057,13 +1119,13 @@ Write-Host 'done'
             await expect(commitActions(page)).toHaveAttribute('data-state', 'ready');
             await expect(manager(page).locator('webui-alert').first()).toContainText('taken out of the queue');
             await finish(page, 0);
+            // With no commit left waiting or running, nothing more is committed.
+            await expect(manager(page).locator('#tab-queue')).toHaveText('Queue');
             await expect.poll(async () => (await calls(page, 'git_commit')).map(call => call.repo)).toEqual(['']);
-            await page.waitForTimeout(200);
-            expect((await calls(page, 'git_commit')).length).toBe(1);
         });
         test('the Queue tab lists the running and queued commits, can cancel one, and shows how each ended', async ({ page }) => {
             await startFirst(page);
-            await manager(page).locator('webui-button[slot="tabs"]', { hasText: 'Queue' }).click();
+            await openTab(page, 'Queue');
             const view = manager(page).locator('.queue-view');
             await expect(manager(page).locator('#tab-queue')).toHaveText('Queue (2)');
             await expect(view.locator('tbody tr')).toHaveCount(2);
@@ -1085,9 +1147,10 @@ Write-Host 'done'
         await openWith(page, { _gitBeforeCommit: { scripts: { '': SCRIPT }, values: { [SCRIPT]: { ...VALUES, Note: ' ' } } } });
         await expect(field(page, 'Version')).toHaveCount(1);
         await commit(page);
-        await expect(manager(page).locator('webui-alert').first()).toContainText(`Fill in Note for ${SCRIPT}`);
-        expect(await calls(page, 'spawn_script')).toEqual([]);
-        expect(await calls(page, 'git_commit')).toEqual([]);
+        await expect(alertBox(page)).toContainText(`Fill in Note for ${SCRIPT}`);
+        await expect.poll(() => calls(page, 'commit_enqueue')).toEqual([]);
+        await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
     });
     test('a script from a project that is not trusted yet asks first', async ({ page }) => {
         await open(page, {}, { scripts: [SCRIPT], files: { [SCRIPT]: PUBLISH }, data: saved });
@@ -1095,9 +1158,13 @@ Write-Host 'done'
         await commit(page);
         await expect(dialogButton(page, 'Trust Project & Run')).toBeVisible();
         await dialogButton(page, 'Cancel').click();
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'spawn_script')).toEqual([]);
-        expect(await calls(page, 'git_commit')).toEqual([]);
+        await expect(openDialog(page)).toHaveCount(0);
+        // Commit only takes another click once the commit before it has been given up, so it asking again shows that.
+        await manager(page).locator('webui-button[label="Commit"]').click();
+        await expect(dialogButton(page, 'Trust Project & Run')).toBeVisible();
+        await expect.poll(() => calls(page, 'commit_enqueue')).toEqual([]);
+        await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
+        await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
     });
 });
 
@@ -1162,24 +1229,22 @@ test.describe('files that show something when drawn', () => {
         await expect(manager(page).locator('webui-content-compare')).toBeHidden();
         // The frame may run no scripts, and its page allows none either.
         await expect(frame(page)).toHaveAttribute('sandbox', '');
-        const srcdoc = await frame(page).getAttribute('srcdoc');
-        expect(srcdoc).toContain("default-src 'none'");
+        await expect(frame(page)).toHaveAttribute('srcdoc', /default-src 'none'/);
         // Images and videos from websites load, as they do on pages.
-        expect(srcdoc).toContain('img-src data: https:;');
-        expect(srcdoc).toContain('media-src https:;');
-        expect(srcdoc).not.toContain('<script');
-        expect(srcdoc).not.toContain('onerror');
+        await expect(frame(page)).toHaveAttribute('srcdoc', /img-src data: https:;/);
+        await expect(frame(page)).toHaveAttribute('srcdoc', /media-src https:;/);
+        await expect(frame(page)).not.toHaveAttribute('srcdoc', /<script/);
+        await expect(frame(page)).not.toHaveAttribute('srcdoc', /onerror/);
         const doc = page.frameLocator('app-git-manager iframe.rendered');
         await expect(doc.locator('h1')).toHaveText('Title');
         await expect(doc.locator('strong')).toHaveText('Bold');
         await expect(doc.locator('webui-page-segment')).toHaveText('Segment text');
-        expect(await page.evaluate(() => window.__hacked)).toBeUndefined();
+        await expect.poll(() => page.evaluate(() => window.__hacked)).toBeUndefined();
         // The choice stays for the next file that can be drawn, and files that cannot hide the switch.
         await select(page, 'page.html');
         await expect(doc.locator('h1')).toHaveText('Hi');
-        const html = await frame(page).getAttribute('srcdoc');
-        expect(html).not.toContain('onclick');
-        expect(html).not.toContain('<iframe');
+        await expect(frame(page)).not.toHaveAttribute('srcdoc', /onclick/);
+        await expect(frame(page)).not.toHaveAttribute('srcdoc', /<iframe/);
         await select(page, 'a.txt');
         await expect(toggle(page)).toBeHidden();
         await expect(frame(page)).toBeHidden();
@@ -1195,9 +1260,8 @@ test.describe('files that show something when drawn', () => {
         await openDrawn(page);
         await select(page, 'logo.svg');
         await toggle(page).getByRole('button', { name: 'Preview', exact: true }).click();
-        const svg = await frame(page).getAttribute('srcdoc');
-        expect(svg).toContain('<img alt="" src="data:image/svg+xml;base64,');
-        expect(svg).not.toContain('<script');
+        await expect(frame(page)).toHaveAttribute('srcdoc', /<img alt="" src="data:image\/svg\+xml;base64,/);
+        await expect(frame(page)).not.toHaveAttribute('srcdoc', /<script/);
         await select(page, 'icons/star.webui');
         await expect(frame(page)).toBeHidden();
         const icons = manager(page).locator('.icon-preview webui-icon');

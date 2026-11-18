@@ -43,11 +43,11 @@ test('turning it on shows the key to check and the pairing form, and turning it 
     await expect(el.locator('.remote-state')).toContainText('Desk PC');
     await expect(el.locator('.remote-fingerprint')).toContainText('a1b2c3d4e5f60718');
     await expect(el.locator('.remote-pairing')).toBeVisible();
-    expect(await calls(page, 'remote_set_enabled')).toEqual([{ enabled: true }]);
+    await expect.poll(() => calls(page, 'remote_set_enabled')).toEqual([{ enabled: true }]);
     await role(el, 'turn-off').click();
     await expect(el.locator('.remote-state')).toContainText('Remote Access is off.');
     await expect(el.locator('.remote-pairing')).toHaveCount(0);
-    expect(await calls(page, 'remote_set_enabled')).toEqual([{ enabled: true }, { enabled: false }]);
+    await expect.poll(() => calls(page, 'remote_set_enabled')).toEqual([{ enabled: true }, { enabled: false }]);
 });
 
 test('a QR code pairs a device at the chosen level, for the chosen time, and can be cancelled', async ({ page }) => {
@@ -57,13 +57,13 @@ test('a QR code pairs a device at the chosen level, for the chosen time, and can
     await pick(role(el, 'days'), '7');
     await role(el, 'show-qr').click();
     await expect(el.locator('img.remote-qr')).toHaveAttribute('src', /^data:image\/svg\+xml/);
-    expect(await calls(page, 'remote_invite')).toEqual([{ invite: { name: 'Laptop', level: 'work', days: 7 } }]);
+    await expect.poll(() => calls(page, 'remote_invite')).toEqual([{ invite: { name: 'Laptop', level: 'work', days: 7 } }]);
     await expect(el.locator('.remote-pairing')).toContainText('Scan this with Laptop to pair it at the Work level, lasting 7 days without connecting');
     await expect(el.locator('.remote-link')).toHaveText('https://www.taskproxy.com/remote/#pair=eyJ2IjoxfQ');
     await role(el, 'cancel-invite').click();
     await expect(el.locator('img.remote-qr')).toHaveCount(0);
     await expect(role(el, 'show-qr')).toBeVisible();
-    expect((await calls(page, 'remote_invite_cancel')).length).toBe(1);
+    await expect.poll(async () => (await calls(page, 'remote_invite_cancel')).length).toBe(1);
 });
 
 test('a device pairing updates the panel and raises a notice', async ({ page }) => {
@@ -95,7 +95,7 @@ test('a paired device can change level, be renamed, and be unpaired', async ({ p
     await expect(openDialog(page)).toContainText('Unpair Work Phone?');
     await dialogButton(page, 'Unpair').click();
     await expect(el.locator('.remote-none')).toHaveText('No devices are paired.');
-    expect(await calls(page, 'remote_device_remove')).toEqual([{ id: 'device-1' }]);
+    await expect.poll(() => calls(page, 'remote_device_remove')).toEqual([{ id: 'device-1' }]);
 });
 
 test('a connected device can be disconnected and stays paired', async ({ page }) => {
@@ -105,7 +105,7 @@ test('a connected device can be disconnected and stays paired', async ({ page })
     await role(device, 'disconnect').click();
     await expect(el.locator('[data-device="device-1"] .remote-device-name')).not.toContainText('connected now');
     await expect(el.locator('[data-device="device-1"]')).toBeVisible();
-    expect(await calls(page, 'remote_device_disconnect')).toEqual([{ id: 'device-1' }]);
+    await expect.poll(() => calls(page, 'remote_device_disconnect')).toEqual([{ id: 'device-1' }]);
 });
 
 test('a connected device shows how it reached the desktop', async ({ page }) => {
@@ -144,7 +144,7 @@ test('names from devices are shown as text', async ({ page }) => {
     await expect(el.locator('.remote-device-name strong')).toHaveText(name);
     await role(el, 'remove').click();
     await expect(openDialog(page)).toContainText(`Unpair ${name}?`);
-    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
 
 test('the header shows which devices are connected, and opens the panel', async ({ page }) => {

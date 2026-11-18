@@ -10,10 +10,11 @@ test.describe('webui.proxy.terminalHelpers', () => {
         await page.evaluate(() => webui.proxy.terminalHelpers.ensureListeners());
     });
     test('runScript starts a script and marks it running', async ({ page }) => {
-        expect(await run(page, 'a.ps1', 'body', ['-x'], false, false)).toBe('Started');
-        expect(await calls(page, 'run_script')).toEqual([{ terminalId: 'a.ps1', scriptContent: 'body', args: ['-x'], inSeparateWindow: false, cols: null, rows: null, queue: false, isPageScript: false }]);
-        expect(await calls(page, 'spawn_script')).toHaveLength(1);
-        expect((await terminal(page, 'a.ps1')).status).toBe('Running');
+        const result = await run(page, 'a.ps1', 'body', ['-x'], false, false);
+        expect(result).toBe('Started');
+        await expect.poll(() => calls(page, 'run_script')).toEqual([{ terminalId: 'a.ps1', scriptContent: 'body', args: ['-x'], inSeparateWindow: false, cols: null, rows: null, queue: false, isPageScript: false }]);
+        await expect.poll(() => calls(page, 'spawn_script')).toHaveLength(1);
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.status).toBe('Running');
     });
     test('a script starts at the size of the terminal view', async ({ page }) => {
         await page.evaluate(() => webui.proxy.terminalHelpers.setViewSize({ cols: 140, rows: 35 }));
@@ -22,16 +23,16 @@ test.describe('webui.proxy.terminalHelpers', () => {
     });
     test('whether a script takes input comes from the backend', async ({ page }) => {
         await run(page, 'a.ps1', 'body', [], false, false);
-        expect((await terminal(page, 'a.ps1')).interactive).toBe(true);
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.interactive).toBe(true);
         await onCommand(page, 'spawn_script', () => ({ message: 'Script started', interactive: false }));
         await run(page, 'b.ps1', 'body', [], false, false);
-        expect((await terminal(page, 'b.ps1')).interactive).toBe(false);
+        await expect.poll(async () => (await terminal(page, 'b.ps1'))?.interactive).toBe(false);
     });
     test('output is kept as written, colors and all', async ({ page }) => {
         await run(page, 'a.ps1', 'body', [], false, false);
         await runOutput(page, { projectId: 'project-id', terminalId: 'a.ps1', data: '\x1b[32mok\x1b[0m\r\n' });
         await runOutput(page, { projectId: 'project-id', terminalId: 'a.ps1', data: 'more' });
-        expect((await terminal(page, 'a.ps1')).output.join('')).toBe('\x1b[32mok\x1b[0m\r\nmore');
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.output.join('')).toBe('\x1b[32mok\x1b[0m\r\nmore');
     });
     test('kept output is trimmed by size, starting on a new line', async ({ page }) => {
         const kept = await page.evaluate(() => {
@@ -54,63 +55,66 @@ test.describe('webui.proxy.terminalHelpers', () => {
     test('the finished event updates status', async ({ page }) => {
         await run(page, 'a.ps1', 'x', [], false, false);
         await finish(page, 'a.ps1');
-        expect((await terminal(page, 'a.ps1')).status).toBe('Finished');
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.status).toBe('Finished');
     });
     test('a failed start is not left running', async ({ page }) => {
         await page.evaluate(() => { window.__backend.handlers.spawn_script = () => { throw 'No PowerShell'; }; });
         await expect(run(page, 'a.ps1', 'x', [], false, false)).rejects.toThrow(/No PowerShell/);
-        expect((await terminal(page, 'a.ps1')).status).toBe('Finished');
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.status).toBe('Finished');
     });
     test('a separate window finishes straight away', async ({ page }) => {
         await run(page, 'a.ps1', 'x', [], true, false);
-        expect((await terminal(page, 'a.ps1')).status).toBe('Finished');
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.status).toBe('Finished');
     });
     test('queued scripts wait their turn', async ({ page }) => {
         await run(page, 'a.ps1', 'x', [], false, true);
-        expect(await run(page, 'b.ps1', 'y', [], false, true)).toBe('Queued');
-        expect(await calls(page, 'spawn_script')).toHaveLength(1);
+        const result = await run(page, 'b.ps1', 'y', [], false, true);
+        expect(result).toBe('Queued');
+        await expect.poll(() => calls(page, 'spawn_script')).toHaveLength(1);
         await finish(page, 'a.ps1');
         await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.terminalId)).toEqual(['a.ps1', 'b.ps1']);
     });
     test('output from another project does not reach this one', async ({ page }) => {
         await run(page, 'a.ps1', 'x', [], false, false);
         await runOutput(page, { projectId: 'other', terminalId: 'a.ps1', data: 'x' });
-        expect((await terminal(page, 'a.ps1')).output).toEqual([]);
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.output).toEqual([]);
         await runOutput(page, { projectId: 'project-id', terminalId: 'a.ps1', data: 'y' });
-        expect((await terminal(page, 'a.ps1')).output).toEqual(['y']);
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.output).toEqual(['y']);
     });
     test('terminal output stays out of webui data', async ({ page }) => {
         await run(page, 'a.ps1', 'x', [], false, false);
         await runOutput(page, { projectId: 'project-id', terminalId: 'a.ps1', data: 'UNIQUE' });
-        expect((await terminal(page, 'a.ps1')).output).toEqual(['UNIQUE']);
-        expect(await page.evaluate(() => JSON.stringify(webui.taskProxyData))).not.toContain('UNIQUE');
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.output).toEqual(['UNIQUE']);
+        await expect.poll(() => page.evaluate(() => JSON.stringify(webui.taskProxyData))).not.toContain('UNIQUE');
     });
     test('clearOutput empties a terminal', async ({ page }) => {
         await run(page, 'a.ps1', 'x', [], false, false);
         await runOutput(page, { projectId: 'project-id', terminalId: 'a.ps1', data: 'x' });
-        expect((await terminal(page, 'a.ps1')).output).toEqual(['x']);
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.output).toEqual(['x']);
         await page.evaluate(() => webui.proxy.terminalHelpers.clearOutput('a.ps1'));
-        expect((await terminal(page, 'a.ps1')).output).toEqual([]);
-        expect((await terminal(page, 'a.ps1')).outputSize).toBe(0);
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.output).toEqual([]);
+        await expect.poll(async () => (await terminal(page, 'a.ps1'))?.outputSize).toBe(0);
     });
     test('getDropdownOptions lists saved scripts, page scripts, or running scripts, by filter', async ({ page }) => {
         await page.evaluate(() => { window.__backend.handlers.get_scripts = () => ['build.ps1', 'test.ps1']; });
         await run(page, 'page-script', 'x', [], false, false, true);
         await run(page, 'test.ps1', 'x', [], false, false);
         await finish(page, 'page-script');
+        await expect.poll(async () => (await terminal(page, 'page-script'))?.status).toBe('Finished');
         const optionIds = filter => page.evaluate(async filter => {
             const helpers = webui.proxy.terminalHelpers;
             return (await helpers.getDropdownOptions(helpers.getState(), filter, null)).map(option => option.id);
         }, filter);
         // The live terminal has a view of its own, so no list includes it.
-        expect(await optionIds('Saved')).toEqual(['build.ps1', 'test.ps1']);
-        expect(await optionIds('Page')).toEqual(['page-script']);
-        expect(await optionIds('Running')).toEqual(['test.ps1']);
-        expect(await optionIds('Live')).toEqual([]);
+        await expect.poll(() => optionIds('Saved')).toEqual(['build.ps1', 'test.ps1']);
+        await expect.poll(() => optionIds('Page')).toEqual(['page-script']);
+        await expect.poll(() => optionIds('Running')).toEqual(['test.ps1']);
+        await expect.poll(() => optionIds('Live')).toEqual([]);
     });
     test('a script that finished while being watched stays in the running lists', async ({ page }) => {
         await run(page, 'page-script', 'x', [], false, false, true);
         await finish(page, 'page-script');
+        await expect.poll(async () => (await terminal(page, 'page-script'))?.status).toBe('Finished');
         const ids = await page.evaluate(async () => {
             const helpers = webui.proxy.terminalHelpers;
             return (await helpers.getDropdownOptions(helpers.getState(), 'Running', { id: 'page-script' })).map(option => option.id);
@@ -131,8 +135,8 @@ test.describe('webui.proxy.terminalHelpers', () => {
             ['test.ps1', 'test.ps1 (Running)'],
             ['other-project::deploy.ps1', 'Storefront: deploy.ps1 (Running)'],
         ]);
-        expect(await page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('other-project::deploy.ps1'))).toEqual({ id: 'deploy.ps1', projectId: 'other-project' });
-        expect(await page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('test.ps1'))).toEqual({ id: 'test.ps1' });
+        await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('other-project::deploy.ps1'))).toEqual({ id: 'deploy.ps1', projectId: 'other-project' });
+        await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.parseTerminalValue('test.ps1'))).toEqual({ id: 'test.ps1' });
     });
     test('Finished lists every run that has ended, in every project, the latest first, and which failed', async ({ page }) => {
         await run(page, 'test.ps1', 'x', [], false, false);
@@ -164,12 +168,13 @@ test.describe('webui.proxy.terminalHelpers', () => {
         });
         await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
         expect((await calls(page, 'spawn_script'))[0]).toMatchObject({ terminalId: 'Before Commit', project: '/other' });
-        expect(await page.evaluate(() => {
+        await expect.poll(() => page.evaluate(() => {
             const term = webui.proxy.terminalHelpers.getState('id-/other').terminals['Before Commit'];
             return [term.status, term.projectName, !!webui.proxy.terminalHelpers.getState().terminals['Before Commit']];
         })).toEqual(['Running', 'Other', false]);
         await page.evaluate(() => window.__backend.runs.end({ projectId: 'id-/other', terminalId: 'Before Commit', code: 3 }));
-        expect(await done).toBe(3);
+        const code = await done;
+        expect(code).toBe(3);
     });
     test('stopping another project\'s script names that project to the backend', async ({ page }) => {
         await page.evaluate(async () => {
@@ -177,7 +182,7 @@ test.describe('webui.proxy.terminalHelpers', () => {
             helpers.getState('other-project').terminals['deploy.ps1'] = helpers.newTerminal('deploy.ps1', { status: 'Running', interactive: false });
             await helpers.stopScript('deploy.ps1', 'other-project');
         });
-        expect(await calls(page, 'stop_run')).toEqual([{ terminalId: 'deploy.ps1', projectId: 'other-project' }]);
+        await expect.poll(() => calls(page, 'stop_run')).toEqual([{ terminalId: 'deploy.ps1', projectId: 'other-project' }]);
     });
 });
 
@@ -189,7 +194,7 @@ test.describe('page scripts in the terminal list', () => {
     const pageScript = (page, id, display) => page.evaluate(([id, display]) => webui.proxy.terminalHelpers.runScript(id, "$secret = 'REAL'", [], false, false, true, display), [id, display]);
     test('the shown script is the masked copy, while the real one runs', async ({ page }) => {
         await pageScript(page, 'p1', "$secret = 'RE***AL'");
-        expect((await terminal(page, 'p1')).script).toBe("$secret = 'RE***AL'");
+        await expect.poll(async () => (await terminal(page, 'p1'))?.script).toBe("$secret = 'RE***AL'");
         expect((await calls(page, 'spawn_script'))[0].scriptContent).toBe("$secret = 'REAL'");
     });
     test('a queued page script keeps its masked copy', async ({ page }) => {
@@ -201,18 +206,24 @@ test.describe('page scripts in the terminal list', () => {
     test('a finished page script can be removed, but not a running one or the live terminal', async ({ page }) => {
         await pageScript(page, 'p1', 'masked');
         const remove = id => page.evaluate(id => webui.proxy.terminalHelpers.removeTerminal(id), id);
-        expect(await remove('p1')).toBe(false);
+        // Each is what removeTerminal answered, so it is read once.
+        const whileRunning = await remove('p1');
+        expect(whileRunning).toBe(false);
         await finish(page, 'p1');
-        expect(await remove('p1')).toBe(true);
-        expect(await terminal(page, 'p1')).toBeUndefined();
-        expect(await remove('live')).toBe(false);
+        await expect.poll(async () => (await terminal(page, 'p1'))?.status).toBe('Finished');
+        const onceFinished = await remove('p1');
+        expect(onceFinished).toBe(true);
+        await expect.poll(() => terminal(page, 'p1')).toBeUndefined();
+        const live = await remove('live');
+        expect(live).toBe(false);
     });
     test('removing the shown terminal switches to the live one', async ({ page }) => {
         await pageScript(page, 'p1', 'masked');
         await finish(page, 'p1');
+        await expect.poll(async () => (await terminal(page, 'p1'))?.status).toBe('Finished');
         await page.evaluate(() => { webui.proxy.terminalHelpers.getState().activeId = 'p1'; });
         await page.evaluate(() => webui.proxy.terminalHelpers.removeTerminal('p1'));
-        expect(await page.evaluate(() => webui.proxy.terminalHelpers.getState().activeId)).toBe('live');
+        await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().activeId)).toBe('live');
     });
     test('removing finished page scripts keeps running ones and other scripts', async ({ page }) => {
         await pageScript(page, 'done', 'm');
@@ -220,8 +231,10 @@ test.describe('page scripts in the terminal list', () => {
         await pageScript(page, 'running', 'm');
         await run(page, 'file.ps1', 'x', [], false, false);
         await finish(page, 'file.ps1');
-        expect(await page.evaluate(() => webui.proxy.terminalHelpers.removeFinishedPageScripts())).toBe(1);
-        expect(Object.keys(await page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals)).sort()).toEqual(['file.ps1', 'live', 'running']);
+        await expect.poll(async () => [(await terminal(page, 'done'))?.status, (await terminal(page, 'file.ps1'))?.status]).toEqual(['Finished', 'Finished']);
+        const removed = await page.evaluate(() => webui.proxy.terminalHelpers.removeFinishedPageScripts());
+        expect(removed).toBe(1);
+        await expect.poll(async () => Object.keys(await page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals)).sort()).toEqual(['file.ps1', 'live', 'running']);
     });
 });
 
@@ -232,7 +245,7 @@ test.describe('runs kept by the backend', () => {
             { terminalId: 'test.ps1', output: ['ok\r\n'], code: 1 },
         ] });
         await expect.poll(() => terminal(page, 'build.ps1').then(term => term && [term.status, term.output.join(''), term.seq])).toEqual(['Running', 'Compiling\r\nLinking\r\n', 2]);
-        expect(await terminal(page, 'test.ps1').then(term => [term.status, term.exitCode])).toEqual(['Finished', 1]);
+        await expect.poll(() => terminal(page, 'test.ps1').then(term => [term.status, term.exitCode])).toEqual(['Finished', 1]);
         // Output keeps arriving after what was loaded, with nothing twice.
         await runOutput(page, { terminalId: 'build.ps1', data: 'Done\r\n' });
         await expect.poll(() => terminal(page, 'build.ps1').then(term => term.output.join(''))).toBe('Compiling\r\nLinking\r\nDone\r\n');
@@ -241,7 +254,7 @@ test.describe('runs kept by the backend', () => {
         await openApp(page);
         await page.evaluate(() => window.__backend.handlers.run_script({ terminalId: 'deploy.ps1', scriptContent: 'Deploy', args: [], inSeparateWindow: false }));
         await expect.poll(() => terminal(page, 'deploy.ps1').then(term => term?.status)).toBe('Running');
-        expect((await terminal(page, 'deploy.ps1')).script).toBe('Deploy');
+        await expect.poll(async () => (await terminal(page, 'deploy.ps1'))?.script).toBe('Deploy');
         await runEnds(page, { terminalId: 'deploy.ps1', code: 0 });
         await expect.poll(() => terminal(page, 'deploy.ps1').then(term => term.status)).toBe('Finished');
     });
@@ -256,7 +269,9 @@ test.describe('runs kept by the backend', () => {
         });
         await runOutput(page, { terminalId: 'a.ps1', data: 'three' });
         await expect.poll(() => terminal(page, 'a.ps1').then(term => term.output.join(''))).toBe('one two three');
-        expect((await calls(page, 'get_run_output')).at(-1)).toMatchObject({ terminalId: 'a.ps1', since: 1 });
+        // The output has all arrived, so the request that fetched the missed batch has been made.
+        const fetched = (await calls(page, 'get_run_output')).map(call => [call.terminalId, call.since]);
+        expect(fetched).toContainEqual(['a.ps1', 1]);
     });
     test('clearing or removing a terminal reaches every screen', async ({ page }) => {
         await openApp(page);
@@ -278,6 +293,7 @@ test.describe('runs kept by the backend', () => {
                 return { message: 'Script started', interactive: true };
             };
         });
-        expect(await page.evaluate(() => webui.proxy.terminalHelpers.runAndWait('quick.ps1', 'exit 4'))).toBe(4);
+        const code = await page.evaluate(() => webui.proxy.terminalHelpers.runAndWait('quick.ps1', 'exit 4'));
+        expect(code).toBe(4);
     });
 });

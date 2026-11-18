@@ -1,4 +1,4 @@
-import { test, expect, openPage, openApp, calls, onCommand, dialogButton } from '../support/app.mjs';
+import { test, expect, openPage, openApp, calls, onCommand, dialogButton, openDialog } from '../support/app.mjs';
 
 const save = page => page.locator('app-page-handler webui-button[title="Save Page"]').first().click();
 const saved = async page => {
@@ -49,26 +49,31 @@ test.describe('saving', () => {
         await openApp(page, { currentPage: '/x', project: { name: 'Repo', path: '/repo' } });
         await onCommand(page, 'get_project_file', () => { throw 'Failed to load file: stream did not contain valid UTF-8'; });
         await page.evaluate(() => webui.navigateTo('/broken'));
-        await page.locator('app-page-handler').waitFor();
-        await page.waitForTimeout(300);
+        // The page has dealt with the failed load once it says so. Save is refused as it is clicked, before anything is sent.
+        await expect(page.locator('app-page-handler webui-alert')).toContainText('This page could not be loaded.');
         const button = page.locator('app-page-handler webui-button[title="Save Page"]').first();
         if (await button.count()) await button.click();
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'save_project_file')).toEqual([]);
+        await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
     });
     test('a slow page cannot replace the page opened after it', async ({ page }) => {
         await openPage(page, '# First', { pageId: 'first', files: { '.taskproxy/pages/slow.md': '# Slow Page', '.taskproxy/pages/fast.md': '# Fast Page' } });
+        // The slow page's file is held back until the test lets it go, after the fast page is showing.
         await page.evaluate(() => {
             const original = window.__backend.handlers.get_project_file;
+            const held = new Promise(resolve => { window.__releaseSlow = resolve; });
             window.__backend.handlers.get_project_file = async args => {
-                if (args.filePath.includes('slow')) await new Promise(resolve => setTimeout(resolve, 500));
+                if (args.filePath.includes('slow')) await held;
                 return original(args);
             };
             webui.navigateTo('/slow');
         });
-        await page.waitForTimeout(100);
+        await expect.poll(() => calls(page, 'get_project_file')).toContainEqual({ filePath: '.taskproxy/pages/slow.md' });
         await page.evaluate(() => webui.navigateTo('/fast'));
-        await page.waitForTimeout(900);
+        await expect(page.getByRole('heading', { name: 'Fast Page' })).toBeVisible();
+        // The app deals with the late answer as soon as it is given, before the page answers the test again.
+        await page.evaluate(() => window.__releaseSlow());
+        await expect(page.getByRole('heading', { name: 'Fast Page' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Slow Page' })).toHaveCount(0);
         await save(page);
         const result = await saved(page);
         expect(result.filePath).toBe('.taskproxy/pages/fast.md');
@@ -116,16 +121,19 @@ test.describe('saving', () => {
 test.describe('security', () => {
     test('scripts in a page do not run', async ({ page }) => {
         await openPage(page, `# T\n\n<img src=x onerror="window.__xss='img'">\n\n<template><img src=x onerror="window.__xss='tpl'"></template>\n\n<script>window.__xss='script'</script>\n\n<a id="bad" href="java&#x09;script:window.__xss='href'">x</a>`);
-        await page.waitForTimeout(300);
-        expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+        // The page has been drawn, with the image and link it keeps.
+        await expect(page.locator('app-page-handler img').first()).toBeAttached();
+        await expect(page.locator('a#bad')).toHaveText('x');
         await expect(page.locator('a#bad')).not.toHaveAttribute('href');
+        await expect(page.locator('app-page-handler script')).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
     });
     test('{GIT_PAT} does not show the token', async ({ page }) => {
         await openPage(page, 'Token: [{GIT_PAT}] [{GITHUB_PAT}]', { data: { git_pat: 'SECRETTOKEN' }, appData: { github_pat: 'OTHERTOKEN' }, appVariables: ['github_pat|secret|'] });
-        await page.waitForTimeout(200);
-        const text = await page.locator('app-page-handler').evaluate(el => el.innerHTML);
-        expect(text).not.toContain('SECRETTOKEN');
-        expect(text).not.toContain('OTHERTOKEN');
+        await expect(page.locator('app-page-handler')).toContainText('Token: [');
+        const text = () => page.locator('app-page-handler').evaluate(el => el.innerHTML);
+        await expect.poll(text).not.toContain('SECRETTOKEN');
+        await expect.poll(text).not.toContain('OTHERTOKEN');
     });
     test('{VARIABLE} shows a variable\'s value', async ({ page }) => {
         await openPage(page, 'Value: {MY_VAR}', { data: { my_var: 'shown' }, variables: ['my_var|text|'] });
@@ -142,10 +150,13 @@ test.describe('page scripts', () => {
         await openPage(page, scriptPage('Write-Host a'));
         await page.locator('webui-icon.run-script-btn').click();
         await expect(page.getByText('Run Script From This Project?')).toBeVisible();
-        expect(await calls(page, 'spawn_script')).toEqual([]);
+        await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
         await dialogButton(page, 'Cancel').click();
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'spawn_script')).toEqual([]);
+        await expect(openDialog(page)).toHaveCount(0);
+        // It asks again the next time, so the cancelled run ended without trusting the project or running anything.
+        await page.locator('webui-icon.run-script-btn').click();
+        await expect(openDialog(page)).toContainText('Run Script From This Project?');
+        await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
     });
     test('a trusted project does not ask again', async ({ page }) => {
         await openPage(page, scriptPage('Write-Host a'), { appData: { 'app-trusted-projects': ['/repo'] } });
@@ -156,7 +167,7 @@ test.describe('page scripts', () => {
         await openPage(page, scriptPage("$secret = 'x'"), { data: { secret: 'abcdefghijkl' }, variables: ['secret|text|'] });
         await page.locator('webui-icon.run-script-btn').click();
         await expect(page.getByText('abc***jkl').first()).toBeVisible();
-        expect(await page.evaluate(() => document.body.innerText)).not.toContain('abcdefghijkl');
+        await expect.poll(() => page.evaluate(() => document.body.innerText)).not.toContain('abcdefghijkl');
     });
     test('variables are injected into the script that runs', async ({ page }) => {
         await openPage(page, scriptPage("$my_var = 'default'\n$other = 'kept'"), { data: { my_var: 'abcdefghijkl' }, variables: ['my_var|text|'] });
@@ -167,38 +178,43 @@ test.describe('page scripts', () => {
     test('the Terminal Manager gets the masked script', async ({ page }) => {
         await openPage(page, scriptPage("$my_var = 'default'"), { data: { my_var: 'abcdefghijkl' }, variables: ['my_var|text|'] });
         await runScript(page);
-        const terminals = await page.evaluate(() => Object.values(webui.proxy.terminalHelpers.getState().terminals).filter(term => term.isPageScript));
-        expect(terminals).toHaveLength(1);
-        expect(terminals[0].script).toContain("$my_var = 'abc***jkl'");
-        expect(terminals[0].script).not.toContain('abcdefghijkl');
+        const shown = () => page.evaluate(() => Object.values(webui.proxy.terminalHelpers.getState().terminals).filter(term => term.isPageScript).map(term => term.script));
+        await expect.poll(async () => (await shown()).length).toBe(1);
+        await expect.poll(async () => (await shown())[0]).toContain("$my_var = 'abc***jkl'");
+        await expect.poll(async () => (await shown())[0]).not.toContain('abcdefghijkl');
     });
     test('the code preview masks values longer than 6 characters', async ({ page }) => {
         await openPage(page, scriptPage("$my_var = 'default'"), { data: { my_var: 'abcdefghijkl' }, variables: ['my_var|text|'] });
         await expect(page.locator('webui-code').filter({ hasText: 'abc***jkl' })).toBeVisible();
-        expect(await page.locator('app-page-handler').evaluate(el => el.innerText)).not.toContain('abcdefghijkl');
+        await expect.poll(() => page.locator('app-page-handler').evaluate(el => el.innerText)).not.toContain('abcdefghijkl');
     });
     test('tokens are not injected', async ({ page }) => {
         await openPage(page, scriptPage("$git_pat = 'placeholder'"), { data: { git_pat: 'SECRETTOKEN' } });
-        expect(await runScript(page)).toContain("$git_pat = 'placeholder'");
+        const script = await runScript(page);
+        expect(script).toContain("$git_pat = 'placeholder'");
     });
     // A script's own variables must not pick up framework settings or project fields that share a name.
     for (const name of ['name', 'version', 'path', 'id', 'data', 'docs', 'navigation', 'variables', 'domain', 'api']) {
         test(`$${name} keeps its value unless a variable is set`, async ({ page }) => {
             await openPage(page, scriptPage(`$${name} = 'mine'`));
-            expect(await runScript(page)).toContain(`$${name} = 'mine'`);
+            const script = await runScript(page);
+            expect(script).toContain(`$${name} = 'mine'`);
         });
     }
     test('a variable with one of those names still applies when set', async ({ page }) => {
         await openPage(page, scriptPage("$path = 'mine'"), { data: { path: 'from-variable' }, variables: ['path|text|'] });
-        expect(await runScript(page)).toContain("$path = 'from-variable'");
+        const script = await runScript(page);
+        expect(script).toContain("$path = 'from-variable'");
     });
     test('values cannot break out of single quoted strings', async ({ page }) => {
         await openPage(page, scriptPage("$v = 'x'"), { data: { v: "a'b’c; Remove-Item" }, variables: ['v|text|'] });
-        expect(await runScript(page)).toContain("$v = 'a''b’’c; Remove-Item'");
+        const script = await runScript(page);
+        expect(script).toContain("$v = 'a''b’’c; Remove-Item'");
     });
     test('values are literal inside double quoted strings', async ({ page }) => {
         await openPage(page, scriptPage('$v = "x"'), { data: { v: 'pa$$word `n $(Get-Date) "q”' }, variables: ['v|text|'] });
-        expect(await runScript(page)).toContain('$v = "pa`$`$word ``n `$(Get-Date) `"q`”"');
+        const script = await runScript(page);
+        expect(script).toContain('$v = "pa`$`$word ``n `$(Get-Date) `"q`”"');
     });
     test('strings with escaped quotes are fully replaced', async ({ page }) => {
         await openPage(page, scriptPage("$a = 'it''s old'\n$b = \"say `\"old`\" now\""), { data: { a: 'new', b: 'new' }, variables: ['a|text|', 'b|text|'] });
@@ -226,13 +242,15 @@ test.describe('page scripts', () => {
     });
     test('variables set by page data apply', async ({ page }) => {
         await openPage(page, '<webui-data data-page-title="T" data-page-subtitle="" data-target="prod"></webui-data>\n\n' + scriptPage("$target = 'dev'"));
-        expect(await runScript(page)).toContain("$target = 'prod'");
+        const script = await runScript(page);
+        expect(script).toContain("$target = 'prod'");
     });
     test('a value typed into a bound input replaces the default in the script', async ({ page }) => {
         // The example in the page help.
         await openPage(page, '<webui-input-text label="Version" data-bind="Version"></webui-input-text>\n\n' + scriptPage("$Version = '1.0.0'"));
         await page.locator('app-page-handler webui-input-text[label="Version"] input').fill('2.1.0');
-        expect(await runScript(page)).toContain("$Version = '2.1.0'");
+        const script = await runScript(page);
+        expect(script).toContain("$Version = '2.1.0'");
     });
     test('the window sends the script and its page values, never the project\'s or global values', async ({ page }) => {
         await openPage(page, '<webui-input-text label="Version" data-bind="Version"></webui-input-text>\n\n' + scriptPage("$Version = '1.0.0'\n$token = 'x'"),
@@ -250,12 +268,12 @@ test.describe('page scripts', () => {
         await openPage(page, scriptPage('Write-Host a'));
         const error = await page.evaluate(() => webui.proxy.runPageScript('Repo_T_x', 'Write-Host a', {}, err => `${err}`));
         expect(error).toContain('not trusted');
-        expect(await calls(page, 'spawn_script')).toEqual([]);
+        await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
     });
     test('trusting a project reaches the backend before the script runs', async ({ page }) => {
         await openPage(page, scriptPage('Write-Host a'));
         await runScript(page);
-        expect(await page.evaluate(() => window.__backend.appData.data['app-trusted-projects'])).toEqual(['/repo']);
+        await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-trusted-projects'])).toEqual(['/repo']);
     });
     test.describe('a dropdown of project files', () => {
         // The layout of a page that picks a solution, as in the page help's app-files example.
@@ -276,29 +294,36 @@ test.describe('page scripts', () => {
         ].join('\n');
         const options = [{ value: '/One.sln', display: '/One.sln' }, { value: 'sub/Two.sln', display: 'sub/Two.sln' }];
         const openFilesPage = async (page, found, state = {}) => {
-            // Searching a large project takes a while, so the options can arrive well after the page has loaded.
+            // Searching a large project takes a while, so the search is held until the page has loaded and shows its
+            // dropdown, and the options arrive after that.
             await openApp(page, {
-                currentPage: '/abc', projectFiles: found, searchDelay: 1500,
+                currentPage: '/abc', projectFiles: found, holdSearch: true,
                 ...state, files: { '.taskproxy/pages/abc.md': filesPage() },
             }, '/abc');
             await page.waitForSelector('app-page-handler > app-markdown-segment');
+            await expect(page.locator('app-page-handler webui-dropdown select')).toBeAttached();
+            await expect.poll(async () => (await calls(page, 'search_project_files')).length).toBeGreaterThan(0);
+            await page.evaluate(() => window.__backend.releaseSearch());
         };
         test('the first file shown is used by the script without choosing it', async ({ page }) => {
             await openFilesPage(page, options);
-            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length), { timeout: 5000 }).toBe(2);
-            expect(await runScript(page)).toContain("$solution = '/One.sln'");
+            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length)).toBe(2);
+            const script = await runScript(page);
+            expect(script).toContain("$solution = '/One.sln'");
         });
         test('a dropdown with one file sets it', async ({ page }) => {
             // Defining the variable with no default, as the variable manager does, leaves it blank rather than unset.
             await openFilesPage(page, options.slice(0, 1), { variables: ['solution|text|'], data: { solution: '' } });
-            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length), { timeout: 5000 }).toBe(1);
-            expect(await runScript(page)).toContain("$solution = '/One.sln'");
+            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length)).toBe(1);
+            const script = await runScript(page);
+            expect(script).toContain("$solution = '/One.sln'");
         });
         test('a file chosen before is kept', async ({ page }) => {
             await openFilesPage(page, options, { data: { solution: 'sub/Two.sln' } });
-            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length), { timeout: 5000 }).toBe(2);
+            await expect.poll(() => page.locator('app-page-handler webui-dropdown select').evaluate(el => el.options.length)).toBe(2);
             await expect.poll(() => page.locator('app-page-handler webui-dropdown').evaluate(el => el.value)).toBe('sub/Two.sln');
-            expect(await runScript(page)).toContain("$solution = 'sub/Two.sln'");
+            const script = await runScript(page);
+            expect(script).toContain("$solution = 'sub/Two.sln'");
         });
     });
 });
@@ -333,14 +358,16 @@ test.describe('help', () => {
         await help.locator('webui-tabs').first().locator(':scope > webui-button').nth(3).click();
         const buttons = help.locator('webui-components webui-tabs > webui-button');
         await expect(buttons.first()).toBeVisible();
-        const names = await buttons.evaluateAll(list => list.map(b => b.textContent.trim()));
-        expect(names).toContain('webui-alert');
-        expect(names).toContain('webui-input-text');
+        const listed = () => buttons.evaluateAll(list => list.map(b => b.textContent.trim()));
+        await expect.poll(listed).toContain('webui-alert');
+        await expect.poll(listed).toContain('webui-input-text');
+        // The list is built in one step, so with those in it, it is complete.
+        const names = await listed();
         for (const name of ['webui-app', 'webui-page-help', 'webui-components', 'app-template']) expect(names).not.toContain(name);
         const url = page.url();
         await buttons.nth(names.indexOf('webui-alert')).click();
         await expect(help.locator('webui-components webui-content[src$="/webui-alert.md"]')).toContainText('webui-alert');
-        expect(page.url()).toBe(url);
+        await expect(page).toHaveURL(url);
     });
 });
 
@@ -355,7 +382,7 @@ test.describe('segment layout', () => {
     const wrap = text => `<webui-page-segment>\n\n${text}\n\n</webui-page-segment>`;
     test('content runs until the next heading, line break, page segment, or the end', async ({ page }) => {
         await openPage(page, 'Intro\n\nMore intro\n## Next\nAfter heading\n<webui-line></webui-line>\nAfter line\n<webui-page-segment elevation="10">\n\nKept\n\n</webui-page-segment>\nLast');
-        expect(await layout(page)).toEqual([
+        await expect.poll(() => layout(page)).toEqual([
             wrap('Intro\n\nMore intro'),
             '## Next',
             wrap('After heading'),
@@ -369,11 +396,11 @@ test.describe('segment layout', () => {
         const code = '```pwsh\n# A comment\n<webui-line></webui-line>\n```';
         const tabs = '<webui-tabs>\n## Inside tabs\n</webui-tabs>';
         await openPage(page, `${code}\n${tabs}`);
-        expect(await layout(page)).toEqual([wrap(`${code}\n${tabs}`)]);
+        await expect.poll(() => layout(page)).toEqual([wrap(`${code}\n${tabs}`)]);
     });
     test('#text with no space is content, not a heading', async ({ page }) => {
         await openPage(page, '#hashtag\n# Real heading');
-        expect(await layout(page)).toEqual([wrap('#hashtag'), '# Real heading']);
+        await expect.poll(() => layout(page)).toEqual([wrap('#hashtag'), '# Real heading']);
     });
     test('deleting a segment leaves it out of the saved page', async ({ page }) => {
         await openPage(page, '# Keep\n\n# Remove');

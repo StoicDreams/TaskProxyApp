@@ -27,11 +27,16 @@ const open = async (page, state = {}) => {
 const view = page => page.locator('webui-drawer.shared .task-manager');
 const shown = page => view(page).locator('tbody tr.tm-row').evaluateAll(rows => rows.map(row => Number(row.dataset.pid)));
 const choose = (page, filter) => view(page).locator('.tm-filter').selectOption(filter);
+/** How many times processes have been read, after moving the clock on by `ms`. */
+const reads = async (page, ms = 0) => {
+    if (ms) await page.clock.runFor(ms);
+    return (await calls(page, 'list_processes')).length;
+};
 const row = (page, pid) => view(page).locator(`tr.tm-row[data-pid="${pid}"]`);
 
 test('the button sits between Terminals and the alerts, and opens on processes started from a terminal, under what started them', async ({ page }) => {
     await open(page);
-    expect(await page.evaluate(() => {
+    await expect.poll(() => page.evaluate(() => {
         const button = document.querySelector('app-task-manager');
         return [button.previousElementSibling.localName, button.nextElementSibling.localName];
     })).toEqual(['app-terminals', 'webui-alerts']);
@@ -131,7 +136,7 @@ test('a process shows its details, and stopping it with what it started asks fir
     await expect(details.getByRole('button', { name: 'Force close with children (1)' })).toHaveAttribute('title', /Ends this process and the 1 process under it/);
     await details.getByRole('button', { name: 'Stop with children (1)' }).click();
     await expect(dialogButton(page, 'Stop')).toBeVisible();
-    expect(await calls(page, 'stop_process')).toEqual([]);
+    await expect.poll(() => calls(page, 'stop_process')).toEqual([]);
     await dialogButton(page, 'Stop').click();
     await expect.poll(() => calls(page, 'stop_process')).toEqual([{ pid: 500, started: now - 7200, children: true, force: false }]);
     await expect(view(page).locator('.tm-message')).toHaveText('Asked to stop 500.');
@@ -153,27 +158,34 @@ test('force close says what it does, a refusal is shown, and the parent link sel
 });
 
 test('it reads processes only while open, at the chosen pace, and lets go once another drawer replaces it', async ({ page }) => {
+    // The page's clock is moved on to reach the next refresh, rather than waiting for it.
+    await page.clock.install();
     await open(page);
     await view(page).locator('.tm-pace').selectOption('1000');
-    await expect.poll(async () => (await calls(page, 'list_processes')).length, { timeout: 5000 }).toBeGreaterThan(2);
+    const opened = await reads(page);
+    await expect.poll(() => reads(page, 1000)).toBeGreaterThan(opened + 2);
     await view(page).locator('.tm-pace').selectOption('0');
     await expect(view(page).locator('.tm-summary')).toContainText('Paused.');
-    const paused = (await calls(page, 'list_processes')).length;
-    await page.waitForTimeout(1500);
-    expect((await calls(page, 'list_processes')).length).toBe(paused);
+    // Paused, a minute passes with nothing read, so the one read after it is the Refresh button's.
+    const paused = await reads(page);
+    await page.clock.runFor(60000);
     await view(page).getByRole('button', { name: 'Refresh' }).click();
-    await expect.poll(async () => (await calls(page, 'list_processes')).length).toBe(paused + 1);
+    await expect.poll(() => reads(page)).toBe(paused + 1);
+    await page.clock.runFor(60000);
+    await expect.poll(() => reads(page)).toBe(paused + 1);
     await view(page).locator('.tm-pace').selectOption('1000');
     // The open drawer covers the header in a small window, so the other drawer is opened as its button would.
     await page.evaluate(() => document.querySelector('app-plugins-drawer').open());
     await expect(page.locator('webui-drawer.shared app-plugin-manager')).toHaveCount(1);
-    await expect.poll(async () => (await calls(page, 'close_task_manager')).length, { timeout: 5000 }).toBe(1);
-    const closed = (await calls(page, 'list_processes')).length;
-    await page.waitForTimeout(1500);
-    expect((await calls(page, 'list_processes')).length).toBe(closed);
+    await expect.poll(async () => { await page.clock.runFor(1000); return (await calls(page, 'close_task_manager')).length; }).toBe(1);
+    const closed = await reads(page);
+    await page.clock.runFor(60000);
+    await expect.poll(() => reads(page)).toBe(closed);
 });
 
 test('a refresh keeps the list where it was scrolled to, and only redraws the rows that changed', async ({ page }) => {
+    // The page's clock is moved on to reach the next refresh, rather than waiting for it.
+    await page.clock.install();
     const many = Array.from({ length: 120 }, (_, i) => proc(1000 + i, 400, `worker-${i}`, { terminal: true }));
     await open(page, { processes: [...processes, ...many] });
     // Each read reports a different CPU for one process, as a real refresh would.
@@ -195,16 +207,18 @@ test('a refresh keeps the list where it was scrolled to, and only redraws the ro
     await expect(row(page, 1050)).toBeInViewport();
     await expect(first).not.toBeInViewport();
     const kept = await row(page, 1050).elementHandle();
-    const reads = (await calls(page, 'list_processes')).length;
-    await expect.poll(async () => (await calls(page, 'list_processes')).length, { timeout: 5000 }).toBeGreaterThan(reads + 1);
+    const before = await reads(page);
+    await expect.poll(() => reads(page, 1000)).toBeGreaterThan(before + 1);
     await expect(row(page, 1005).locator('.c-cpu')).not.toHaveText('0%');
     // After the refreshes the same rows show: the list didn't jump back to the top.
     await expect(row(page, 1050)).toBeInViewport();
     await expect(first).not.toBeInViewport();
-    expect(await kept.evaluate(el => el.isConnected)).toBe(true);
+    await expect.poll(() => kept.evaluate(el => el.isConnected)).toBe(true);
 });
 
 test('processes that start between reads keep the list where it was scrolled to, and a list scrolled to its end stays there', async ({ page }) => {
+    // The page's clock is moved on to reach the next refresh, rather than waiting for it.
+    await page.clock.install();
     const many = Array.from({ length: 120 }, (_, i) => proc(1000 + i, 400, `worker-${i}`, { terminal: true }));
     await open(page, { processes: [...processes, ...many] });
     // Each of the first reads finds two more processes cargo started.
@@ -220,14 +234,13 @@ test('processes that start between reads keep the list where it was scrolled to,
         };
     });
     const wrap = view(page).locator('.tm-table-wrap');
-    const reads = async () => (await calls(page, 'list_processes')).length;
     await view(page).locator('.tm-pace').selectOption('1000');
     const first = view(page).locator('tr.tm-row').first();
     await row(page, 1050).scrollIntoViewIfNeeded();
     await expect(row(page, 1050)).toBeInViewport();
     await expect(first).not.toBeInViewport();
-    const before = await reads();
-    await expect.poll(reads, { timeout: 5000 }).toBeGreaterThan(before + 1);
+    const before = await reads(page);
+    await expect.poll(() => reads(page, 1000)).toBeGreaterThan(before + 1);
     await expect.poll(() => view(page).locator('tr.tm-row[data-pid="902"]').count()).toBe(1);
     // New processes arrived. They sort above worker-50, so they push it down, but the list didn't jump back to the top.
     await expect(first).not.toBeInViewport();
@@ -235,12 +248,14 @@ test('processes that start between reads keep the list where it was scrolled to,
     await wrap.evaluate(el => { el.scrollTop = el.scrollHeight; });
     const last = view(page).locator('tr.tm-row').last();
     await expect(last).toBeInViewport();
-    const end = await reads();
-    await expect.poll(reads, { timeout: 5000 }).toBeGreaterThan(end + 1);
+    const end = await reads(page);
+    await expect.poll(() => reads(page, 1000)).toBeGreaterThan(end + 1);
     await expect(view(page).locator('tr.tm-row').last()).toBeInViewport();
 });
 
 test('a refresh leaves the header as it is, since WebKit moved the list when the header and summary were rewritten together', async ({ page }) => {
+    // The page's clock is moved on to reach the next refresh, rather than waiting for it.
+    await page.clock.install();
     await open(page);
     await page.evaluate(() => {
         window.__headerChanges = 0;
@@ -248,9 +263,10 @@ test('a refresh leaves the header as it is, since WebKit moved the list when the
             .observe(document.querySelector('webui-drawer.shared .task-manager thead'), { subtree: true, childList: true, characterData: true, attributes: true });
     });
     await view(page).locator('.tm-pace').selectOption('1000');
-    const reads = (await calls(page, 'list_processes')).length;
-    await expect.poll(async () => (await calls(page, 'list_processes')).length, { timeout: 5000 }).toBeGreaterThan(reads + 1);
-    expect(await page.evaluate(() => window.__headerChanges)).toBe(0);
+    const before = await reads(page);
+    await expect.poll(() => reads(page, 1000)).toBeGreaterThan(before + 1);
+    // Each read is drawn before the next is asked for, so the reads after the first have been drawn.
+    await expect.poll(() => page.evaluate(() => window.__headerChanges)).toBe(0);
     // Sorting still changes it.
     await view(page).locator('[data-sort="cpu"]').click();
     await expect(view(page).locator('th[aria-sort="descending"]')).toHaveText('CPU ▾');

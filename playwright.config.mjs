@@ -30,7 +30,8 @@ export default defineConfig({
     // Components load from the live CDN, which can occasionally be slow, so CI tries a failed test again.
     // Locally a test that only passes on its second try fails, so a timing problem shows before CI finds it.
     retries: process.env.CI ? 1 : 0,
-    reporter: [['list'], ['html', { open: 'never' }]],
+    // On CI the github reporter names each failed or flaky test on the run's page, where it can be read without the log.
+    reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],
     use: {
         // Nothing listens here. Tests answer every request, and the loader comes from the CDN, as in the app.
         baseURL: 'http://127.0.0.1:1426',

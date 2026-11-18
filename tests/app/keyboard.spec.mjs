@@ -28,12 +28,12 @@ test('Alt+Up and Alt+Down move a segment, and the page saves in the new order', 
     const order = () => segments.evaluateAll(list => list.map(el => el.getMarkdown()));
     await segments.first().locator('#btn-edit').focus();
     await page.keyboard.press('Alt+ArrowDown');
-    expect(await order()).toEqual(['# Two', '# One', '# Three']);
+    await expect.poll(() => order()).toEqual(['# Two', '# One', '# Three']);
     // Focus stays on the moved segment, so it can keep moving.
     await page.keyboard.press('Alt+ArrowDown');
-    expect(await order()).toEqual(['# Two', '# Three', '# One']);
+    await expect.poll(() => order()).toEqual(['# Two', '# Three', '# One']);
     await page.keyboard.press('Alt+ArrowUp');
-    expect(await order()).toEqual(['# Two', '# One', '# Three']);
+    await expect.poll(() => order()).toEqual(['# Two', '# One', '# Three']);
     await page.locator('app-page-handler webui-button[title="Save Page"]').first().click();
     await expect.poll(async () => (await calls(page, 'save_project_file')).at(-1)?.contents).toBe('<webui-data data-page-title="" data-page-subtitle=""></webui-data>\n\n# Two\n\n# One\n\n# Three');
 });

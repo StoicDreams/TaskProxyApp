@@ -167,8 +167,8 @@
                     resolve(true);
                     return true;
                 },
-                oncancel: () => resolve(false)
-            });
+                // Cancel, Escape, and the close button reject the dialog's promise.
+            }).catch(() => resolve(false));
         });
     }
     // A command for a project that is not open never asks for a token, since the prompt saves to the open project.
@@ -696,8 +696,8 @@
                         resolve(Promise.resolve(webui.proxy.syncAppData()).then(() => true, () => true));
                         return true;
                     },
-                    oncancel: () => resolve(false)
-                });
+                    // Cancel, Escape, and the close button reject the dialog's promise.
+                }).catch(() => resolve(false));
             });
         }
         /** Update the backend's copy of the open project, and every other screen's, without writing to disk. */
@@ -1188,6 +1188,8 @@
     async function handleChanges(changes) {
         switch (changes.property) {
             case 'page-path':
+                // A project reload passes through this page on its way back, and it is never a page to reopen on.
+                if (changes.newValue === '/_reloading') break;
                 let project = webui.getData('app-current-project');
                 webui.projectData.currentPage = changes.newValue == '/root' ? '/' : changes.newValue;
                 webui.proxy.syncProjectData();
@@ -1327,6 +1329,7 @@
         timer: null,
         started: false,
         refreshing: null,
+        queued: null,
         intervalMs: 2 * 60 * 1000,
         start() {
             if (this.timer) return;
@@ -1334,8 +1337,13 @@
             this.refresh();
         },
         refresh() {
-            // One refresh at a time, so a notification is never shown twice.
-            if (this.refreshing) return this.refreshing;
+            // One refresh at a time, so a notification is never shown twice. One asked for while another is under
+            // way runs after it, since that one may have read the notifications before they changed.
+            if (this.refreshing) {
+                const next = () => { this.queued = null; return this.refresh(); };
+                this.queued ??= this.refreshing.then(next, next);
+                return this.queued;
+            }
             this.refreshing = this._refresh().finally(() => { this.refreshing = null; });
             return this.refreshing;
         },

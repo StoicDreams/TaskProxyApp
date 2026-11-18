@@ -1,4 +1,5 @@
 import { test, expect, openApp, mount, calls, dialogButton, openDialog } from '../support/app.mjs';
+import { alertPopup } from '../support/wait.mjs';
 
 async function manager(page, project = { name: 'Repo', path: '/repo' }) {
     await openApp(page, { project });
@@ -26,13 +27,14 @@ test('a blank name is refused', async ({ page }) => {
     const input = await openRename(page, el);
     await input.fill('   ');
     await dialogButton(page, 'Rename').click();
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'rename_project')).toEqual([]);
+    await expect(openDialog(page).getByText('Project name cannot be empty.')).toBeVisible();
+    await expect.poll(() => calls(page, 'rename_project')).toEqual([]);
 });
 test('removing asks first, then clears the current project', async ({ page }) => {
     const el = await manager(page);
     await el.locator('#btn-remove').click();
-    expect(await calls(page, 'remove_project')).toEqual([]);
+    await expect(dialogButton(page, 'Remove')).toBeVisible();
+    await expect.poll(() => calls(page, 'remove_project')).toEqual([]);
     await dialogButton(page, 'Remove').click();
     await expect.poll(async () => (await calls(page, 'remove_project')).length).toBe(1);
     await expect.poll(async () => (await calls(page, 'clear_current_project')).length).toBe(1);
@@ -46,15 +48,16 @@ test('markup in a project name does not run', async ({ page }) => {
     const name = '"><img src=q onerror="window.__xss=1">';
     const el = await manager(page, { name, path: '/repo' });
     await el.locator('#btn-remove').click();
-    await openDialog(page).last().waitFor();
-    await page.waitForTimeout(200);
-    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    // The name is shown as it was written, so it was not read as markup.
+    await expect(openDialog(page).locator('strong')).toHaveText(name);
     await expect(openDialog(page).locator('img')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
 test('with no project, it says so', async ({ page }) => {
     await openApp(page, { project: null });
     const root = await mount(page, '<app-project-manager id="m"></app-project-manager>');
     await root.locator('#btn-edit').click();
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'rename_project')).toEqual([]);
+    await expect(alertPopup(page, 'No project is currently selected.')).toHaveCount(1);
+    await expect(openDialog(page)).toHaveCount(0);
+    await expect.poll(() => calls(page, 'rename_project')).toEqual([]);
 });

@@ -16,7 +16,8 @@
  *   Missing numbers are 0.
  * - ciStatus: { path: { state, service, url } } for each project, which get_project_ci_status returns.
  * - git.ciStatus: { repo: { state, service, url } } for the open project, which get_git_repo_ci_status returns.
- * - projectFiles: what search_project_files returns, after searchDelay milliseconds when set.
+ * - projectFiles: what search_project_files returns. With holdSearch set, each search waits until the test calls
+ *   window.__backend.releaseSearch(), so a test decides when a slow search arrives.
  * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
  * - newInstall: leave out the saved settings an existing install has.
@@ -213,6 +214,9 @@ function setup(state) {
             return ended;
         },
     };
+    // Searches wait on this when the state sets holdSearch, until a test calls backend.releaseSearch().
+    let releaseSearch;
+    const searchHeld = new Promise(resolve => { releaseSearch = resolve; });
     // Commit jobs, as services/commit_queue.rs runs them.
     const commits = {
         rev: 0,
@@ -464,6 +468,8 @@ function setup(state) {
         remote,
         runs,
         commits,
+        /** Lets searches held by the state's holdSearch answer, now and from now on. */
+        releaseSearch: () => releaseSearch(),
         files,
         git,
         projectData,
@@ -531,7 +537,7 @@ function setup(state) {
                 return 'File saved';
             },
             search_project_files: async () => {
-                if (state.searchDelay) await new Promise(resolve => setTimeout(resolve, state.searchDelay));
+                if (state.holdSearch) await searchHeld;
                 return state.projectFiles || [];
             },
             get_scripts: () => state.scripts || [],

@@ -88,7 +88,7 @@ test.describe('plugins set up per project', () => {
         const view = page.locator('app-plugin-page');
         await expect(view.locator('h3')).toHaveText(/^Set up Jira for /);
         await expect(view.locator('app-plugin-settings webui-input-text')).toHaveCount(2);
-        expect(await calls(page, 'plugin_render')).toEqual([]);
+        await expect.poll(() => calls(page, 'plugin_render')).toEqual([]);
         // Once saved, the page shows.
         await page.evaluate(() => {
             const list = window.__backend.handlers.plugin_list;

@@ -32,5 +32,5 @@ test('markup in a script name is shown as text', async ({ page }) => {
     const name = '<img src=q onerror="window.__xss=1">.ps1';
     await open(page, { scripts: [name], files: { [name]: 'body' } });
     await expect(editor(page)).toHaveValue('body');
-    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });

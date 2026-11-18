@@ -32,14 +32,9 @@
         },
         async connected() {
             const t = this;
-            await whenProxyReady();
-            let hasSecurityKey = await webui.proxy.hasSecurityKey(handleError);
-            if (hasSecurityKey) {
-                t._del.classList.remove('hidden');
-            } else {
-                t._del.classList.add('hidden');
-            }
+            // The buttons work from the start, so a click made before the backend has answered is not lost.
             t._del.addEventListener('click', webui.eventSoloProcess(async _ => {
+                await whenProxyReady();
                 // Saved data cannot be read without this key, so make sure this was intended.
                 webui.dialog.confirm('Delete your security key? Your saved projects and variables cannot be read again unless you re-enter this exact key.', async () => {
                     let result = await webui.proxy.deleteSecurityKey(handleError);
@@ -51,6 +46,7 @@
                 });
             }, handleError));
             t._sav.addEventListener('click', webui.eventSoloProcess(async _ => {
+                await whenProxyReady();
                 let secKey = `${t._input.value}`.trim();
                 if (secKey.length < 20) {
                     t._alert.setValue({ text: 'Security key must be at least 20 characters in length.', theme: 'danger' });
@@ -67,6 +63,13 @@
             }, handleError));
             function handleError(ex) {
                 t._alert.setValue({ text: ex, theme: 'danger' });
+            }
+            await whenProxyReady();
+            let hasSecurityKey = await webui.proxy.hasSecurityKey(handleError);
+            if (hasSecurityKey) {
+                t._del.classList.remove('hidden');
+            } else {
+                t._del.classList.add('hidden');
             }
         },
         disconnected() { },

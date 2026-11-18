@@ -10,7 +10,7 @@ test('with no project it only saves app data', async ({ page }) => {
     await openApp(page, { project: null });
     await page.locator('app-save-button').click();
     await expect.poll(async () => (await calls(page, 'save_app_data')).length).toBeGreaterThan(0);
-    expect(await calls(page, 'save_project_data')).toEqual([]);
+    await expect.poll(() => calls(page, 'save_project_data')).toEqual([]);
 });
 test('its icon has the backing and border of the other header buttons', async ({ page }) => {
     await openApp(page);

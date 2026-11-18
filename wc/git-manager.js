@@ -717,7 +717,14 @@
             }
             const origin = currentOrigin();
             if (jobFor(origin.path, repo)) return;
-            const files = t._files.filter(item => item.isIncluded).map(item => item.fileName);
+            // The files have not loaded yet when Commit is clicked straight after the page opens or another repo is chosen,
+            // and the list still showing belongs to the repo chosen before.
+            if (t._filesRepo !== repo) {
+                t.setAlert('The changes are still loading. Commit again once they are listed.', 'warning');
+                return;
+            }
+            const listed = t._files || [];
+            const files = listed.filter(item => item.isIncluded).map(item => item.fileName);
             if (files.length === 0) {
                 t.setAlert('Select at least one file to commit.', 'warning');
                 return;
@@ -733,7 +740,7 @@
                 repo,
                 message,
                 files,
-                excluded: t._files.filter(file => file.state === includeStates.exclude).map(file => file.fileName),
+                excluded: listed.filter(file => file.state === includeStates.exclude).map(file => file.fileName),
                 ignored: [...getIgnoredFiles()],
                 syncAfter: isOn(t._toggleSync),
                 script: script ? { path: script.path, content: buildBeforeCommitScript(script.path, script.parameters, script.values) } : null,
@@ -890,17 +897,17 @@
             if (!t._branchTable) return;
             let tableData = (t._branchList || []).map(b => {
                 let isCurrent = b.isCurrent;
-                // Branch names come from the remote, and can contain markup.
+                // Branch names come from the remote, and can contain markup, or a quote that would end an attribute.
                 let name = webui.escapeForHTML(b.name);
                 return {
                     ...b,
                     nameHtml: `${isCurrent ? '<webui-icon icon="star|fill|theme:warning" style="margin-right: 0.5rem;"></webui-icon>' : ''}${name}`,
                     actionsHtml: `
                         <webui-flex gap="0.5rem" justify="right" align="center">
-                            ${!isCurrent ? `<webui-button theme="info" class="btn-switch" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Switch</webui-button>` : `<span class="badge" style="background: var(--color-success); color: var(--color-success-offset); font-size: 0.85rem; font-weight: bold;">Active</span>`}
-                            <webui-button theme="secondary" class="btn-new" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">New</webui-button>
-                            ${!isCurrent ? `<webui-button theme="warning" class="btn-merge" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Merge</webui-button>` : ''}
-                            ${!isCurrent ? `<webui-button theme="danger" class="btn-delete" data-branch="${b.name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Delete</webui-button>` : ''}
+                            ${!isCurrent ? `<webui-button theme="info" class="btn-switch" data-branch="${name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Switch</webui-button>` : `<span class="badge" style="background: var(--color-success); color: var(--color-success-offset); font-size: 0.85rem; font-weight: bold;">Active</span>`}
+                            <webui-button theme="secondary" class="btn-new" data-branch="${name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">New</webui-button>
+                            ${!isCurrent ? `<webui-button theme="warning" class="btn-merge" data-branch="${name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Merge</webui-button>` : ''}
+                            ${!isCurrent ? `<webui-button theme="danger" class="btn-delete" data-branch="${name}" style="padding: 0.25rem 0.5rem; min-height: unset; font-size: 0.85rem;">Delete</webui-button>` : ''}
                         </webui-flex>
                     `
                 };
@@ -1128,7 +1135,9 @@
             t._renderFrame.hidden = !preview || icon;
             t._iconPreview.hidden = !icon;
             if (!preview) {
-                t._renderFrame.removeAttribute('srcdoc');
+                // The hidden frame keeps its page. Emptying it loads a blank page, and when the next file is drawn
+                // straight after, as when moving between two files that can be, that load can finish last and
+                // leave the preview blank.
                 t._iconPreview.replaceChildren();
                 return;
             }
@@ -1198,6 +1207,7 @@
             t._files = changes
                 .filter(line => line && line.length >= 3)
                 .map(line => parseChange(line, repo));
+            t._filesRepo = repo;
             t._files.forEach(details => {
                 if (ignoredFiles.has(`${details.repo}/${details.fileName}`)) {
                     details.state = includeStates.ignore;

@@ -1,19 +1,19 @@
-import { test, expect, openApp, calls, onCommand, PROJECT } from '../support/app.mjs';
+import { test, expect, openApp, switchProject, calls, callOrder, onCommand, PROJECT } from '../support/app.mjs';
 import { installBackend } from '../support/backend.mjs';
 
 test('an open project loads and its saved page is restored', async ({ page }) => {
     await openApp(page, { currentPage: '/about' });
     await expect.poll(() => page.evaluate(() => location.pathname)).toBe('/about');
-    expect((await calls(page, 'get_project_data'))[0].project.path).toBe(PROJECT.path);
+    await expect.poll(async () => (await calls(page, 'get_project_data'))[0]?.project.path).toBe(PROJECT.path);
 });
 test('with no project, nothing tries to load one', async ({ page }) => {
     await openApp(page, { project: null });
-    expect(await calls(page, 'get_project_data')).toEqual([]);
-    expect(await page.evaluate(() => webui.proxy.projects.isLoaded)).toBe(false);
+    await expect.poll(() => calls(page, 'get_project_data')).toEqual([]);
+    await expect.poll(() => page.evaluate(() => webui.proxy.projects.isLoaded)).toBe(false);
 });
 test('the app version comes from the backend', async ({ page }) => {
     await openApp(page);
-    expect(await page.evaluate(() => webui.getData('app-version'))).toBe('v1.2.3');
+    await expect.poll(() => page.evaluate(() => webui.getData('app-version'))).toBe('v1.2.3');
 });
 test('old terminal state and stray values are removed from saved app data', async ({ page }) => {
     await openApp(page, { appData: { 'app-terminal-state': { terminals: {} }, stray: 'x', kept_var: 'y' }, appVariables: ['kept_var|text|'] });
@@ -24,15 +24,19 @@ test('old terminal state and stray values are removed from saved app data', asyn
     await expect.poll(async () => (await calls(page, 'save_app_data')).length).toBeGreaterThan(0);
 });
 test('a startup failure is reported once instead of retrying forever', async ({ page }) => {
+    await page.clock.install();
     await installBackend(page, {});
     await page.addInitScript(() => {
         window.__backend.handlers.get_app_data = () => { throw 'State failure'; };
     });
     await page.goto('/');
     const attempts = () => page.evaluate(() => window.__backend.calls.filter(call => call.command === 'get_app_data').length);
-    await expect.poll(attempts).toBeGreaterThan(0);
-    await page.waitForTimeout(500);
-    expect(await attempts()).toBe(1);
+    const reports = page.locator('.webui-alerts-popup webui-alert').filter({ hasText: 'State failure' });
+    await expect(reports).toHaveCount(1);
+    // A retry would come from a timer, so let a minute of them run.
+    await page.clock.runFor(60000);
+    await expect.poll(attempts).toBe(1);
+    await expect(reports).toHaveCount(1);
 });
 test('the app starts even when its loading dialog cannot open', async ({ page }) => {
     // Web UI versions whose webui.dialog threw until its dialog element was ready, which a busy machine could reach first.
@@ -53,8 +57,8 @@ test('the app starts even when its loading dialog cannot open', async ({ page })
         await route.fulfill({ response, body });
     });
     await openApp(page);
-    expect(await page.evaluate(() => webui.dialog.toString())).toContain('webuiDialog._handler is not a function');
-    expect(await page.evaluate(() => typeof webui.proxy.projects)).toBe('object');
+    await expect.poll(() => page.evaluate(() => webui.dialog.toString())).toContain('webuiDialog._handler is not a function');
+    await expect.poll(() => page.evaluate(() => typeof webui.proxy.projects)).toBe('object');
 });
 test('a project that fails to load can be selected again', async ({ page }) => {
     await openApp(page, { project: null });
@@ -63,7 +67,8 @@ test('a project that fails to load can be selected again', async ({ page }) => {
     await expect.poll(async () => (await calls(page, 'get_project_data')).length).toBe(1);
     await onCommand(page, 'get_project_data', ({ project }) => ({ id: 'other', path: project.path, currentPage: '/', docs: [], navigation: [], variables: [], data: {} }));
     await page.evaluate(() => webui.setData('app-current-project', null));
-    await page.waitForTimeout(100);
+    // The project is closed before it is selected again.
+    await expect.poll(async () => (await calls(page, 'clear_current_project')).length).toBe(1);
     await page.evaluate(() => webui.setData('app-current-project', { value: '/other', display: 'Other' }));
     await expect.poll(() => page.evaluate(() => webui.proxy.projects.isLoaded)).toBe(true);
 });
@@ -71,15 +76,16 @@ test('clearing the current project closes it in the backend', async ({ page }) =
     await openApp(page);
     await page.evaluate(() => webui.setData('app-current-project', null));
     await expect.poll(async () => (await calls(page, 'clear_current_project')).length).toBe(1);
-    expect(await page.evaluate(() => webui.proxy.projects.isLoaded)).toBe(false);
+    await expect.poll(() => page.evaluate(() => webui.proxy.projects.isLoaded)).toBe(false);
 });
 test('switching projects saves the previous one first', async ({ page }) => {
     await openApp(page);
     await onCommand(page, 'get_project_data', ({ project }) => ({ id: 'two', path: project.path, currentPage: '/', docs: [], navigation: [], variables: [], data: {} }));
     await page.evaluate(() => webui.setData('app-current-project', { value: '/two', display: 'Two' }));
     await expect.poll(() => page.evaluate(() => webui.projectData.id)).toBe('two');
-    const saved = await calls(page, 'save_project_data');
-    expect(saved.at(-1).data.id).toBe('project-id');
+    const order = await callOrder(page, 'save_project_data', 'get_project_data');
+    const loaded = order.findIndex(call => call.command === 'get_project_data' && call.args.project.path === '/two');
+    expect(order.slice(0, loaded).some(call => call.command === 'save_project_data' && call.args.data.id === 'project-id')).toBe(true);
 });
 test('runWhenLoaded waits for a project, and runs at once when one is open', async ({ page }) => {
     await openApp(page, { project: null });
@@ -87,16 +93,16 @@ test('runWhenLoaded waits for a project, and runs at once when one is open', asy
         window.__ran = [];
         webui.proxy.projects.runWhenLoaded(() => window.__ran.push('first'));
     });
-    expect(await page.evaluate(() => window.__ran)).toEqual([]);
+    await expect.poll(() => page.evaluate(() => window.__ran)).toEqual([]);
     await onCommand(page, 'get_project_data', ({ project }) => ({ id: 'one', path: project.path, currentPage: '/', docs: [], navigation: [], variables: [], data: {} }));
     await page.evaluate(() => webui.setData('app-current-project', { value: '/repo', display: 'Repo' }));
     await expect.poll(() => page.evaluate(() => window.__ran)).toEqual(['first']);
     await page.evaluate(() => webui.proxy.projects.runWhenLoaded(() => window.__ran.push('second')));
-    expect(await page.evaluate(() => window.__ran)).toEqual(['first', 'second']);
+    await expect.poll(() => page.evaluate(() => window.__ran)).toEqual(['first', 'second']);
 });
 test('components wait for the backend however long the app takes to start', async ({ page }) => {
     // webui.wait gives up after about 10 seconds, so components that used it ran on without webui.proxy and threw.
-    test.setTimeout(60000);
+    await page.clock.install();
     await openApp(page, { projects: [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }] });
     await page.evaluate(() => {
         // As on a slow start, webui.proxy does not exist yet when the component loads.
@@ -106,7 +112,9 @@ test('components wait for the backend however long the app takes to start', asyn
         setTimeout(() => { webui.proxy = proxy; }, 11000);
         document.body.appendChild(document.createElement('app-project-dropdown'));
     });
-    await expect.poll(() => page.evaluate(() => (webui.getData('app-projects') || []).length), { timeout: 20000 }).toBe(2);
+    // The page's clock is moved past the 11 seconds, rather than waiting for them.
+    await page.clock.runFor(12000);
+    await expect.poll(() => page.evaluate(() => (webui.getData('app-projects') || []).length)).toBe(2);
 });
 test('the right panel can be resized and closed, and its width is remembered', async ({ page }) => {
     await page.setViewportSize({ width: 1300, height: 800 });
@@ -115,14 +123,10 @@ test('the right panel can be resized and closed, and its width is remembered', a
     await page.evaluate(() => document.querySelector('webui-drawer.shared').setAttribute('docked', 'true'));
     const handle = panel.locator('.resize');
     await expect(handle).toBeVisible();
-    // Docking slides the panel into place, so wait for it to stop moving.
-    let last;
-    await expect.poll(async () => {
-        const box = JSON.stringify(await panel.boundingBox());
-        const settled = box === last;
-        last = box;
-        return settled;
-    }, { intervals: [100] }).toBe(true);
+    // Docking slides the panel into place, so wait until nothing in it is still animating, two frames after the last check.
+    await expect.poll(() => panel.evaluate(el => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
+        resolve(el.getAnimations({ subtree: true }).filter(animation => animation.playState !== 'finished').length);
+    }))))).toBe(0);
     const savedWidth = () => panel.evaluate(el => parseInt(el.getAttribute('width') || '0', 10));
     const before = await savedWidth();
     // The handle's place is only used to drag it, as a person would.
@@ -134,9 +138,26 @@ test('the right panel can be resized and closed, and its width is remembered', a
     // Dragging the handle out makes the panel wider, and the panel records its new width.
     await expect.poll(savedWidth).toBeGreaterThan(before);
     // The width is one of the attributes Web UI saves for the panel.
-    expect(await panel.evaluate(el => el.dataset.state.split('|'))).toContain('width');
+    await expect.poll(() => panel.evaluate(el => el.dataset.state.split('|'))).toContain('width');
     // A real click, which also shows the page's Help button has moved up out of the panel's footer.
     await panel.locator('[slot="footer"] .drawer-close').click();
     await expect(panel).not.toHaveAttribute('docked');
     await expect(panel).not.toHaveClass(/open/);
+});
+test('the page a project reload passes through is never kept as the project\'s current page', async ({ page }) => {
+    const projects = [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }];
+    await openApp(page, { projects });
+    await page.evaluate(() => {
+        // The current page each time the app goes to save the project.
+        window.__currentPages = [];
+        const sync = webui.proxy.syncProjectData;
+        webui.proxy.syncProjectData = function (...args) {
+            window.__currentPages.push(webui.projectData.currentPage);
+            return sync.apply(this, args);
+        };
+    });
+    await switchProject(page, projects[1]);
+    // The reload went through, since the page it ended on was kept.
+    await expect.poll(() => page.evaluate(() => window.__currentPages)).toContain('/');
+    expect(await page.evaluate(() => window.__currentPages.filter(path => path.includes('_reloading')))).toEqual([]);
 });

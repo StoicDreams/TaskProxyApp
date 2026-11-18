@@ -26,7 +26,7 @@ test('clicking an item reports it, and the first item is selected on build', asy
         document.addEventListener('nav-preview-click', ev => window.__clicked.push(ev.detail.name), true);
     });
     await expect.poll(() => page.evaluate(() => window.__clicked.length)).toBeGreaterThanOrEqual(0);
-    await el.locator('webui-nav-link[name="Three"]').click({ force: true });
+    await el.locator('webui-nav-link[name="Three"]').click();
     await expect.poll(() => page.evaluate(() => window.__clicked.at(-1))).toBe('Three');
 });
 test('renaming through the reported item updates the link', async ({ page }) => {
@@ -34,7 +34,7 @@ test('renaming through the reported item updates the link', async ({ page }) => 
     await page.evaluate(() => {
         document.addEventListener('nav-preview-click', ev => { window.__item = ev.detail; }, true);
     });
-    await el.locator('webui-nav-link[name="One"]').click({ force: true });
+    await el.locator('webui-nav-link[name="One"]').click();
     await page.evaluate(() => { window.__item.name = 'Renamed'; });
     await expect(el.locator('webui-nav-link[name="Renamed"]')).toHaveCount(1);
 });

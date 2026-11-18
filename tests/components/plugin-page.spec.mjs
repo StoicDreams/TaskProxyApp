@@ -53,14 +53,14 @@ test('each kind of node is drawn, and plugin text is never markup', async ({ pag
     await expect(view.locator('webui-alert')).toContainText('Heads up');
     await expect(view.locator('.plugin-empty')).toHaveText('Nothing here');
     await expect(view).toContainText('cannot show "somethingNewer"');
-    expect(await page.evaluate(() => window.__hacked)).toBeUndefined();
+    await expect.poll(() => page.evaluate(() => window.__hacked)).toBeUndefined();
 });
 
 test('the page is titled from the manifest, and gets the address params', async ({ page }) => {
     await openPlugin(page, text('Item page'), { pluginPages: { 'test/item': text('Item page') } }, '/plugin/test/item?key=P-1&view=team');
     await expect(page.locator('header h1')).toHaveText('Test Plugin');
     await expect(page.locator('header h2')).toHaveText('Item');
-    expect((await calls(page, 'plugin_render')).at(-1)).toEqual({ id: 'test', page: 'item', params: { key: 'P-1', view: 'team' } });
+    await expect.poll(() => calls(page, 'plugin_render')).toContainEqual({ id: 'test', page: 'item', params: { key: 'P-1', view: 'team' } });
 });
 
 test('a table row runs its action, and navigating opens the plugin page with params', async ({ page }) => {
@@ -121,7 +121,7 @@ test.describe('a page beside another', () => {
         await expect(split(page)).toHaveAttribute('ratio', '0.5');
         await expect(split(page)).toHaveAttribute('start-label', 'Test Home');
         await expect(split(page)).toHaveAttribute('end-label', 'Item');
-        expect((await calls(page, 'plugin_render')).at(-1)).toEqual({ id: 'test', page: 'item', params: { key: 'P-1' } });
+        await expect.poll(() => calls(page, 'plugin_render')).toContainEqual({ id: 'test', page: 'item', params: { key: 'P-1' } });
         // Another issue from the list replaces the one beside it.
         await link(page, 'P-2').click();
         await expect(side(page)).toContainText('Item P-2');
@@ -278,8 +278,8 @@ test('a form with changed shows Refresh until a field changes, then Search, and 
     const renders = (await calls(page, 'plugin_render')).length;
     await button.click();
     await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBe(renders + 1);
-    expect(await page.evaluate(() => history.length)).toBe(history);
-    expect((await calls(page, 'plugin_action')).at(-1).request.form).toEqual({ jql: 'order by key', 'f.type': [] });
+    await expect.poll(() => page.evaluate(() => history.length)).toBe(history);
+    await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.form)).toEqual([{ jql: 'order by key', 'f.type': [] }]);
 });
 
 test.describe('pages drawn before', () => {
@@ -311,13 +311,24 @@ test.describe('pages drawn before', () => {
             await expect(view).toContainText('The item');
         };
         await away();
+        // The plugin's answer for the list is held until the list has been drawn from the cache and marked.
+        const renders = (await calls(page, 'plugin_render')).filter(call => call.page === 'home').length;
+        await page.evaluate(() => {
+            const render = window.__backend.handlers.plugin_render;
+            const held = new Promise(resolve => { window.__answerList = resolve; });
+            window.__backend.handlers.plugin_render = async args => {
+                if (args.page === 'home') await held;
+                return render(args);
+            };
+        });
         await page.goBack();
         await expect(view).toContainText('The list');
-        // Marked once drawn from the cache, so drawing it again would lose the mark.
+        // Drawing it again would lose the mark.
         await view.locator('.plugin-text').evaluate(node => { node.dataset.drawn = 'cached'; });
-        const renders = (await calls(page, 'plugin_render')).length;
-        await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBeGreaterThan(renders - 1);
-        await expect.poll(async () => (await calls(page, 'plugin_render')).at(-1)?.page).toBe('home');
+        // Going Back can ask for the page more than once. Every answer is held, and each is dealt with as soon as it
+        // is given, before the page answers the test again.
+        await expect.poll(async () => (await calls(page, 'plugin_render')).filter(call => call.page === 'home').length).toBeGreaterThan(renders);
+        await page.evaluate(() => window.__answerList());
         await expect(view.locator('.plugin-text[data-drawn="cached"]')).toHaveText('The list');
         await away();
         await onCommand(page, 'plugin_render', () => { throw 'Jira could not be reached'; });
@@ -344,7 +355,7 @@ test('a form sends its values, and a required field must be filled first', async
     const form = page.locator('app-plugin-page form');
     await form.locator('webui-button', { hasText: 'Create' }).click();
     await expect.poll(() => alerts(page)).toContainEqual('Summary is required.');
-    expect(await calls(page, 'plugin_action')).toEqual([]);
+    await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
     await form.locator('webui-input-text input').fill('New thing');
     await form.getByLabel('Web').check();
     await form.getByLabel('Assign to me').uncheck();
@@ -389,7 +400,7 @@ test('a button with on is a switch that shows its state and runs its action', as
     await expect(view.locator('webui-toggle-icon')).toHaveCount(2);
     const renders = (await calls(page, 'plugin_render')).length;
     await split.click();
-    expect((await calls(page, 'plugin_action')).at(-1).request.action).toBe('split');
+    await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.action)).toEqual(['split']);
     await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBe(renders + 1);
 });
 test('an action that asks first only runs when confirmed', async ({ page }) => {
@@ -400,7 +411,7 @@ test('an action that asks first only runs when confirmed', async ({ page }) => {
     await expect(openDialog(page)).toContainText('Delete <b>it</b>?');
     await dialogButton(page, 'Cancel').click();
     await expect(openDialog(page)).toHaveCount(0);
-    expect(await calls(page, 'plugin_action')).toEqual([]);
+    await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
     await button.click();
     await dialogButton(page, 'Confirm').click();
     await expect.poll(async () => (await calls(page, 'plugin_action')).length).toBe(1);
@@ -417,8 +428,8 @@ test('host actions run in Task Proxy, not the plugin', async ({ page }) => {
     await view.locator('webui-button', { hasText: 'Create branch' }).click();
     // Alerts are drawn as HTML, so the backend's message is escaped.
     await expect.poll(() => alerts(page)).toContainEqual('Branch &#39;P-1-fix&#39; created.');
-    expect(await calls(page, 'plugin_host_action')).toEqual([{ id: 'test', action: { type: 'git.createBranch', name: 'P-1-fix' } }]);
-    expect(await calls(page, 'plugin_action')).toEqual([]);
+    await expect.poll(() => calls(page, 'plugin_host_action')).toEqual([{ id: 'test', action: { type: 'git.createBranch', name: 'P-1-fix' } }]);
+    await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
     await view.locator('webui-button', { hasText: 'Settings' }).click();
     // The Plugins drawer opens on this plugin.
     await expect(page.locator('webui-drawer.shared app-plugin-manager [data-plugin="test"]')).toHaveClass(/plugin-highlight/);
@@ -521,7 +532,7 @@ test.describe('editable tables', () => {
         await expect(rows).toHaveCount(5);
         // Each row carries the theme the plugin gave it, and a theme the app doesn't know is dropped. How a theme and
         // the alternating shades look is checked by eye.
-        expect(await rows.evaluateAll(trs => trs.map(tr => tr.getAttribute('data-theme')))).toEqual([null, null, 'danger', 'danger', null]);
+        await expect.poll(() => rows.evaluateAll(trs => trs.map(tr => tr.getAttribute('data-theme')))).toEqual([null, null, 'danger', 'danger', null]);
         const clips = page.locator('app-plugin-page .plugin-clip');
         await expect(clips.nth(2)).toHaveAttribute('data-theme', 'danger');
         await expect(clips.nth(0)).toHaveAttribute('data-theme', 'success');
@@ -542,7 +553,7 @@ test.describe('editable tables', () => {
                 'test/cell.set': { refresh: true, message: { text: 'Status changed on P-1.', theme: 'success' } },
             },
         });
-        expect(await calls(page, 'plugin_action')).toEqual([]);
+        await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
         await page.locator('app-plugin-page .plugin-select').click();
         const menu = page.locator('.plugin-menu');
         await expect(menu.getByRole('option')).toHaveText(['In Progress', 'Done']);
@@ -592,10 +603,9 @@ test.describe('forms with panels and dialogs', () => {
         await buttons.nth(1).click();
         await expect(jql).toBeVisible();
         await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'true');
-        expect(await calls(page, 'plugin_action')).toEqual([]);
+        await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
         await buttons.nth(2).click();
-        const [request] = await calls(page, 'plugin_action');
-        expect(request.request.form).toEqual({ 'f.status': ['To Do'], jql: 'project = P' });
+        await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.form)).toEqual([{ 'f.status': ['To Do'], jql: 'project = P' }]);
         // The panel stays as the user left it.
         await page.evaluate(() => document.querySelector('app-plugin-page').load());
         await expect(view.locator('.plugin-panel[data-panel="jql"]')).toBeVisible();
@@ -658,11 +668,13 @@ test.describe('forms with panels and dialogs', () => {
         await expect(box).toHaveValue('Thanks @Sara Kim ');
         await expect(menu).toHaveCount(0);
         await box.pressSequentially('can you check?');
+        await expect(box).toHaveValue('Thanks @Sara Kim can you check?');
+        await page.locator('app-plugin-page webui-button', { hasText: 'Comment' }).click();
+        const sent = async () => (await calls(page, 'plugin_action')).find(call => call.request.action === 'comment')?.request.form;
+        await expect.poll(sent).toEqual({ body: 'Thanks @Sara Kim can you check?', 'body.mentions': { '@Sara Kim': 'sara-2' } });
+        // The text typed after the mention asked for no more suggestions.
         const suggests = (await calls(page, 'plugin_action')).filter(call => call.request.action === 'users.suggest');
         expect(suggests.at(-1).request.params).toEqual({ key: 'P-1', query: 'sar' });
-        await page.locator('app-plugin-page webui-button', { hasText: 'Comment' }).click();
-        const sent = (await calls(page, 'plugin_action')).find(call => call.request.action === 'comment');
-        expect(sent.request.form).toEqual({ body: 'Thanks @Sara Kim can you check?', 'body.mentions': { '@Sara Kim': 'sara-2' } });
     });
 });
 
@@ -675,6 +687,9 @@ test.describe('spec 0.1.2', () => {
     const orders = async page => (await calls(page, 'plugin_action')).filter(call => call.request.action === 'order').map(call => call.request.form.order);
 
     test('a reorder list is put in order by dragging an item, and sends the new order once', async ({ page }) => {
+        // The drag starts after the mouse is held a moment, and the order is sent a moment after it settles, so the
+        // test moves the page's clock past each.
+        await page.clock.install();
         await openPlugin(page, list, { pluginActions: { 'test/order': { refresh: true }, 'test/remove': {} } });
         const rows = page.locator('app-plugin-page .plugin-reorder-item');
         await expect(rows).toHaveCount(3);
@@ -684,25 +699,36 @@ test.describe('spec 0.1.2', () => {
         const to = await rows.nth(0).boundingBox();
         await page.mouse.move(from.x + 10, from.y + from.height / 2);
         await page.mouse.down();
-        await page.waitForTimeout(300);
+        await page.clock.runFor(300);
         await page.mouse.move(from.x + 10, to.y + 2, { steps: 8 });
         await page.mouse.up();
+        await expect(rows.first()).toContainText('Parent story points');
+        await page.clock.runFor(1000);
         await expect.poll(() => orders(page)).toEqual([['id-2', 'id-0', 'id-1']]);
         // A click on an item's own link still runs it, and is not a move.
         await rows.nth(1).locator('a', { hasText: '✕' }).click();
         await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.action)).toContain('remove');
-        expect(await orders(page)).toHaveLength(1);
+        // Had the click moved anything, its order would be sent by now.
+        await page.clock.runFor(1000);
+        await expect.poll(() => orders(page)).toHaveLength(1);
     });
 
     test('Alt+Down moves an item from the keyboard, and keeps focus on it after the plugin redraws', async ({ page }) => {
+        await page.clock.install();
         await openPlugin(page, list, { pluginActions: { 'test/order': { refresh: true } } });
         const handle = page.locator('app-plugin-page .plugin-reorder-item[data-id="id-0"] .plugin-reorder-handle');
         await expect(handle).toHaveAttribute('aria-label', /Key\. Drag, or press Alt\+Up or Alt\+Down/);
         await handle.focus();
+        // The page's clock stops, so both moves are made within the pause the app waits for, however slow the machine.
+        await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
         await page.keyboard.press('Alt+ArrowDown');
         await page.keyboard.press('Alt+ArrowDown');
-        // Quick moves are sent together.
+        await expect(page.locator('app-plugin-page .plugin-reorder-item').last()).toHaveAttribute('data-id', 'id-0');
+        await expect.poll(() => orders(page)).toEqual([]);
+        // Quick moves are sent together, once the pause has passed.
+        await page.clock.runFor(1000);
         await expect.poll(() => orders(page)).toEqual([['id-1', 'id-2', 'id-0']]);
+        await page.clock.resume();
         await expect.poll(() => page.evaluate(() => document.activeElement?.closest?.('.plugin-reorder-item')?.dataset.id)).toBe('id-0');
     });
 
@@ -715,7 +741,7 @@ test.describe('spec 0.1.2', () => {
         const form = page.locator('app-plugin-page form.plugin-form-row');
         await expect(form.locator('webui-dropdown')).toHaveCount(3);
         // The three fields and the button are the row's own items, in order. How the row looks is checked by eye.
-        expect(await form.locator(':scope > *').evaluateAll(nodes => nodes.map(node => node.localName))).toEqual(['webui-dropdown', 'webui-dropdown', 'webui-dropdown', 'webui-flex']);
+        await expect.poll(() => form.locator(':scope > *').evaluateAll(nodes => nodes.map(node => node.localName))).toEqual(['webui-dropdown', 'webui-dropdown', 'webui-dropdown', 'webui-flex']);
         await expect(form.locator(':scope > webui-flex webui-button', { hasText: 'Add' })).toHaveCount(1);
         await form.locator('webui-button', { hasText: 'Add' }).click();
         await expect.poll(async () => (await calls(page, 'plugin_action'))[0]?.request.form).toEqual({ layer0: '', layer1: '', layer2: '' });
@@ -824,6 +850,6 @@ test.describe('spec 0.1.3', () => {
         await form.locator('webui-button', { hasText: 'Create branch' }).click();
         // Only the host action's own fields are filled, and the plugin is not called.
         await expect.poll(() => calls(page, 'plugin_host_action')).toEqual([{ id: 'test', action: { type: 'git.createBranch', name: 'feature/PROJ-1_fix-login' } }]);
-        expect(await calls(page, 'plugin_action')).toEqual([]);
+        await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
     });
 });

@@ -7,7 +7,7 @@ test('the Plugins button sits beside Icons & Emojis and opens the plugin manager
     await openApp(page, { plugins });
     const button = page.getByRole('button', { name: 'Plugins', exact: true });
     await expect(button).toHaveCount(1);
-    expect(await page.evaluate(() => document.querySelector('app-plugins-drawer').nextElementSibling.localName)).toBe('app-icon-drawer');
+    await expect.poll(() => page.evaluate(() => document.querySelector('app-plugins-drawer').nextElementSibling.localName)).toBe('app-icon-drawer');
     await button.click();
     const drawer = page.locator('webui-drawer.shared');
     await expect(drawer).toHaveClass(/open/);

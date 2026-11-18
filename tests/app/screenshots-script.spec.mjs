@@ -95,17 +95,17 @@ Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
             writeFileSync(join(modules, 'TaskProxy', 'TaskProxy.psm1'), fakeModule);
         }
         // These tests can themselves run inside Task Proxy, whose real terminals they must never open.
+        // The background recording writes its own log to the temporary folder, so each test has its own.
+        const temp = join(project.parent, 'temp');
+        mkdirSync(temp);
         const result = pwsh(project.dir, join(project.dir, 'PowerShell', 'Publish.ps1'), args, {
-            PUBLISH_LOG: log, TASKPROXY_URL: '', TASKPROXY_RUN: '',
+            PUBLISH_LOG: log, TASKPROXY_URL: '', TASKPROXY_RUN: '', TMPDIR: temp, TEMP: temp, TMP: temp,
             PSModulePath: inTaskProxy ? modules : process.env.PSModulePath, ...env,
         });
-        return { ...result, log, ran: lines(log), project };
+        return { ...result, log, ran: lines(log), project, mediaLog: join(temp, 'taskproxy-website-media.log') };
     }
     // The background recording finishes after Publish, so its line is waited for.
-    const settled = async (result, count) => {
-        await expect.poll(() => lines(result.log).length, { timeout: 30000 }).toBe(count);
-        return lines(result.log);
-    };
+    const settled = (result, steps) => expect.poll(() => lines(result.log), { timeout: 30000 }).toEqual(steps);
 
     test('records the screenshots last, once everything else has passed, without Publish waiting for them', async () => {
         const result = publish([], { PUBLISH_DELAY: '3' });
@@ -113,7 +113,7 @@ Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
         expect(result.ran, 'Publish ended before the screenshots did').toEqual(['IncrementVersion', 'Minify']);
         expect(result.output).toContain('Recording in the background.');
         expect(result.output).toContain('Ready to commit.');
-        expect(await settled(result, 3)).toEqual(['IncrementVersion', 'Minify', 'screenshots']);
+        await settled(result, ['IncrementVersion', 'Minify', 'screenshots']);
     });
     test('run by Task Proxy, they record in its Website media terminal, replacing one still running', () => {
         const result = publish([], {}, { inTaskProxy: true });
@@ -137,13 +137,13 @@ Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
             expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
         }
     });
-    test('a failed step before them means no screenshots are taken', async () => {
+    test('a failed step before them means no screenshots are taken', () => {
         const result = publish([], { PUBLISH_FAIL: 'Minify' });
         expect(result.code).not.toBe(0);
         expect(result.output).not.toContain('Recording');
-        // Nothing was left to record later.
-        await new Promise(done => setTimeout(done, 1500));
-        expect(lines(result.log)).toEqual(['IncrementVersion', 'Minify']);
+        // Publish has ended, and it started no recording to run on after it: starting one creates its log.
+        expect(existsSync(result.mediaLog)).toBe(false);
+        expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
     });
     test('with -WaitForScreenshots, failed screenshots make Publish fail', () => {
         const result = publish(['-WaitForScreenshots'], { PUBLISH_FAIL: 'screenshots' });

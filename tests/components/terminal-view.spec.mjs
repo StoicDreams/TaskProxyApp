@@ -49,8 +49,9 @@ test('output kept for a terminal is shown when it is attached, and only once', a
     await view(page, { output: ['earlier output\r\n'], outputSize: 16 });
     await expect.poll(() => screen(page)).toBe('earlier output');
     await page.evaluate(() => document.querySelector('#view').attach('a.ps1'));
-    await page.waitForTimeout(100);
-    expect(await screen(page)).toBe('earlier output');
+    // The terminal writes in order, so output shown twice would be above what is written next.
+    await write(page, 'next\r\n');
+    await expect.poll(() => screen(page)).toBe('earlier output\nnext');
 });
 test('output for other terminals and projects is left out', async ({ page }) => {
     await view(page);
@@ -82,15 +83,17 @@ test('Ctrl+C without a selection stops the script, as in a terminal', async ({ p
     await page.keyboard.press('Control+C');
     await expect.poll(() => sent(page)).toBe('\x03');
     // A script stopped this way failed, even when PowerShell exits with 0, so a commit waiting on it does not go ahead.
-    expect(await page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].stopped)).toBe(true);
+    await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].stopped)).toBe(true);
     await runEnds(page, { projectId: 'project-id', terminalId: 'a.ps1', code: 0 });
     await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.runStatus(webui.proxy.terminalHelpers.getState().terminals['a.ps1'])?.state)).toBe('Failed');
 });
 test('replayed questions to the terminal are not answered into the script', async ({ page }) => {
     // PowerShell asks where the cursor is while waiting at a prompt. Live, the terminal answers it.
     await view(page, { output: ['Name: \x1b[6n'], outputSize: 11 });
-    await page.waitForTimeout(200);
-    expect(await calls(page, 'write_terminal_input')).toEqual([]);
+    // The replay has been written, question included, once the view stops replaying.
+    await expect.poll(() => screen(page)).toBe('Name: ');
+    await expect.poll(() => page.evaluate(() => document.querySelector('#view')._replaying)).toBe(false);
+    await expect.poll(() => calls(page, 'write_terminal_input')).toEqual([]);
     await write(page, '\x1b[6n');
     await expect.poll(() => sent(page)).toMatch(/^\x1b\[\d+;\d+R$/);
 });
@@ -104,25 +107,29 @@ test('typing does not reach a finished script, or one without a terminal', async
         term.interactive = false;
     });
     await page.keyboard.type('also ignored');
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'write_terminal_input')).toEqual([]);
+    await expect.poll(() => calls(page, 'write_terminal_input')).toEqual([]);
+    // Keys arrive in the order they were typed, so one that is sent shows the earlier ones were dealt with, and dropped.
+    await page.evaluate(() => { webui.proxy.terminalHelpers.getState().terminals['a.ps1'].interactive = true; });
+    await page.keyboard.type('y');
+    await expect.poll(() => sent(page)).toBe('y');
 });
 test('the view reports its size, and a running script is told when it changes', async ({ page }) => {
     const el = await view(page);
     await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.viewSize?.cols)).toBeGreaterThan(40);
     const before = await page.evaluate(() => webui.proxy.terminalHelpers.viewSize);
     await el.evaluate(node => { node.style.width = '500px'; node.style.height = '200px'; });
-    await expect.poll(async () => (await calls(page, 'resize_terminal')).length).toBeGreaterThan(0);
-    const resized = (await calls(page, 'resize_terminal')).at(-1);
-    expect(resized.terminalId).toBe('a.ps1');
-    expect(resized.cols).toBeLessThan(before.cols);
-    expect(resized.rows).toBeLessThan(before.rows);
+    await expect.poll(async () => (await calls(page, 'resize_terminal'))
+        .some(resized => resized.terminalId === 'a.ps1' && resized.cols < before.cols && resized.rows < before.rows)).toBe(true);
 });
 test('a finished script is not told about size changes', async ({ page }) => {
     const el = await view(page, { status: 'Finished' });
+    const columns = () => page.evaluate(() => webui.proxy.terminalHelpers.viewSize?.cols);
+    await expect.poll(columns).toBeGreaterThan(40);
+    const before = await columns();
     await el.evaluate(node => { node.style.width = '500px'; });
-    await page.waitForTimeout(200);
-    expect(await calls(page, 'resize_terminal')).toEqual([]);
+    // The view has taken its new size, which is when it would tell a running script.
+    await expect.poll(columns).toBeLessThan(before);
+    await expect.poll(() => calls(page, 'resize_terminal')).toEqual([]);
 });
 test('a placeholder shows until there is output', async ({ page }) => {
     const el = await view(page);

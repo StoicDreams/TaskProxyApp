@@ -1,4 +1,5 @@
-import { test, expect, openApp, mount, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, mount, calls, dialogButton, openDialog } from '../support/app.mjs';
+import { alertPopup } from '../support/wait.mjs';
 
 async function runner(page, state = {}) {
     await openApp(page, state);
@@ -40,8 +41,8 @@ test('an empty script does not run', async ({ page }) => {
     const el = await runner(page);
     await setScript(el, 'a.ps1', '   ');
     await click(el, 'Run');
-    await page.waitForTimeout(100);
-    expect(await calls(page, 'spawn_script')).toEqual([]);
+    await expect(alertPopup(page, 'Script is empty.')).toHaveCount(1);
+    await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
 });
 test('a page script is never saved as a file, even with a dot in its name', async ({ page }) => {
     const el = await runner(page);
@@ -49,9 +50,11 @@ test('a page script is never saved as a file, even with a dot in its name', asyn
         await page.evaluate(name => webui.proxy.terminalHelpers.runScript(name, "$secret = 'injected'", [], false, false, true), name);
         await page.evaluate(name => window.__backend.runs.end({ projectId: 'project-id', terminalId: name, code: 0 }), name);
         await setScript(el, name, "$secret = 'injected'");
+        const started = (await calls(page, 'spawn_script')).length;
         await click(el, 'Run');
-        await page.waitForTimeout(100);
-        expect(await calls(page, 'save_project_file')).toEqual([]);
+        // A script file is saved before it starts, so once this has started it was not saved.
+        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(started + 1);
+        await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
     }
 });
 test('saving a page script asks for a file name instead', async ({ page }) => {
@@ -59,7 +62,7 @@ test('saving a page script asks for a file name instead', async ({ page }) => {
     await setScript(el, 'Repo_Page_Deploy v1.2', 'x');
     await click(el, 'Save');
     await expect(page.getByText('Save Script As')).toBeVisible();
-    expect(await calls(page, 'save_project_file')).toEqual([]);
+    await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
 });
 test('reset on the live terminal keeps it as the live terminal', async ({ page }) => {
     const el = await runner(page);
@@ -81,12 +84,11 @@ test('a script that fails to load cannot be saved over', async ({ page }) => {
     await el.evaluate(node => node.loadScript('missing.ps1'));
     await click(el, 'Save');
     await expect(page.getByText('Save Script As')).toBeVisible();
-    expect(await calls(page, 'save_project_file')).toEqual([]);
+    await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
 });
 test('an empty script file loads, and stays attached to its file', async ({ page }) => {
     const el = await runner(page, { files: { 'empty.ps1': '' } });
     await el.evaluate(node => node.loadScript('empty.ps1'));
-    await page.waitForTimeout(100);
     await el.locator('webui-input-message textarea').fill('new');
     await click(el, 'Save');
     await expect.poll(async () => (await calls(page, 'save_project_file')).length).toBe(1);
@@ -98,8 +100,8 @@ test('save as refuses a name already in use', async ({ page }) => {
     await click(el, 'Save As');
     await page.locator('webui-input-text[name="scriptName"] input').fill('taken');
     await dialogButton(page, 'Save').click();
-    await page.waitForTimeout(200);
-    expect(await calls(page, 'save_project_file')).toEqual([]);
+    await expect(openDialog(page).getByText('A script with that name already exists.')).toBeVisible();
+    await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
 });
 test('save as writes a new script', async ({ page }) => {
     const el = await runner(page);

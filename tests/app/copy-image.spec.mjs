@@ -43,7 +43,7 @@ test('right-clicking an image offers Copy image, which sends its pixels to Rust'
     await copy.click();
     await expect(copy).toHaveCount(0);
     await expect.poll(() => alerts(page)).toContain('Copied the image.');
-    expect(await calls(page, 'copy_image')).toHaveLength(1);
+    await expect.poll(() => calls(page, 'copy_image')).toHaveLength(1);
     const copied = await page.evaluate(async () => {
         const bitmap = await createImageBitmap(new Blob([new Uint8Array(window.__backend.clipboard.bytes)]));
         return [bitmap.width, bitmap.height];
@@ -58,7 +58,7 @@ test('an image from a website is downloaded by Rust, by its address', async ({ p
     await img.click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Copy image' }).click();
     await expect.poll(() => page.evaluate(() => window.__backend.clipboard)).toEqual({ url: 'https://images.example.com/shot.png' });
-    expect(await calls(page, 'copy_image')).toHaveLength(0);
+    await expect.poll(() => calls(page, 'copy_image')).toHaveLength(0);
 });
 
 test('Escape or a click elsewhere closes the menu without copying, and other right-clicks keep the usual menu', async ({ page }) => {
@@ -85,5 +85,5 @@ test('Escape or a click elsewhere closes the menu without copying, and other rig
     });
     expect(prevented).toEqual([false, false]);
     await expect(menu).toHaveCount(0);
-    expect(await calls(page, 'copy_image')).toHaveLength(0);
+    await expect.poll(() => calls(page, 'copy_image')).toHaveLength(0);
 });

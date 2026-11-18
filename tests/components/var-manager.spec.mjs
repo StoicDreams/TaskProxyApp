@@ -1,10 +1,12 @@
-import { test, expect, openApp, openPage, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, openPage, calls, dialogButton, openDialog } from '../support/app.mjs';
+import { alertPopup } from '../support/wait.mjs';
 
 const open = async page => {
     await page.locator('app-var-manager').click();
     await page.locator('#env-selector').waitFor({ state: 'attached' });
-    await page.locator('#var-project-list').waitFor({ state: 'attached' });
-    await page.waitForTimeout(150);
+    // The lists are filled in the same step that makes the drawer's controls work, and the drawer opens after it.
+    await page.locator('#var-project-list > *').first().waitFor({ state: 'attached' });
+    await expect(page.locator('webui-drawer.shared')).toHaveClass(/open/);
 };
 const selectEnv = (page, name) => page.locator('#env-selector').evaluate((el, name) => {
     el.value = name;
@@ -22,7 +24,7 @@ test('scope switches show on for a new install', async ({ page }) => {
     await openApp(page, { newInstall: true });
     await open(page);
     for (const key of ['app-env-page-enabled', 'app-env-project-enabled', 'app-env-global-enabled']) {
-        expect(await page.locator(`webui-toggle-icon[data-bind="${key}"]`).evaluate(el => el.value), key).toBe(true);
+        await expect.poll(() => page.locator(`webui-toggle-icon[data-bind="${key}"]`).evaluate(el => el.value), key).toBe(true);
     }
 });
 test('variable names from project files are shown as text', async ({ page }) => {
@@ -30,28 +32,39 @@ test('variable names from project files are shown as text', async ({ page }) => 
     await openApp(page, { variables: [`${name}|text|`], data: { [name]: 'v' } });
     await open(page);
     await expect(page.locator('#var-project-list span').first()).toHaveText(name);
-    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
     await expect(page.locator('#var-project-list img')).toHaveCount(0);
 });
 test('typing a project value updates the project and its environment', async ({ page }) => {
     await openApp(page, { variables: ['one|text|'] });
     await open(page);
     await page.locator('#var-project-list webui-input-text input').fill('typed');
-    expect(await page.evaluate(() => webui.getProjectData('one'))).toBe('typed');
-    expect(await page.evaluate(() => webui.projectData.data._environments[0].variables.one)).toBe('typed');
+    await expect.poll(() => page.evaluate(() => webui.getProjectData('one'))).toBe('typed');
+    await expect.poll(() => page.evaluate(() => webui.projectData.data._environments[0].variables.one)).toBe('typed');
     await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data.one)).toBe('typed');
 });
 test('typing a global value writes to disk once, after a pause', async ({ page }) => {
+    await page.clock.install();
     await openApp(page, { appVariables: ['two|text|'] });
     await open(page);
-    const before = (await calls(page, 'save_app_data')).length;
+    // The drawer selects its starting tab again a moment after it opens, which would undo choosing another before then.
+    await page.clock.runFor(1000);
     await page.locator('webui-tabs webui-button', { hasText: 'Global' }).click();
+    await expect(page.locator('#var-global-list webui-input-text input')).toBeEditable();
+    // The page's clock stops, so the pause after typing is as long as the test makes it.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
+    const saves = async () => (await calls(page, 'save_app_data')).map(call => call.data.data.two);
+    const before = await saves();
     await page.locator('#var-global-list webui-input-text input').pressSequentially('abcdef');
     await expect.poll(() => page.evaluate(() => webui.taskProxyData.data.two)).toBe('abcdef');
-    await expect.poll(async () => (await calls(page, 'save_app_data')).length).toBe(before + 1);
-    expect((await calls(page, 'save_app_data')).at(-1).data.data.two).toBe('abcdef');
+    await page.clock.runFor(400);
+    await expect.poll(saves).toEqual(before);
+    await page.clock.runFor(200);
+    await expect.poll(saves).toEqual([...before, 'abcdef']);
+    await page.clock.runFor(60000);
+    await expect.poll(saves).toEqual([...before, 'abcdef']);
     // The backend's copy stays current between saves, in case the app closes.
-    expect(await page.evaluate(() => window.__backend.appData.data.two)).toBe('abcdef');
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data.two)).toBe('abcdef');
 });
 test('adding a variable defines it, and duplicates are refused', async ({ page }) => {
     await openApp(page);
@@ -61,7 +74,8 @@ test('adding a variable defines it, and duplicates are refused', async ({ page }
     await expect.poll(() => page.evaluate(() => webui.projectData.variables)).toContain('new_one|text|');
     await page.locator('input#input-proj-var').fill('new_one');
     await page.locator('#btn-add-proj').click();
-    expect(await page.evaluate(() => webui.projectData.variables.filter(v => v.startsWith('new_one')))).toHaveLength(1);
+    await expect(alertPopup(page, 'Project variable already exists')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => webui.projectData.variables.filter(v => v.startsWith('new_one')))).toHaveLength(1);
 });
 test('deleting a project variable lets a global value of that name show through', async ({ page }) => {
     await openApp(page, { data: { shared: 'project' }, variables: ['shared|text|'], appData: { shared: 'global' }, appVariables: ['shared|text|'] });
@@ -69,7 +83,7 @@ test('deleting a project variable lets a global value of that name show through'
     await page.locator('#var-project-list webui-icon[title="Delete Variable"]').click();
     await dialogButton(page, 'Delete').click();
     await expect.poll(() => page.evaluate(() => webui.projectData.variables)).toEqual([]);
-    expect(await page.evaluate(() => webui.getData('shared'))).toBe('global');
+    await expect.poll(() => page.evaluate(() => webui.getData('shared'))).toBe('global');
 });
 
 test.describe('environments', () => {
@@ -78,15 +92,15 @@ test.describe('environments', () => {
         await openApp(page, { variables: ['key|text|'], data: { ...data, key: 'dev value' } });
         await open(page);
         await selectEnv(page, 'prod');
-        expect(await page.evaluate(() => webui.getProjectData('key'))).toBe('prod value');
-        expect(await page.evaluate(() => webui.projectData.data._activeEnvironment)).toBe('prod');
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('key'))).toBe('prod value');
+        await expect.poll(() => page.evaluate(() => webui.projectData.data._activeEnvironment)).toBe('prod');
     });
     test('switching does not delete the git token', async ({ page }) => {
         await openApp(page, { variables: ['git_pat|secret|', 'key|text|'], data: { ...data, git_pat: 'TOKEN' } });
         await open(page);
         await selectEnv(page, 'prod');
         await selectEnv(page, 'dev');
-        expect(await page.evaluate(() => webui.getProjectData('git_pat'))).toBe('TOKEN');
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('git_pat'))).toBe('TOKEN');
     });
     test('values set before environments existed survive switching away and back', async ({ page }) => {
         await openApp(page, { variables: ['old_key|text|'], data: { old_key: 'precious' } });
@@ -105,17 +119,17 @@ test.describe('environments', () => {
             const offered = el.value === 'other';
             el.value = current;
             return offered;
-        }), { timeout: 5000 }).toBe(true);
+        })).toBe(true);
         await selectEnv(page, 'other');
-        expect(await page.evaluate(() => webui.getProjectData('old_key'))).toBeUndefined();
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('old_key'))).toBeUndefined();
         await selectEnv(page, 'dev');
-        expect(await page.evaluate(() => webui.getProjectData('old_key'))).toBe('precious');
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('old_key'))).toBe('precious');
     });
     test('a value missing from the new environment falls back to global', async ({ page }) => {
         await openApp(page, { variables: ['shared|text|'], data: { ...envData([{ name: 'dev', variables: { shared: 'dev' } }, { name: 'empty', variables: {} }]), shared: 'dev' }, appData: { shared: 'global' }, appVariables: ['shared|text|'] });
         await open(page);
         await selectEnv(page, 'empty');
-        expect(await page.evaluate(() => webui.getData('shared'))).toBe('global');
+        await expect.poll(() => page.evaluate(() => webui.getData('shared'))).toBe('global');
     });
     test('environments can be added', async ({ page }) => {
         await openApp(page);
@@ -133,8 +147,8 @@ test.describe('environments', () => {
         await page.locator('#btn-manage-env').click();
         await page.locator('input[id^="new-env-input"]').fill('DEV');
         await page.locator('webui-button[id^="btn-add-env"]').click();
-        await page.waitForTimeout(100);
-        expect(await page.evaluate(() => webui.projectData.data._environments)).toHaveLength(1);
+        await expect(openDialog(page).getByText('Environment already exists')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => webui.projectData.data._environments)).toHaveLength(1);
     });
     test('environments can be renamed', async ({ page }) => {
         await openApp(page, { data: envData([{ name: 'dev', variables: {} }]) });
@@ -149,8 +163,8 @@ test.describe('environments', () => {
         await open(page);
         await page.locator('#btn-manage-env').click();
         await page.locator('webui-button.env-del-btn').click();
-        await page.waitForTimeout(100);
-        expect(await page.evaluate(() => webui.projectData.data._environments)).toHaveLength(1);
+        await expect(openDialog(page).getByText('You must have at least one environment.')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => webui.projectData.data._environments)).toHaveLength(1);
     });
     test('deleting the active environment loads the next one\'s values', async ({ page }) => {
         await openApp(page, { variables: ['key|text|'], data: { ...data, key: 'dev value' } });
@@ -158,14 +172,14 @@ test.describe('environments', () => {
         await page.locator('#btn-manage-env').click();
         await page.locator('webui-button.env-del-btn[data-env="dev"]').click();
         await expect.poll(() => page.evaluate(() => webui.projectData.data._activeEnvironment)).toBe('prod');
-        expect(await page.evaluate(() => webui.getProjectData('key'))).toBe('prod value');
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('key'))).toBe('prod value');
     });
     test('environment names are escaped in markup', async ({ page }) => {
         await openApp(page, { data: envData([{ name: '"><img src=x onerror="window.__xss=1">', variables: {} }]) });
         await open(page);
         await page.locator('#btn-manage-env').click();
         await page.locator('webui-button.env-del-btn').waitFor();
-        expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+        await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
     });
 });
 
@@ -180,9 +194,9 @@ test.describe('values kept on the desktop', () => {
             await expect(field.locator('input')).toHaveValue('');
             await expect(field).toHaveAttribute('placeholder', 'Set. Type to replace it.');
         }
-        expect(await page.locator('app-var-manager, webui-drawer.shared').first().evaluate(() => document.body.innerText)).not.toContain('[object Object]');
+        await expect.poll(() => page.locator('app-var-manager, webui-drawer.shared').first().evaluate(() => document.body.innerText)).not.toContain('[object Object]');
         await page.locator('#var-project-list webui-input-text input').fill('new password');
-        expect(await page.evaluate(() => webui.getProjectData('db_password'))).toBe('new password');
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('db_password'))).toBe('new password');
     });
     test('cannot be copied to another scope or the clipboard from here', async ({ page }) => {
         await openApp(page, { data: { db_password: kept }, variables: ['db_password|secret|'] });
@@ -190,12 +204,18 @@ test.describe('values kept on the desktop', () => {
         await page.evaluate(() => {
             window.__copied = [];
             webui.copyToClipboard = text => window.__copied.push(text);
+            // Each refusal says why, so the messages show both clicks were dealt with.
+            window.__alerts = [];
+            const alert = webui.alert;
+            webui.alert = function (...args) { window.__alerts.push(`${args[0]}`); return alert.apply(this, args); };
         });
+        const refused = 'db_password is kept on the desktop, so copy it there.';
         await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').first().click();
+        await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([refused]);
         await page.locator('#var-project-list webui-icon[title="Copy Value to Clipboard"]').first().click();
-        await page.waitForTimeout(100);
-        expect(await page.evaluate(() => webui.getGlobalData('db_password'))).toBeUndefined();
-        expect(await page.evaluate(() => window.__copied)).toEqual([]);
+        await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([refused, refused]);
+        await expect.poll(() => page.evaluate(() => webui.getGlobalData('db_password'))).toBeUndefined();
+        await expect.poll(() => page.evaluate(() => window.__copied)).toEqual([]);
     });
 });
 test('the Variables button counts the variables on the page shown, and none on pages without them', async ({ page }) => {

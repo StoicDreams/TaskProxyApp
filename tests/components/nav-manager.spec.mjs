@@ -7,9 +7,11 @@ const navigation = [
 const open = async page => {
     await openApp(page, { currentPage: '/nav-manager', navigation }, '/nav-manager');
     await page.locator('app-nav-preview webui-nav-link[name="Top"]').waitFor();
-    await page.waitForTimeout(600);
+    // The preview selects its first item once it is built, which would replace a selection made before it.
+    await expect(nameInput(page)).toHaveValue('Folder');
 };
 const manager = page => page.locator('app-nav-manager');
+const nameInput = page => manager(page).locator('webui-input-text[label="Name"] input');
 const button = (page, label) => manager(page).locator(`webui-button[label="${label}"]`);
 const savedNav = async page => {
     await expect.poll(async () => (await calls(page, 'save_project_data')).length).toBeGreaterThan(0);
@@ -45,17 +47,17 @@ test('adding a folder gives it children instead of a url', async ({ page }) => {
 });
 test('a nested page can be deleted', async ({ page }) => {
     await open(page);
-    await page.locator('app-nav-preview webui-nav-link[name="Inner"]').click({ force: true });
-    await page.waitForTimeout(200);
+    await page.locator('app-nav-preview webui-nav-link[name="Inner"]').click();
+    await expect(nameInput(page)).toHaveValue('Inner');
     await button(page, 'Delete').click();
     await button(page, 'Save').click();
     expect(names(await savedNav(page))).toEqual([['Folder', []], 'Top']);
 });
 test('renaming applies to the selected item', async ({ page }) => {
     await open(page);
-    await page.locator('app-nav-preview webui-nav-link[name="Top"]').click({ force: true });
-    await page.waitForTimeout(200);
-    await manager(page).locator('webui-input-text[label="Name"] input').fill('Renamed');
+    await page.locator('app-nav-preview webui-nav-link[name="Top"]').click();
+    await expect(nameInput(page)).toHaveValue('Top');
+    await nameInput(page).fill('Renamed');
     await button(page, 'Save').click();
     expect(names(await savedNav(page))).toEqual([['Folder', ['Inner']], 'Renamed']);
 });
@@ -74,9 +76,11 @@ test('saving updates the app navigation', async ({ page }) => {
 test('saving from the header does not discard unsaved navigation edits', async ({ page }) => {
     await open(page);
     await button(page, 'Add Page').click();
-    await page.waitForTimeout(100);
+    await expect(page.locator('app-nav-preview > webui-nav-link[name=""]')).toHaveCount(1);
+    // The header's save has been answered, and the app has dealt with it, before the next step runs in the page.
     await page.evaluate(() => webui.proxy.saveProjectData());
-    await page.waitForTimeout(300);
+    await expect.poll(async () => (await calls(page, 'save_project_data')).map(call => call.data.navigation.length)).toEqual([2]);
+    await expect(page.locator('app-nav-preview > webui-nav-link[name=""]')).toHaveCount(1);
     await button(page, 'Save').click();
-    await expect.poll(async () => (await calls(page, 'save_project_data')).at(-1).data.navigation.length).toBe(3);
+    await expect.poll(async () => (await calls(page, 'save_project_data')).map(call => call.data.navigation.length)).toEqual([2, 3]);
 });
