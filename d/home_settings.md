@@ -4,9 +4,7 @@
 <webui-tabs class="settings-tabs" vertical pad="var(--padding)" transition-timing="200" theme="primary" data-subscribe="session-settings-tab-index:setTab">
 <webui-button align="left" slot="tabs" start-icon="folder-open" class="settings-tab-projects">Projects</webui-button>
 <webui-content slot="content" nodetach class="settings-projects">
-<h3>Current project: <strong data-subscribe="app-current-project.display:html"></strong></h3>
 <app-project-manager></app-project-manager>
-<app-project-icon></app-project-icon>
 <h3>Add a project</h3>
 <app-add-project></app-add-project>
 </webui-content>

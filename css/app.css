@@ -846,3 +846,78 @@ webui-drawer.shared h6 {
     --color-button: #0284c7;
     --color-button-offset: var(--color-black);
 }
+
+/* Settings' Current project heading: the label, the project's icon, and its name, which renames it when clicked. */
+app-project-manager {
+    display: block;
+}
+
+app-project-manager .current-project {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--padding);
+}
+
+app-project-manager .current-project[hidden],
+app-project-manager .project-name[hidden],
+app-project-manager .project-rename[hidden] {
+    display: none;
+}
+
+app-project-manager app-project-icon {
+    display: inline-flex;
+}
+
+app-project-manager .project-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.1em 0.35em;
+    font: inherit;
+    font-weight: bold;
+    color: inherit;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--corners-small, 4px);
+    cursor: pointer;
+}
+
+app-project-manager .project-name:hover {
+    border-color: color-mix(in srgb, currentColor 35%, transparent);
+    background-color: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+app-project-manager .project-name:focus-visible {
+    outline: var(--focus-outline, 2px solid currentColor);
+    outline-offset: var(--focus-offset, 2px);
+}
+
+app-project-manager .project-name webui-icon {
+    font-size: 0.75em;
+    opacity: 0.75;
+}
+
+/* The rename field and its buttons read as a form, not as the heading. */
+app-project-manager .project-rename {
+    display: inline-flex;
+    flex: 1 1 24em;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--padding);
+    font-size: 1rem;
+    font-weight: normal;
+}
+
+/* The field takes the room left beside the buttons, and they wrap below it only when there is too little. */
+app-project-manager .project-rename webui-input-text {
+    flex: 1 1 10em;
+    width: auto;
+    min-width: 8em;
+}
+
+app-project-manager .project-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--padding);
+}

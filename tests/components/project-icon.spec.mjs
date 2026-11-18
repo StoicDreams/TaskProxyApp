@@ -8,6 +8,8 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect wid
 // The images, served by the mock's file server, so the tiles can show them.
 const imageFiles = { files: { 'assets/logo.svg': SVG, 'docs/logo.svg': SVG }, binaryFiles: { 'img/banner.png': PNG } };
 const picker = page => page.locator('app-project-icon webui-select');
+// The field shows only the chosen icon, whose name is its label.
+const chosen = page => picker(page).locator('.pick-picture');
 const tile = (page, name) => picker(page).getByRole('option', { name, exact: true });
 const names = page => picker(page).locator('.tile .name');
 // The open project's icon, as the dropdown shows it in its picked value.
@@ -15,7 +17,11 @@ const dropdownIcon = (page, path) => page.locator('app-project-dropdown webui-se
 
 test("Settings lists the project's images to choose its icon from, with the one it uses chosen", async ({ page }) => {
     await openApp(page, { ...imageFiles, projectImages: IMAGES, projectIcons: { '/repo': 'img/banner.png' } });
-    await expect(picker(page).locator('.pick-name')).toHaveText(['banner.png']);
+    // In the Current project heading, between its label and the project's name, showing only the icon.
+    await expect(page.locator('app-project-manager h3.current-project > app-project-icon + .project-name')).toHaveCount(1);
+    await expect(picker(page).locator('.pick-name')).toHaveCount(0);
+    await expect(picker(page)).toHaveAttribute('title', /\.taskproxy\/Project\.json/);
+    await expect(chosen(page)).toHaveAttribute('aria-label', 'banner.png');
     await picker(page).getByRole('button').click();
     // Images that share a name are told apart by their path.
     await expect(names(page)).toHaveText(['No icon', 'assets/logo.svg', 'banner.png', 'docs/logo.svg']);
@@ -26,12 +32,12 @@ test("Settings lists the project's images to choose its icon from, with the one 
 
 test("choosing an image saves it as the project's icon, and the project dropdown shows it", async ({ page }) => {
     await openApp(page, { ...imageFiles, projectImages: IMAGES });
-    await expect(picker(page).locator('.pick-name')).toHaveText(['No icon']);
+    await expect(chosen(page)).toHaveAttribute('aria-label', 'No icon');
     await expect(dropdownIcon(page, 'assets/logo.svg')).toHaveCount(0);
     await picker(page).getByRole('button').click();
     await tile(page, 'assets/logo.svg').click();
     await expect.poll(() => calls(page, 'set_project_icon')).toEqual([{ icon: 'assets/logo.svg' }]);
-    await expect(picker(page).locator('.pick-name')).toHaveText(['assets/logo.svg']);
+    await expect(chosen(page)).toHaveAttribute('aria-label', 'assets/logo.svg');
     await expect(dropdownIcon(page, 'assets/logo.svg')).toHaveCount(1);
 });
 
@@ -55,12 +61,12 @@ test('a refused icon says why, and the field goes back to the icon in use', asyn
     await picker(page).getByRole('button').click();
     await tile(page, 'docs/logo.svg').click();
     await expect.poll(() => page.evaluate(() => window.__alerts)).toContain("'docs/logo.svg' is too large for an icon. Choose an image under 512 KB.");
-    await expect(picker(page).locator('.pick-name')).toHaveText(['banner.png']);
+    await expect(chosen(page)).toHaveAttribute('aria-label', 'banner.png');
 });
 
 test('a project with no images says how to add one', async ({ page }) => {
     await openApp(page, { projectImages: [] });
-    await expect(page.locator('app-project-icon .project-icon-note')).toContainText('Add an image file');
+    await expect(picker(page)).toHaveAttribute('title', /Add an image file/);
 });
 
 test('with no project open, there is no icon to choose', async ({ page }) => {

@@ -1,6 +1,7 @@
 /*
- * The open project's icon, in Settings: an image from the project's files, chosen from a grid with webui-select and
- * saved in its .taskproxy/Project.json, so it is shared with the project (services/project_icons.rs).
+ * The open project's icon, in Settings' Current project heading: an image from the project's files, chosen from a grid
+ * with webui-select and saved in its .taskproxy/Project.json, so it is shared with the project
+ * (services/project_icons.rs). The field shows only the icon; the grid names each image.
  */
 "use strict"
 {
@@ -21,9 +22,8 @@
         connected() {
             const t = this;
             if (!t._select) {
-                t._select = webui.create('webui-select', { label: 'Icon', title: "Choose the project's icon", 'aria-label': "The project's icon" });
-                t._note = webui.create('p', { class: 'project-icon-note' });
-                t.append(t._select, t._note);
+                t._select = webui.create('webui-select', { 'icon-only': '', title: "Choose the project's icon", 'aria-label': "The project's icon" });
+                t.append(t._select);
                 t._select.addEventListener('change', () => t.choose(t._select.value));
             }
             t.load();
@@ -55,8 +55,9 @@
                 ...images.map((path, index) => ({ id: path, display: names[index], image: urls[index] || '' })),
             ]);
             t._select.value = t._icon;
-            t._note.textContent = images.length
-                ? "An image from the project's files, which shows beside its name. It is saved in .taskproxy/Project.json, so everyone working on the project sees it."
+            // What the icon is for, as the field's tip, since the heading has no room for a note.
+            t._select.title = images.length
+                ? "Choose the project's icon from its images. It shows beside its name, and is saved in .taskproxy/Project.json, so everyone working on the project sees it."
                 : 'Add an image file, such as an SVG or PNG, to the project to use it as its icon.';
         },
         /** Saves the chosen icon, or puts the field back when it is refused. */
