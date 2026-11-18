@@ -9,11 +9,82 @@ pub(crate) const COMMON_SKIP_DIRS: &[&str] = &["target", "dist", "build", "node_
 
 pub(crate) fn create_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
-    #[cfg(target_os = "linux")]
-    cmd.env_remove("LD_LIBRARY_PATH");
+    for (name, value) in host_env() {
+        match value {
+            Some(value) => cmd.env(name, value),
+            None => cmd.env_remove(name),
+        };
+    }
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // 0x08000000 is the CREATE_NO_WINDOW flag
     cmd
+}
+
+/// Whether a value is a folder inside a mounted AppImage: this one's, or one an older copy started this one from.
+fn in_appimage(value: &str, appdir: Option<&str>) -> bool {
+    appdir.is_some_and(|appdir| !appdir.is_empty() && value.starts_with(appdir))
+        || value.contains("/.mount_")
+}
+
+/// Variables an AppImage's AppRun sets only for the programs it bundles, which don't mean anything elsewhere.
+const APPIMAGE_ONLY: &[&str] = &[
+    "APPDIR",
+    "APPIMAGE",
+    "ARGV0",
+    "OWD",
+    "GST_REGISTRY_REUSE_PLUGIN_SCANNER",
+    "PYTHONDONTWRITEBYTECODE",
+    "APPIMAGELAUNCHER_DISABLE",
+];
+
+/// The changes that give a program the computer's own environment rather than the AppImage's: each variable to set
+/// to a new value, or to remove (None). An AppImage puts its bundled libraries, programs, Python, GTK and GStreamer
+/// first in variables that every program Task Proxy starts inherits, so `xdg-open`, the browser, and the tools in a
+/// script would load the bundle's copies and fail. Entries inside the AppImage are dropped, and the rest are kept.
+/// Outside an AppImage nothing changes.
+pub(crate) fn host_env_changes(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(String, Option<String>)> {
+    let vars: Vec<(String, String)> = vars.into_iter().collect();
+    let appdir = vars
+        .iter()
+        .find(|(name, _)| name == "APPDIR")
+        .map(|(_, value)| value.clone());
+    let in_appimage_run = appdir.is_some() || vars.iter().any(|(name, _)| name == "APPIMAGE");
+    if !in_appimage_run {
+        return Vec::new();
+    }
+    let mut changes = Vec::new();
+    for (name, value) in vars {
+        if APPIMAGE_ONLY.contains(&name.as_str()) {
+            changes.push((name, None));
+            continue;
+        }
+        if !in_appimage(&value, appdir.as_deref()) {
+            continue;
+        }
+        let kept: Vec<&str> = value
+            .split(':')
+            .filter(|part| !part.is_empty() && !in_appimage(part, appdir.as_deref()))
+            .collect();
+        // Each folder appears once, in its first place, since nested AppImages repeat the same ones.
+        let mut seen = std::collections::HashSet::new();
+        let kept: Vec<&str> = kept.into_iter().filter(|part| seen.insert(*part)).collect();
+        changes.push((name, (!kept.is_empty()).then(|| kept.join(":"))));
+    }
+    changes
+}
+
+/// `host_env_changes` for this process, worked out once.
+pub(crate) fn host_env() -> &'static [(String, Option<String>)] {
+    static CHANGES: std::sync::OnceLock<Vec<(String, Option<String>)>> = std::sync::OnceLock::new();
+    CHANGES.get_or_init(|| {
+        if cfg!(target_os = "linux") {
+            host_env_changes(std::env::vars())
+        } else {
+            Vec::new()
+        }
+    })
 }
 
 pub(crate) fn get_hash_code(input: &str) -> String {
@@ -279,5 +350,74 @@ mod tests {
             id.chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
+    }
+}
+
+#[cfg(test)]
+mod host_env_tests {
+    use super::*;
+
+    fn vars(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn outside_an_appimage_nothing_changes() {
+        assert!(
+            host_env_changes(vars(&[
+                ("PATH", "/usr/bin"),
+                ("LD_LIBRARY_PATH", "/opt/lib")
+            ]))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_appimages_folders_are_dropped_and_the_computers_kept() {
+        let changes = host_env_changes(vars(&[
+            ("APPDIR", "/tmp/.mount_Task PBDGEEi"),
+            ("APPIMAGE", "/home/me/Applications/Task Proxy.appimage"),
+            (
+                "PATH",
+                "/tmp/.mount_Task PBDGEEi/usr/bin/:/tmp/.mount_Task PcGoghl/usr/bin/:/usr/local/bin:/usr/bin:/usr/local/bin",
+            ),
+            ("LD_LIBRARY_PATH", "/tmp/.mount_Task PBDGEEi/usr/lib/"),
+            (
+                "XDG_DATA_DIRS",
+                "/tmp/.mount_Task PBDGEEi/usr/share/:/usr/share:/tmp/.mount_Task PcGoghl/usr/share:/usr/share",
+            ),
+            ("PYTHONHOME", "/tmp/.mount_Task PBDGEEi/usr/"),
+            (
+                "GIO_MODULE_DIR",
+                "/tmp/.mount_Task PBDGEEi//usr/lib/gio/modules",
+            ),
+            ("PYTHONDONTWRITEBYTECODE", "1"),
+            ("HOME", "/home/me"),
+            ("GTK_THEME", "Adwaita:dark"),
+        ]));
+        let get = |name: &str| {
+            changes
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        // Folders from this mount and older nested ones go, and repeats of the computer's own are kept once.
+        assert_eq!(
+            get("PATH"),
+            Some(Some("/usr/local/bin:/usr/bin".to_string()))
+        );
+        assert_eq!(get("XDG_DATA_DIRS"), Some(Some("/usr/share".to_string())));
+        // Variables that only pointed into the AppImage are removed.
+        assert_eq!(get("LD_LIBRARY_PATH"), Some(None));
+        assert_eq!(get("PYTHONHOME"), Some(None));
+        assert_eq!(get("GIO_MODULE_DIR"), Some(None));
+        assert_eq!(get("APPDIR"), Some(None));
+        assert_eq!(get("APPIMAGE"), Some(None));
+        assert_eq!(get("PYTHONDONTWRITEBYTECODE"), Some(None));
+        // The computer's own settings stay as they are.
+        assert_eq!(get("HOME"), None);
+        assert_eq!(get("GTK_THEME"), None);
     }
 }

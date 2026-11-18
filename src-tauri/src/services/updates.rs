@@ -35,10 +35,10 @@ pub(crate) async fn install_update(app: tauri::AppHandle) -> Result<String, Stri
         if let Ok(data) = get_state_data::<TaskProxyData>(&app) {
             _ = save_app_data_to_local_storage(&app, &data).await;
         }
-        if let Ok(data) = get_state_data::<ProjectData>(&app) {
-            if !data.id.is_empty() {
-                _ = persist_project_data(data, &app).await;
-            }
+        if let Ok(data) = get_state_data::<ProjectData>(&app)
+            && !data.id.is_empty()
+        {
+            _ = persist_project_data(data, &app).await;
         }
         restart_app(&app).await.map_err(|err| {
             format!(
@@ -66,6 +66,14 @@ pub(crate) async fn restart_app(app: &AppHandle) -> Result<(), String> {
     for _ in 0..RESTART_ATTEMPTS {
         let mut command = std::process::Command::new(&path);
         command.args(env.args_os.iter().skip(1));
+        // The new copy starts with the computer's own environment. An AppImage sets up its own as it starts, and
+        // handing it this copy's made each restart nest another AppImage's folders in front of the last.
+        for (name, value) in crate::common::host_env() {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
+        }
         // AppImageLauncher 3.0.0-beta-3 starts AppImages through an interpreter that hands
         // AppImageLauncher an argument list with no end marker, so a start fails whenever the memory
         // after that list is not empty. This variable makes the interpreter start the AppImage directly.

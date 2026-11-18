@@ -1200,6 +1200,8 @@
                 webui.proxy.git.getChanges(repo),
                 webui.proxy.git.getChangeStats(repo, () => { }),
             ]);
+            // The page replaced this view while it waited, as a project reload does, so there is nothing to show.
+            if (!t.isConnected) return;
             changes = changes || [];
             t._lineStats = lineStats ? new Map(lineStats.map(stats => [stats.path, stats])) : null;
             t._hasPendingChanges = changes.length > 0;

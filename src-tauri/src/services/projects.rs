@@ -193,23 +193,17 @@ pub(crate) async fn get_project_data(
     data.docs = docs;
     if let Ok(decrypted) =
         get_data_from_local_storage(&app_handle, &format!("{}.cp.enc", project_hash)).await
+        && !decrypted.is_empty()
+        && let Ok(current_page) = String::from_utf8(decrypted)
     {
-        if !decrypted.is_empty() {
-            if let Ok(current_page) = String::from_utf8(decrypted) {
-                data.current_page = current_page;
-            }
-        }
+        data.current_page = current_page;
     }
     if let Ok(decrypted) =
         get_data_from_local_storage(&app_handle, &format!("{}.enc", project_hash)).await
+        && !decrypted.is_empty()
+        && let Ok(project_variables) = serde_json::from_slice::<HashMap<String, Value>>(&decrypted)
     {
-        if !decrypted.is_empty() {
-            if let Ok(project_variables) =
-                serde_json::from_slice::<HashMap<String, Value>>(&decrypted)
-            {
-                data.data = project_variables;
-            }
-        }
+        data.data = project_variables;
     }
     {
         let mut project_state = state
@@ -475,12 +469,12 @@ pub(crate) async fn save_project_data(
     data: ProjectData,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    if let Some(state) = app_handle.try_state::<CurrentProject>() {
-        if let Ok(mut project_state) = state.lock() {
-            // A save for a project that is no longer current must not replace the current one.
-            if project_state.id == data.id {
-                *project_state = data.clone();
-            }
+    if let Some(state) = app_handle.try_state::<CurrentProject>()
+        && let Ok(mut project_state) = state.lock()
+    {
+        // A save for a project that is no longer current must not replace the current one.
+        if project_state.id == data.id {
+            *project_state = data.clone();
         }
     }
     persist_project_data(data, &app_handle).await
@@ -662,11 +656,10 @@ fn get_project_docs(project_path: &str) -> Vec<String> {
         if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            && let Ok(relative_path) = path.strip_prefix(&root)
         {
-            if let Ok(relative_path) = path.strip_prefix(&root) {
-                // The frontend compares these paths, and joins them with forward slashes.
-                docs.push(relative_path.to_string_lossy().replace('\\', "/"));
-            }
+            // The frontend compares these paths, and joins them with forward slashes.
+            docs.push(relative_path.to_string_lossy().replace('\\', "/"));
         }
     });
     docs.sort();

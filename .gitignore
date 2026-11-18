@@ -21,3 +21,7 @@ taskproxy_live_*
 node_modules
 test-results
 playwright-report
+
+# What each UI test used when it last passed, so unchanged tests are skipped (tests/support/test-cache.mjs)
+.test-cache/
+tests/.cache-check/

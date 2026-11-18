@@ -58,8 +58,28 @@ test('signing in shows the code to check, and finishes once it is approved in th
 test('the approval page can be opened again while it waits', async ({ page }) => {
     await startSignIn(page);
     await dialogButton(page, 'Open the Page Again').click();
-    await expect.poll(() => calls(page, 'openUrl')).toEqual([{ url: SIGN_IN_URL }]);
+    // Rust opens it, with the computer's own environment rather than an AppImage's.
+    await expect.poll(() => calls(page, 'open_url')).toEqual([{ url: SIGN_IN_URL }]);
     await expect(openDialog(page)).toContainText('M7A-JQF');
+});
+
+test('the code is a button that copies it', async ({ page }) => {
+    await startSignIn(page);
+    await openDialog(page).getByRole('button', { name: 'Copy the code M7A-JQF' }).click();
+    await expect(openDialog(page)).toContainText('Copied the code.');
+    await expect.poll(() => page.evaluate(() => window.__backend.clipboard)).toEqual({ text: 'M7A-JQF' });
+    // Copying leaves the sign-in waiting.
+    await expect(openDialog(page)).toContainText('M7A-JQF');
+});
+
+test('when the browser didn\'t open, the dialog says so and gives the address to open or copy', async ({ page }) => {
+    await startSignIn(page, { myfiOpened: false });
+    await expect(openDialog(page)).toContainText('Your browser didn\'t open');
+    await expect(openDialog(page).locator('code')).toHaveText(SIGN_IN_URL);
+    await openDialog(page).getByRole('button', { name: 'Copy Link' }).click();
+    await expect.poll(() => page.evaluate(() => window.__backend.clipboard)).toEqual({ text: SIGN_IN_URL });
+    await dialogButton(page, 'Open the Page').click();
+    await expect.poll(() => calls(page, 'open_url')).toEqual([{ url: SIGN_IN_URL }]);
 });
 
 test('cancelling stops waiting and stays signed out', async ({ page }) => {

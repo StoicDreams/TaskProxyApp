@@ -6,6 +6,7 @@
 <webui-content slot="content" nodetach class="settings-projects">
 <h3>Current project: <strong data-subscribe="app-current-project.display:html"></strong></h3>
 <app-project-manager></app-project-manager>
+<app-project-icon></app-project-icon>
 <h3>Add a project</h3>
 <app-add-project></app-add-project>
 </webui-content>

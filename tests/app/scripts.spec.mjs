@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +42,10 @@ test.describe('Publish.ps1', () => {
 if ($env:PUBLISH_FAIL -eq '${name}') { exit 3 }
 if ($env:PUBLISH_THROW -eq '${name}') { throw '${name} broke' }
 `;
-    const steps = ['IncrementVersion', 'Minify', ...(publishHasSiteMap ? ['BuildSiteMap'] : [])];
+    // What builds the files the tests check, then the version, which changes only once everything has passed.
+    const before = ['Minify', ...(publishHasSiteMap ? ['BuildSiteMap'] : [])];
+    const steps = [...before, 'IncrementVersion'];
+    const versionLine = result => result.lines.find(line => line.startsWith('IncrementVersion'));
     // The temporary folder has no Cargo.toml or package.json unless a test adds one, so no real tests run.
     function publish(args = [], env = {}, files = {}) {
         const dir = tempFolder();
@@ -61,13 +64,13 @@ if ($env:PUBLISH_THROW -eq '${name}') { throw '${name} broke' }
         expect(result.code, result.output).toBe(0);
         expect(result.ran).toEqual(steps);
         for (const line of result.lines) expect(line).toContain(`in=${result.dir}`);
-        expect(result.lines[0]).toContain('major=False minor=False');
+        expect(versionLine(result)).toContain('major=False minor=False');
         expect(result.output).toContain('Ready to commit.');
     });
 
     test('-Version minor and -Version major are passed to IncrementVersion', () => {
-        expect(publish(['-Version', 'minor']).lines[0]).toContain('major=False minor=True');
-        expect(publish(['-Version', 'major']).lines[0]).toContain('major=True minor=False');
+        expect(versionLine(publish(['-Version', 'minor']))).toContain('major=False minor=True');
+        expect(versionLine(publish(['-Version', 'major']))).toContain('major=True minor=False');
     });
 
     test('an unknown -Version is refused before anything runs', () => {
@@ -85,10 +88,10 @@ if ($env:PUBLISH_THROW -eq '${name}') { throw '${name} broke' }
         });
     }
 
-    test('a step that exits with an error stops Publish, and Publish fails', () => {
+    test('a step that exits with an error stops Publish, and Publish fails, leaving the version alone', () => {
         const result = publish([], { PUBLISH_FAIL: 'Minify' });
         expect(result.code).not.toBe(0);
-        expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
+        expect(result.ran).toEqual(['Minify']);
         expect(result.output).toContain('exit code 3');
         expect(result.output).not.toContain('Ready to commit.');
     });
@@ -96,7 +99,7 @@ if ($env:PUBLISH_THROW -eq '${name}') { throw '${name} broke' }
     test('a step that throws stops Publish, and Publish fails', () => {
         const result = publish([], { PUBLISH_THROW: 'IncrementVersion' });
         expect(result.code).not.toBe(0);
-        expect(result.ran).toEqual(['IncrementVersion']);
+        expect(result.ran).toEqual(steps);
         expect(result.output).toContain('IncrementVersion broke');
     });
 
@@ -104,23 +107,23 @@ if ($env:PUBLISH_THROW -eq '${name}') { throw '${name} broke' }
     const logLine = name => `node -e "require('fs').appendFileSync(process.env.PUBLISH_LOG, '${name}' + require('os').EOL)"`;
     const packageJson = scripts => ({ 'package.json': JSON.stringify({ name: 'publish-spec', private: true, scripts }) });
 
-    test('runs the UI tests last, after the files they test are ready', () => {
+    test('runs the UI tests once the files they test are ready, and before the version changes', () => {
         const result = publish([], {}, packageJson({ test: logLine('npm-test') }));
         expect(result.code, result.output).toBe(0);
-        expect(result.ran).toEqual([...steps, 'npm-test']);
+        expect(result.ran).toEqual([...before, 'npm-test', 'IncrementVersion']);
         expect(result.output).toContain('Ready to commit.');
     });
 
     test('runs test:min instead when the project has it, as its CI does', () => {
         const result = publish([], {}, packageJson({ test: logLine('npm-test'), 'test:min': logLine('npm-test-min') }));
         expect(result.code, result.output).toBe(0);
-        expect(result.ran.at(-1)).toBe('npm-test-min');
-        expect(result.ran).not.toContain('npm-test');
+        expect(result.ran).toEqual([...before, 'npm-test-min', 'IncrementVersion']);
     });
 
-    test('failing tests make Publish fail', () => {
+    test('failing tests make Publish fail, and leave the version alone so running it again bumps it once', () => {
         const result = publish([], {}, packageJson({ test: 'node -e "process.exit(1)"' }));
         expect(result.code).not.toBe(0);
+        expect(result.ran).toEqual(before);
         expect(result.output).toContain('Run the UI tests failed');
         expect(result.output).not.toContain('Ready to commit.');
     });
@@ -247,4 +250,99 @@ test.describe('IncrementVersion.ps1', () => {
             expect(missing, `These files do not have version ${expected}`).toEqual([]);
         });
     }
+});
+
+test.describe('StressTests.ps1', () => {
+    // A project in a git repo, with a stand-in npx first on the PATH that logs what it was asked to run, or fails.
+    function project({ files = {}, oldFiles = {}, scripts = { test: 'playwright test --project=live-cdn' } } = {}) {
+        const dir = tempFolder();
+        copyFileSync(join(root, 'PowerShell', 'StressTests.ps1'), join(dir, 'PowerShell', 'StressTests.ps1'));
+        write(dir, 'package.json', JSON.stringify({ name: 'stress-spec', private: true, scripts }));
+        const git = (args, env = {}) => execFileSync('git', args, { cwd: dir, env: { ...process.env, ...env }, stdio: 'pipe' });
+        git(['init', '-q']);
+        git(['config', 'user.email', 'spec@example.com']);
+        git(['config', 'user.name', 'Spec']);
+        // Files committed 30 days ago, which a week's changes leave out.
+        const old = new Date(Date.now() - 30 * 86400000).toISOString();
+        for (const [path, text] of Object.entries({ 'tests/a.spec.mjs': '', 'tests/b.spec.mjs': '', ...oldFiles })) write(dir, path, text);
+        git(['add', '-A']);
+        git(['commit', '-q', '-m', 'old'], { GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old });
+        for (const [path, text] of Object.entries(files)) write(dir, path, text);
+        if (Object.keys(files).length) {
+            git(['add', '-A']);
+            git(['commit', '-q', '-m', 'this week']);
+        }
+        const bin = join(tempFolder(), 'bin');
+        write(bin, 'npx', '#!/bin/sh\necho "npx $* nocache=$PW_NO_CACHE" >> "$STRESS_LOG"\n[ -n "$STRESS_FAIL" ] && exit 1\nexit 0\n');
+        chmodSync(join(bin, 'npx'), 0o755);
+        write(bin, 'npx.cmd', '@echo npx %* nocache=%PW_NO_CACHE%>> "%STRESS_LOG%"\r\n@if not "%STRESS_FAIL%"=="" exit /b 1\r\n@exit /b 0\r\n');
+        const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === 'PATH') || 'PATH';
+        const log = join(dir, 'stress.log');
+        const run = (args = [], env = {}) => {
+            const result = pwsh(dir, join(dir, 'PowerShell', 'StressTests.ps1'), args,
+                { [pathKey]: bin + (process.platform === 'win32' ? ';' : ':') + process.env[pathKey], STRESS_LOG: log, PW_NO_CACHE: '', ...env });
+            return { ...result, ran: existsSync(log) ? readFileSync(log, 'utf8').trim().split(/\r?\n/) : [] };
+        };
+        return { dir, run };
+    }
+    // A test cache entry, as tests/support/test-cache.mjs writes one, for a test in `spec` that used `files`.
+    const entry = (spec, files) => JSON.stringify({ id: `min > ${spec} > a test`, deps: Object.fromEntries(files.map(file => [`file:${file}`, 'x'])) });
+
+    test('with nothing changed in the last week it says so and runs nothing', () => {
+        const result = project().run();
+        expect(result.code, result.output).toBe(0);
+        expect(result.output).toContain('Nothing changed in the last 7 days');
+        expect(result.ran).toEqual([]);
+    });
+
+    test('a change this week stresses every spec without a cache, many times, under load, with no retries or cache', () => {
+        const result = project({ files: { 'webapp/page.md': 'new' } }).run();
+        expect(result.code, result.output).toBe(0);
+        expect(result.ran).toEqual(['npx playwright test --repeat-each=10 --workers=150% --retries=0 --timeout=60000 --reporter=dot --project=live-cdn nocache=1']);
+        expect(result.output).toContain('Every test passed 10 times under load.');
+    });
+
+    test('work not committed yet counts as a change', () => {
+        const { dir, run } = project();
+        write(dir, 'webapp/new.md', 'not committed');
+        expect(run().ran).toHaveLength(1);
+    });
+
+    test('with the test cache, only the specs whose tests used a changed file are stressed', () => {
+        const { dir, run } = project({ files: { 'wc/changed.js': 'new' }, scripts: { test: 'playwright test', 'test:min': 'playwright test --project=min' } });
+        write(dir, '.test-cache/1.json', entry('tests/a.spec.mjs', ['wc/changed.js', 'index.html']));
+        write(dir, '.test-cache/2.json', entry('tests/b.spec.mjs', ['wc/other.js', 'index.html']));
+        const result = run();
+        expect(result.code, result.output).toBe(0);
+        // The files CI tests: the minified ones, for a project with test:min.
+        expect(result.ran).toEqual(['npx playwright test tests/a.spec.mjs --repeat-each=10 --workers=150% --retries=0 --timeout=60000 --reporter=dot --project=min nocache=1']);
+    });
+
+    test('with the test cache, a change nothing uses stresses nothing', () => {
+        const { dir, run } = project({ files: { 'Docs/notes.md': 'new' } });
+        write(dir, '.test-cache/1.json', entry('tests/a.spec.mjs', ['wc/a.js']));
+        const result = run();
+        expect(result.code, result.output).toBe(0);
+        expect(result.output).toContain('Nothing the UI tests use changed');
+        expect(result.ran).toEqual([]);
+    });
+
+    test('a changed test setup stresses every spec, even with the cache', () => {
+        const { dir, run } = project({ files: { 'tests/support/helpers.mjs': 'new' } });
+        write(dir, '.test-cache/1.json', entry('tests/a.spec.mjs', ['wc/a.js']));
+        expect(run().ran[0]).toMatch(/^npx playwright test --repeat-each=10/);
+    });
+
+    test('-Days, -Repeat, and -All choose what runs and how often', () => {
+        const { run } = project();
+        expect(run(['-Days', '60']).ran).toHaveLength(1);
+        const all = run(['-All', '-Repeat', '3']).ran.at(-1);
+        expect(all).toContain('--repeat-each=3');
+    });
+
+    test('a test that fails under load makes the script fail', () => {
+        const result = project({ files: { 'webapp/page.md': 'new' } }).run([], { STRESS_FAIL: '1' });
+        expect(result.code).not.toBe(0);
+        expect(result.output).toContain('Some tests failed under load.');
+    });
 });

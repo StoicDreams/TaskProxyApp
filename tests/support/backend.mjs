@@ -106,6 +106,8 @@ function setup(state) {
     const copy = value => JSON.parse(JSON.stringify(value));
     // The open project, as the backend's CurrentProject, which get_project_data changes.
     let openProject = projectData;
+    const projectIcons = { ...(state.projectIcons || {}) };
+    const iconUri = path => path ? `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" data-path="${path}"/>`)}` : null;
     const emitEvent = (name, payload) => (listeners[name] || []).forEach(listener => listener({ payload }));
     // Script runs, as services/runs.rs keeps them.
     const runs = {
@@ -501,6 +503,16 @@ function setup(state) {
             set_securitykey: () => 'Security Key Saved!',
             delete_securitykey: () => 'Security Key Deleted!',
             save_app_data: ({ data } = {}) => { if (data) appData = copy(data); return 'app data saved'; },
+            // Project icons (services/project_icons.rs). projectIcons: { [path]: icon path }, projectImages: the open
+            // project's images. An icon is sent back as a data URI made from its path.
+            get_project_icons: () => (state.projects || (project ? [project] : [])).map(item => ({ path: item.path, icon: iconUri(projectIcons[item.path]) })),
+            get_project_images: () => ({ images: state.projectImages || [], icon: projectIcons[openProject?.path] ?? null }),
+            set_project_icon: ({ icon }) => {
+                if (icon && !(state.projectImages || []).includes(icon)) throw `The project has no file '${icon}'.`;
+                if (icon) projectIcons[openProject.path] = icon;
+                else delete projectIcons[openProject.path];
+                return iconUri(icon);
+            },
             load_projects: () => state.projects || (project ? [project] : []),
             get_projects: () => state.projects || (project ? [project] : []),
             get_project_data: args => {
@@ -525,8 +537,11 @@ function setup(state) {
             // openApp serves this address from files and binaryFiles, as the backend's file server does.
             get_file_server_base: () => 'http://files.localhost/token',
             // The system clipboard, as Rust's copy commands leave it: the last image's bytes, or the address downloaded.
+            // Recorded as openUrl too, as the opener plugin's calls were, so tests check what was opened either way.
+            open_url: ({ url }) => { backend.calls.push({ command: 'openUrl', args: { url } }); },
             copy_image: bytes => { backend.clipboard = { bytes: [...bytes] }; },
             copy_image_url: ({ url }) => { backend.clipboard = { url }; },
+            copy_text: ({ text }) => { backend.clipboard = { text }; },
             get_project_file_size: ({ filePath }) => {
                 if (filePath in binaryFiles) return atob(binaryFiles[filePath]).length;
                 if (filePath in files) return new TextEncoder().encode(files[filePath]).length;
@@ -780,7 +795,8 @@ function setup(state) {
             myfi_account: () => myfi.account,
             myfi_sign_in_start: () => {
                 if (state.myfiStartError) throw state.myfiStartError;
-                return { code: 'M7A-JQF', url: 'https://www.stoicdreams.com/signin?app=taskproxy&request=3160d8e4-e8dd-43c7-a397-43b17ef46cbc' };
+                // myfiOpened: false when the browser didn't open the page.
+                return { code: 'M7A-JQF', url: 'https://www.stoicdreams.com/signin?app=taskproxy&request=3160d8e4-e8dd-43c7-a397-43b17ef46cbc', opened: state.myfiOpened ?? true };
             },
             myfi_sign_in_wait: () => new Promise((resolve, reject) => { myfi.waiting = { resolve, reject }; }),
             myfi_sign_in_cancel: () => {

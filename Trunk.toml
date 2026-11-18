@@ -14,3 +14,9 @@ ws_protocol = "ws"
 addresses = ["127.0.0.1"]
 port = 1426
 open = false
+
+# In a development build, Web UI loads from a local MyFiCDN server when one is running (PowerShell/LocalCdn.ps1).
+[[hooks]]
+stage = "post_build"
+command = "pwsh"
+command_arguments = ["-NoProfile", "-NonInteractive", "-File", "./PowerShell/LocalCdn.ps1"]

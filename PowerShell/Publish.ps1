@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Prepares Task Proxy for a commit: updates the Rust dependencies, increments the version, minifies the CSS and JavaScript, runs the tests that CI runs, and starts updating the website's images and videos.
+Prepares Task Proxy for a commit: updates the Rust dependencies, minifies the CSS and JavaScript, runs the tests that CI runs, increments the version, and starts updating the website's images and videos.
 
 .DESCRIPTION
 Select this script in Task Proxy's Git Controller to run it before every commit. If any step fails, the commit is cancelled.
@@ -20,6 +20,10 @@ Do not regenerate the .min.js and .min.css files.
 .PARAMETER SkipTests
 Do not run the tests that the deploy workflow runs. They run on the minified files and the new version.
 
+.PARAMETER NoCache
+Run every UI test. Otherwise a test is skipped when nothing it uses has changed since it last passed (tests/support/
+test-cache.mjs). A minor or major version always runs them all.
+
 .PARAMETER SkipScreenshots
 Do not update the TaskProxy.com images and videos with screenshots.ps1, for a commit whose UI changes are not worth
 re-recording them. Also -SkipMedia. They are updated last, once the tests pass, and only when this project has that script.
@@ -38,6 +42,7 @@ param(
     [switch]$SkipIncrementVersion,
     [switch]$SkipMinify,
     [switch]$SkipTests,
+    [switch]$NoCache,
     [Alias('SkipMedia')]
     [switch]$SkipScreenshots,
     [switch]$WaitForScreenshots
@@ -78,13 +83,16 @@ function Invoke-Tests {
         $scripts = (Get-Content 'package.json' -Raw | ConvertFrom-Json).scripts
         # Playwright reads CI, which turns on the same retries and checks the deploy workflow gets.
         $previousCI = $env:CI
+        $previousNoCache = $env:PW_NO_CACHE
         $env:CI = 'true'
+        if ($NoCache -or $Version -ne 'patch') { $env:PW_NO_CACHE = '1' }
         try {
             if ($scripts.'test:min') { Invoke-Check 'Run the UI tests on the minified files' { npm run test:min } }
             elseif ($scripts.test) { Invoke-Check 'Run the UI tests' { npm test } }
         }
         finally {
             $env:CI = $previousCI
+            $env:PW_NO_CACHE = $previousNoCache
         }
     }
 }
@@ -112,14 +120,18 @@ try {
     # First, so the build and the tests below use the updated dependencies. It moves Cargo.lock to the newest
     # semver-compatible versions, which picks up security fixes such as the ones Dependabot reports.
     if (-not $SkipCargoUpdate -and (Test-Path 'Cargo.toml')) { Invoke-Check 'Update the Rust dependencies' { cargo update } }
+    if (-not $SkipMinify) { Invoke-Step 'Minify CSS and JavaScript' 'Minify.ps1' }
+    if (-not $SkipTests) { Invoke-Tests }
+    # Last, once everything has passed, so a Publish that fails leaves the version alone and running it again bumps it
+    # only once, and so the new version never changes what the tests used.
     if (-not $SkipIncrementVersion) {
         $versionArguments = @{}
         if ($Version -eq 'major') { $versionArguments.major = $true }
         if ($Version -eq 'minor') { $versionArguments.minor = $true }
         Invoke-Step "Increment the $Version version" 'IncrementVersion.ps1' $versionArguments
+        # Cargo.lock names this project's own version too, which only this updates, without touching dependencies.
+        if (Test-Path 'Cargo.toml') { Invoke-Check 'Update the version in Cargo.lock' { cargo update --workspace --offline } }
     }
-    if (-not $SkipMinify) { Invoke-Step 'Minify CSS and JavaScript' 'Minify.ps1' }
-    if (-not $SkipTests) { Invoke-Tests }
     if (-not $SkipScreenshots -and (Test-Path (Join-Path $PSScriptRoot 'screenshots.ps1'))) {
         if ($WaitForScreenshots) { Invoke-Step 'Update the website images and videos' 'screenshots.ps1' }
         else { Start-Screenshots }

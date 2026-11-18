@@ -35,7 +35,11 @@ test('app.min.css has every rule in app.css', () => {
     const selectors = css => [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{/g)]
         .map(match => match[1].replace(/::(before|after)/g, ':$1').replace(/\s*([>+~,])\s*/g, '$1').replace(/\s+/g, ' ').trim()
             // Minifiers drop the quotes around attribute values that do not need them.
-            .replace(/\[([\w-]+)([~|^$*]?=)(["'])([\w-]+)\3\]/g, '[$1$2$4]'));
+            .replace(/\[([\w-]+)([~|^$*]?=)(["'])([\w-]+)\3\]/g, '[$1$2$4]')
+            // and the spaces in a media query's conditions, such as (prefers-reduced-motion: reduce),
+            .replace(/\(\s*([\w-]+)\s*:\s*/g, '($1:').replace(/^@media\s*\(/, '@media (')
+            // and write a keyframe's from as 0% and 100% as to.
+            .replace(/^from$/, '0%').replace(/^100%$/, 'to'));
     const minified = selectors(read('../css/app.min.css'));
     expect(selectors(read('../css/app.css')).filter(selector => !minified.includes(selector)), 'Regenerate css/app.min.css from css/app.css').toEqual([]);
 });

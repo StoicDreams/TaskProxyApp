@@ -101,6 +101,35 @@
     }
     /** Whether each plugin's sections are open, by plugin and section key, kept with the app's state. */
     const sectionsKey = 'app-plugin-sections';
+    /** How long a page takes to leave and to come in, matching Web UI's page transition. */
+    const LEAVE_MS = 250;
+    const ENTER_MS = 300;
+    /** How long a button waits before saying it is loading, so quick actions do not flicker. */
+    const BUSY_LABEL_MS = 150;
+
+    /**
+     * Disables a button and, unless it finishes at once, says it is loading. Returns what puts it back, for when it is
+     * still shown.
+     */
+    function busyButton(button) {
+        const text = button.querySelector(':scope > span');
+        const label = text?.textContent;
+        const icon = button.getAttribute('start-icon');
+        button.setAttribute('disabled', '');
+        button.classList.add('plugin-button-busy');
+        const say = setTimeout(() => {
+            if (text) text.textContent = 'Loading Content';
+            button.setAttribute('start-icon', 'hourglass');
+        }, BUSY_LABEL_MS);
+        return () => {
+            clearTimeout(say);
+            button.removeAttribute('disabled');
+            button.classList.remove('plugin-button-busy');
+            if (text) text.textContent = label;
+            if (icon) button.setAttribute('start-icon', icon);
+            else button.removeAttribute('start-icon');
+        };
+    }
 
     function el(tag, attrs, text) {
         const node = document.createElement(tag);
@@ -363,7 +392,13 @@
          * Loads the page from the plugin and draws it. A page drawn before shows straight away from the cache, and
          * is drawn again only if the plugin's answer changed.
          */
-        async load() {
+        load(options) {
+            const loading = this._loadNow(options);
+            this._loading = loading;
+            return loading;
+        },
+        /** With fresh, such as for a search or refresh the user asked for, a page drawn before is not shown first. */
+        async _loadNow({ fresh = false } = {}) {
             const t = this;
             const load = ++t._load;
             const plugin = t.plugin;
@@ -372,16 +407,23 @@
             t._params = t._sideOf ? { ...t._sideParams } : readParams();
             const key = cacheKey(plugin, page, t._params);
             const content = t.content();
-            const cached = pageCache.get(key);
+            const cached = fresh ? undefined : pageCache.get(key);
             // Drawn from the cache, the plugin's answer only replaces it if it changed. Otherwise, such as for a
             // refresh, the answer is drawn.
             // A page can be asked to load twice at once, as going Back does. The second load takes over from the first,
             // which had drawn the cached page, so it must also leave the page alone when the answer is the same.
             const fromCache = !!cached && (t._shownKey !== key || t._cachedKey === key);
             t._cachedKey = fromCache ? key : null;
+            // A page beside another, such as an issue beside the list, leaves as Web UI pages do when another opens
+            // in it, so the one it showed is not taken for the one loading.
+            const replacing = !!t._sideOf && !!t._shownKey && t._shownKey !== key;
+            if (replacing) {
+                await t.leave();
+                if (load !== t._load) return;
+            }
             if (fromCache) {
                 if (t._shownKey !== key) t.draw(cached, key);
-            } else if (!content.firstChild) content.replaceChildren(el('webui-flex', { align: 'center', gap: 'var(--padding)' }, 'Loading…'));
+            } else if (replacing || !content.firstChild) t.showLoading();
             // A plugin's settings belong to projects, so one not set up for this project shows how to set it up.
             const plugins = await webui.proxy.plugins.list(() => undefined);
             if (load !== t._load) return;
@@ -448,6 +490,7 @@
             box.appendChild(settings);
             t._shownKey = null;
             t.content().replaceChildren(box);
+            t.arrive();
         },
         showError(message) {
             const t = this;
@@ -458,6 +501,7 @@
             box.append(alert, retry);
             t._shownKey = null;
             t.content().replaceChildren(box);
+            t.arrive();
         },
         /** Draws a node from another plugin call, such as a branch card, without loading a page. */
         showNode(node, plugin, page) {
@@ -468,6 +512,40 @@
             t._params = {};
             t.draw(node);
         },
+        /** Says the page is loading, centered where it will show, until it is drawn. */
+        showLoading() {
+            const t = this;
+            const content = t.content();
+            const loading = el('div', { class: 'plugin-loading', role: 'status', 'aria-live': 'polite' });
+            loading.appendChild(el('span', {}, 'Loading Content'));
+            content.replaceChildren(loading);
+            t.enter(content);
+            // What is drawn next comes in as a new page does.
+            t._entering = true;
+        },
+        /** Fades and shrinks the page out, as Web UI pages leave, before another is loaded in its place. */
+        async leave() {
+            const content = this.content();
+            content.classList.remove('plugin-entering');
+            content.classList.add('plugin-leaving');
+            await new Promise(resolve => setTimeout(resolve, LEAVE_MS));
+        },
+        /** What was just drawn comes in as a new page does, after the page left or said it was loading. */
+        arrive() {
+            const t = this;
+            const content = t.content();
+            if (t._entering || content.classList.contains('plugin-leaving')) t.enter(content);
+            t._entering = false;
+        },
+        /** Fades and grows the page in, as Web UI pages arrive. */
+        enter(content) {
+            content.classList.remove('plugin-leaving', 'plugin-entering');
+            // Read so the animation starts again when it was already running.
+            void content.offsetWidth;
+            content.classList.add('plugin-entering');
+            clearTimeout(content._enterTimer);
+            content._enterTimer = setTimeout(() => content.classList.remove('plugin-entering'), ENTER_MS);
+        },
         draw(node, key = null) {
             const t = this;
             t._node = node;
@@ -476,6 +554,7 @@
             t._ctx = 'page';
             const content = t.content();
             content.replaceChildren(t.build(node));
+            t.arrive();
             t.syncToggles(content);
             // A reorder list moved from the keyboard keeps focus on the item that moved, after the plugin redraws.
             const refocus = t._refocus;
@@ -649,7 +728,7 @@
                 button.dataset.toggles = `${node.action.host.key ?? ''}`;
                 button.classList.add('plugin-toggle');
             }
-            button.addEventListener('click', () => t.run(node.action, undefined, ctx));
+            button.addEventListener('click', () => t.run(node.action, undefined, ctx, button));
             return button;
         },
         /** A button with on (spec 0.1.4): a switch between two states, which runs its action when clicked. */
@@ -971,7 +1050,7 @@
                     webui.alert(`${escape(missing.label || missing.name)} is required.`, 'warning');
                     return;
                 }
-                t.run(current(), values, ctx);
+                t.run(current(), values, ctx, submit);
             };
             submit.addEventListener('click', send);
             form.addEventListener('submit', ev => {
@@ -1036,11 +1115,17 @@
             return result || {};
         },
         /** Runs an action: Task Proxy's own when it names one, otherwise the plugin's. */
-        async run(action, form, ctx = 'page') {
+        /**
+         * Runs an action. The button that ran it, when given, is disabled and says Loading Content until the action
+         * and whatever it loads, such as a search's results, are done.
+         */
+        async run(action, form, ctx = 'page', trigger = null) {
             const t = this;
-            if (!action || t._running) return;
+            if (!action || t._running || trigger?.hasAttribute('disabled')) return;
             if (!await confirmFirst(action.confirm)) return;
             t._running = true;
+            // Host actions, such as toggling a panel, finish at once, so only the plugin's own make a button busy.
+            const done = trigger && !action.host ? busyButton(trigger) : () => { };
             t.classList.add('plugin-busy');
             t._dialog?.box.classList.add('plugin-busy');
             try {
@@ -1060,11 +1145,19 @@
                     webui.alert(escape(error), 'danger');
                     return;
                 }
+                const loads = [t, t._sideOf].filter(Boolean).map(page => [page, page._load]);
                 t.apply(result || {}, ctx);
+                t._running = false;
+                t.classList.remove('plugin-busy');
+                t._dialog?.box.classList.remove('plugin-busy');
+                // The button stays busy while the content the action asked for loads.
+                const started = loads.filter(([page, before]) => page._load !== before).map(([page]) => page._loading);
+                if (trigger && started.length) await Promise.allSettled(started);
             } finally {
                 t._running = false;
                 t.classList.remove('plugin-busy');
                 t._dialog?.box.classList.remove('plugin-busy');
+                done();
             }
         },
         apply(result, ctx = 'page') {
@@ -1090,12 +1183,13 @@
                 // history entry, so Back still leaves the page.
                 const here = new URL(url, location.origin);
                 if (samePage && here.pathname === location.pathname && here.search === location.search) {
-                    t.load();
+                    t.load({ fresh: true });
                     return;
                 }
                 webui.navigateTo(url);
-                // The app only loads a page when its path changes, so a new query for this page is loaded here.
-                if (samePage && location.pathname === t.path()) t.load();
+                // The app only loads a page when its path changes, so a new query for this page is loaded here. It is
+                // the user's own search, so it is loaded fresh rather than shown from before.
+                if (samePage && location.pathname === t.path()) t.load({ fresh: true });
                 return;
             }
             if (result.dialog) t.openDialog(result.dialog);
@@ -1108,9 +1202,9 @@
             }
             // Whether the page beside covers this one (spec 0.1.4), from either of them.
             if (typeof result.cover === 'boolean') (t._sideOf || t).setCover(result.cover);
-            if (result.refresh && !t._staticNode) t.load();
+            if (result.refresh && !t._staticNode) t.load({ fresh: true });
             // A change made beside the page, such as an issue's status, shows in the page too.
-            if (result.refresh && t._sideOf) t._sideOf.load();
+            if (result.refresh && t._sideOf) t._sideOf.load({ fresh: true });
             if (result.refresh && t._staticNode) t.dispatchEvent(new CustomEvent('plugin-refresh', { bubbles: true }));
         },
         /**

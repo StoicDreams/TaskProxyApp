@@ -118,8 +118,8 @@ pub(crate) async fn delete_securitykey() -> Result<String, String> {
         Ok(String::from("Security Key Deleted!"))
     })
     .await;
-    let result = result.map_err(|err| format!("{}", err))?;
-    result
+
+    result.map_err(|err| format!("{}", err))?
 }
 
 pub(crate) fn get_state_data<T: Clone + Send + Sync + 'static>(
@@ -171,7 +171,7 @@ async fn save_projects_if_any(
         }
         projects
     };
-    save_projects_to_local_storage(&app_handle, &projects).await
+    save_projects_to_local_storage(app_handle, &projects).await
 }
 
 /// Save projects to local data storage
@@ -328,10 +328,11 @@ fn decrypt_bytes(passphrase: &str, encrypted: &[u8]) -> Result<Vec<u8>, String> 
 /// An existing file that fails to decrypt is moved aside so that re-entering the
 /// original key can recover it, see `restore_unreadable_files`.
 fn store_encrypted(path: &Path, passphrase: &str, plain: &[u8]) -> Result<(), String> {
-    if let Ok(existing) = fs::read(path) {
-        if !existing.is_empty() && decrypt_bytes(passphrase, &existing).is_err() {
-            quarantine_file(path).map_err(|err| err.to_string())?;
-        }
+    if let Ok(existing) = fs::read(path)
+        && !existing.is_empty()
+        && decrypt_bytes(passphrase, &existing).is_err()
+    {
+        quarantine_file(path).map_err(|err| err.to_string())?;
     }
     let encrypted = encrypt_bytes(passphrase, plain)?;
     write_atomic(path, &encrypted).map_err(|err| err.to_string())

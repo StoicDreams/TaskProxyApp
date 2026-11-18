@@ -1,28 +1,5 @@
 use crate::prelude::*;
 
-#[derive(Clone, Debug)]
-pub(crate) struct SerializableSecret(pub SecretString);
-
-impl Serialize for SerializableSecret {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // WARNING: This will expose the secret in the serialized data
-        serializer.serialize_str(self.0.expose_secret())
-    }
-}
-
-impl<'de> Deserialize<'de> for SerializableSecret {
-    fn deserialize<D>(deserializer: D) -> Result<SerializableSecret, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Ok(SerializableSecret(SecretString::new(s.into())))
-    }
-}
-
 pub(crate) type CurrentProject = Arc<Mutex<ProjectData>>;
 pub(crate) type SharedProjects = Arc<Mutex<Vec<Project>>>;
 pub(crate) type SharedAppData = Arc<Mutex<TaskProxyData>>;

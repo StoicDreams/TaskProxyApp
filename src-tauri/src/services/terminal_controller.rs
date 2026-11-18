@@ -90,16 +90,16 @@ pub(crate) struct PowerShellStatus {
 
 /// Find PowerShell, remembering a positive result because each check starts a new process.
 fn resolve_pwsh() -> (bool, String) {
-    if let Ok(cached) = PWSH_EXECUTABLE.lock() {
-        if let Some(executable) = cached.as_ref() {
-            return (true, executable.clone());
-        }
+    if let Ok(cached) = PWSH_EXECUTABLE.lock()
+        && let Some(executable) = cached.as_ref()
+    {
+        return (true, executable.clone());
     }
     let result = is_pwsh_installed();
-    if result.0 {
-        if let Ok(mut cached) = PWSH_EXECUTABLE.lock() {
-            *cached = Some(result.1.clone());
-        }
+    if result.0
+        && let Ok(mut cached) = PWSH_EXECUTABLE.lock()
+    {
+        *cached = Some(result.1.clone());
     }
     result
 }
@@ -448,8 +448,13 @@ fn spawn_in_pty(
     for (name, value) in env {
         cmd.env(name, value);
     }
-    #[cfg(target_os = "linux")]
-    cmd.env_remove("LD_LIBRARY_PATH");
+    // The computer's own environment, not an AppImage's, so the script's tools load their own libraries.
+    for (name, value) in host_env() {
+        match value {
+            Some(value) => cmd.env(name, value),
+            None => cmd.env_remove(name),
+        }
+    }
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -503,11 +508,11 @@ fn write_private_file(path: &Path, contents: &str) -> io::Result<()> {
 
 /// Remove temp scripts left behind if the app did not shut down cleanly.
 pub(crate) fn remove_stale_temp_scripts(app_handle: &AppHandle) {
-    if let Ok(dir) = temp_script_dir(app_handle) {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let _ = fs::remove_file(entry.path());
-            }
+    if let Ok(dir) = temp_script_dir(app_handle)
+        && let Ok(entries) = fs::read_dir(dir)
+    {
+        for entry in entries.flatten() {
+            let _ = fs::remove_file(entry.path());
         }
     }
 }
@@ -621,7 +626,12 @@ pub(crate) async fn spawn_script(
             ];
             for term in terminal_emulators {
                 let mut cmd = AsyncCommand::new(term);
-                cmd.env_remove("LD_LIBRARY_PATH");
+                for (name, value) in host_env() {
+                    match value {
+                        Some(value) => cmd.env(name, value),
+                        None => cmd.env_remove(name),
+                    };
+                }
                 match term {
                     "konsole" => {
                         cmd.arg("-e")
@@ -684,14 +694,14 @@ pub(crate) async fn spawn_script(
                     .map_err(|e| format!("Failed to launch macOS terminal: {}", e))?,
             );
         }
-        if let Some(mut child) = child_opt {
-            if let Some(cleanup) = temp_cleanup.take() {
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                    sleep(SEPARATE_WINDOW_CLEANUP_DELAY).await;
-                    drop(cleanup);
-                });
-            }
+        if let Some(mut child) = child_opt
+            && let Some(cleanup) = temp_cleanup.take()
+        {
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+                sleep(SEPARATE_WINDOW_CLEANUP_DELAY).await;
+                drop(cleanup);
+            });
         }
         return Ok(ScriptStarted {
             message: "Script launched in separate OS window.".into(),
@@ -1255,12 +1265,11 @@ mod tests {
                 .unwrap()
                 .unwrap();
             seen.push_str(&String::from_utf8_lossy(&chunk));
-            if let Some(rest) = seen.split("child=").nth(1) {
-                if let Some(pid) = rest.split_whitespace().next() {
-                    if rest.contains('\n') {
-                        break pid.parse().unwrap();
-                    }
-                }
+            if let Some(rest) = seen.split("child=").nth(1)
+                && let Some(pid) = rest.split_whitespace().next()
+                && rest.contains('\n')
+            {
+                break pid.parse().unwrap();
             }
         };
         assert!(is_alive(grandchild));

@@ -77,6 +77,87 @@ header h1.editable-title:empty::before {
     opacity: 0.8;
 }
 
+/* A page loading, centered where it will show. */
+.plugin-loading {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    min-height: 12em;
+    font-size: 1.25em;
+    opacity: 0.8;
+}
+
+.plugin-loading > span::after {
+    display: inline-block;
+    width: 1.5em;
+    text-align: left;
+    content: '';
+    animation: plugin-loading-dots 1.5s steps(4, end) infinite;
+}
+
+/* A page beside another fills its side while it loads, so Loading Content is centered in it. */
+app-plugin-page.plugin-split-page:has(> .plugin-loading) {
+    display: flex;
+    flex: 1 1 auto;
+}
+
+/* Pages leave and arrive as Web UI pages do. */
+.plugin-ui.plugin-leaving {
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease;
+    transform: scale(0.97);
+    opacity: 0;
+}
+
+.plugin-entering {
+    animation: plugin-enter 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.plugin-button-busy {
+    cursor: progress;
+}
+
+@keyframes plugin-enter {
+    from {
+        transform: scale(0.97);
+        opacity: 0;
+    }
+
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes plugin-loading-dots {
+    0% {
+        content: '';
+    }
+
+    25% {
+        content: '.';
+    }
+
+    50% {
+        content: '..';
+    }
+
+    75% {
+        content: '...';
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plugin-ui.plugin-leaving {
+        transition: none;
+    }
+
+    .plugin-entering,
+    .plugin-loading > span::after {
+        animation: none;
+    }
+}
+
 .plugin-muted {
     opacity: 0.75;
 }
@@ -676,4 +757,92 @@ webui-drawer.shared h6 {
 .app-image-menu button:focus-visible {
     background-color: var(--color-primary, #446);
     color: var(--color-primary-offset, #fff);
+}
+
+/*
+ * Themes for webui-theme-selector in the header (index.html). The default is Web UI's own dark theme. Each theme sets
+ * the base colors the selector lets you adjust, and each color's offset is white or black, whichever reads better.
+ */
+:root[data-theme="midnight"] {
+    --color-background: #0f1724;
+    --color-background-offset: var(--color-white);
+    --color-title: #1f3a5f;
+    --color-title-offset: var(--color-white);
+    --color-primary: #2563eb;
+    --color-primary-offset: var(--color-white);
+    --color-secondary: #334155;
+    --color-secondary-offset: var(--color-white);
+    --color-tertiary: #7c3aed;
+    --color-tertiary-offset: var(--color-white);
+    --color-active: #0d9488;
+    --color-active-offset: var(--color-black);
+    --color-button: #0369a1;
+    --color-button-offset: var(--color-white);
+}
+:root[data-theme="forest"] {
+    --color-background: #17201b;
+    --color-background-offset: var(--color-white);
+    --color-title: #2f5d3a;
+    --color-title-offset: var(--color-white);
+    --color-primary: #3f7d4e;
+    --color-primary-offset: var(--color-white);
+    --color-secondary: #4b5d43;
+    --color-secondary-offset: var(--color-white);
+    --color-tertiary: #a16207;
+    --color-tertiary-offset: var(--color-white);
+    --color-active: #4d7c0f;
+    --color-active-offset: var(--color-white);
+    --color-button: #15803d;
+    --color-button-offset: var(--color-white);
+}
+:root[data-theme="daylight"] {
+    color-scheme: light;
+    --color-background: #f4f5f7;
+    --color-background-offset: var(--color-black);
+    --color-title: #1e5fa8;
+    --color-title-offset: var(--color-white);
+    --color-primary: #3b4fd8;
+    --color-primary-offset: var(--color-white);
+    --color-secondary: #dde3ec;
+    --color-secondary-offset: var(--color-black);
+    --color-tertiary: #b4237d;
+    --color-tertiary-offset: var(--color-white);
+    --color-active: #0f766e;
+    --color-active-offset: var(--color-white);
+    --color-button: #1d4ed8;
+    --color-button-offset: var(--color-white);
+}
+:root[data-theme="paper"] {
+    color-scheme: light;
+    --color-background: #f6f1e7;
+    --color-background-offset: var(--color-black);
+    --color-title: #7a4b2a;
+    --color-title-offset: var(--color-white);
+    --color-primary: #8a4b2f;
+    --color-primary-offset: var(--color-white);
+    --color-secondary: #e8dfcf;
+    --color-secondary-offset: var(--color-black);
+    --color-tertiary: #44606f;
+    --color-tertiary-offset: var(--color-white);
+    --color-active: #2f6b4f;
+    --color-active-offset: var(--color-white);
+    --color-button: #6b4226;
+    --color-button-offset: var(--color-white);
+}
+:root[data-theme="sky"] {
+    color-scheme: light;
+    --color-background: #eef5fb;
+    --color-background-offset: var(--color-black);
+    --color-title: #0e7490;
+    --color-title-offset: var(--color-white);
+    --color-primary: #0369a1;
+    --color-primary-offset: var(--color-white);
+    --color-secondary: #d6e6f3;
+    --color-secondary-offset: var(--color-black);
+    --color-tertiary: #7c3aed;
+    --color-tertiary-offset: var(--color-white);
+    --color-active: #047857;
+    --color-active-offset: var(--color-white);
+    --color-button: #0284c7;
+    --color-button-offset: var(--color-black);
 }

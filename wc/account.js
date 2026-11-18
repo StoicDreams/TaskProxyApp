@@ -18,6 +18,45 @@
             .finally(() => reading = null);
         return reading;
     }
+    /**
+     * What the sign-in dialog shows: the code StoicDreams.com should show, as a button that copies it, and the page's
+     * address when the browser didn't open it.
+     */
+    function signInContent(started) {
+        const box = webui.create('div', { class: 'myfi-sign-in' });
+        const status = webui.create('p', { class: 'myfi-copied', 'aria-live': 'polite' });
+        const copyButton = (label, text, done, attrs = {}) => {
+            const button = webui.create('button', { type: 'button', ...attrs });
+            button.textContent = label;
+            button.addEventListener('click', async ev => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (await webui.proxy.copyText(text, err => { status.textContent = `${err}`; })) status.textContent = done;
+            });
+            return button;
+        };
+        box.append(webui.create('p', {
+            text: started.opened
+                ? 'Your browser opened StoicDreams.com. Sign in there if it asks, then approve the sign-in if it shows this code:'
+                : 'Your browser didn\'t open, so open this page in it. Sign in there if it asks, then approve the sign-in if it shows this code:',
+        }));
+        if (!started.opened) {
+            const link = webui.create('p', { class: 'myfi-link', style: 'display:flex;flex-wrap:wrap;align-items:center;gap:0.5em;word-break:break-all;' });
+            link.append(webui.create('code', { text: started.url }), copyButton('Copy Link', started.url, 'Copied the link.', { class: 'myfi-copy-link' }));
+            box.append(link);
+        }
+        box.append(
+            copyButton(started.code, started.code, 'Copied the code.', {
+                class: 'myfi-code',
+                title: 'Copy the code',
+                'aria-label': `Copy the code ${started.code}`,
+                style: 'display:block;margin:0.5em auto;padding:0.2em 0.6em;font-size:2em;font-family:monospace;letter-spacing:0.15em;cursor:pointer;',
+            }),
+            webui.create('p', { text: 'Select the code to copy it. This closes by itself once you approve.' }),
+            status,
+        );
+        return box;
+    }
     webui.define("app-account", {
         connected() {
             const t = this;
@@ -91,15 +130,11 @@ ${offline}
                 const started = await webui.proxy.myfi.signInStart();
                 if (!started) return;
                 let done = false;
+                const content = signInContent(started);
                 const dialog = webui.dialog({
                     title: 'Sign In',
-                    content: `
-<div class="myfi-sign-in">
-<p>Your browser opened StoicDreams.com. Sign in there if it asks, then approve the sign-in if it shows this code:</p>
-<p class="myfi-code" style="font-size:2em;font-family:monospace;letter-spacing:0.15em;text-align:center;margin:0.5em 0;">${esc(started.code)}</p>
-<p>This closes by itself once you approve.</p>
-</div>`,
-                    confirm: 'Open the Page Again',
+                    content,
+                    confirm: started.opened ? 'Open the Page Again' : 'Open the Page',
                     cancel: 'Cancel',
                     onconfirm: () => {
                         webui.proxy.openUrl(started.url);

@@ -34,18 +34,17 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
             eprintln!("{}", err);
         }
 
-        if let Ok(data) = get_state_data::<TaskProxyData>(&app_handle) {
-            if let Ok(current_json) = crate::common::to_json(&data) {
-                if current_json != last_app_data_json {
-                    println!("App data changed. Attempting to save...");
-                    match save_app_data_to_local_storage(&app_handle, &data).await {
-                        Ok(msg) => {
-                            println!("{}", msg);
-                            last_app_data_json = current_json;
-                        }
-                        Err(err) => eprintln!("{}", err),
-                    }
+        if let Ok(data) = get_state_data::<TaskProxyData>(&app_handle)
+            && let Ok(current_json) = crate::common::to_json(&data)
+            && current_json != last_app_data_json
+        {
+            println!("App data changed. Attempting to save...");
+            match save_app_data_to_local_storage(&app_handle, &data).await {
+                Ok(msg) => {
+                    println!("{}", msg);
+                    last_app_data_json = current_json;
                 }
+                Err(err) => eprintln!("{}", err),
             }
         }
 
@@ -53,16 +52,16 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
             if data.id.is_empty() {
                 continue;
             }
-            if let Ok(current_json) = crate::common::to_json(&data) {
-                if current_json != last_project_data_json {
-                    println!("Project data changed. Attempting to save...");
-                    match persist_project_data(data, &app_handle).await {
-                        Ok(msg) => {
-                            println!("{}", msg);
-                            last_project_data_json = current_json;
-                        }
-                        Err(err) => eprintln!("{}", err),
+            if let Ok(current_json) = crate::common::to_json(&data)
+                && current_json != last_project_data_json
+            {
+                println!("Project data changed. Attempting to save...");
+                match persist_project_data(data, &app_handle).await {
+                    Ok(msg) => {
+                        println!("{}", msg);
+                        last_project_data_json = current_json;
                     }
+                    Err(err) => eprintln!("{}", err),
                 }
             }
         }

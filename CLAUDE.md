@@ -18,15 +18,16 @@ cargo check -p taskproxy         # Type-check the backend (use -p: the root crat
 cargo clippy -p taskproxy        # Lint the backend
 cargo fmt --all                  # Format Rust
 cargo test -p taskproxy <name>   # Run one Rust test by name filter
-npm test                         # UI tests against the source files (npm install first)
+npm test                         # UI tests against the source files (npm install first), skipping unchanged ones
+PW_NO_CACHE=1 npm test           # Every UI test, ignoring the test cache
 npm run test:min                 # UI tests against the .min.js files, as CI runs them
-npm run test:stress -- <spec>    # Run specs 10 times each under heavy parallel load, to find timing races
+pwsh ./PowerShell/StressTests.ps1 # Erik's weekly stress run: the week's affected tests, 10 times each under heavy load (-All, -Days, -Repeat)
 npx playwright test -g "<name>"  # Run UI tests by name
 npm run capture                  # Regenerate the website's loops and videos (tools/capture/README.md)
 npm run capture -- loops -g "<name>"    # One website loop
 pwsh ./PowerShell/IncrementVersion.ps1            # Bump patch version (-minor / -major)
 pwsh ./PowerShell/Minify.ps1                      # Regenerate every .min.js and .min.css with esbuild
-pwsh ./PowerShell/Publish.ps1                     # Before a release: version bump, minify, CI's tests, then start re-recording the website's media without waiting for it (-SkipMinify, -SkipTests, -SkipScreenshots or -SkipMedia, -WaitForScreenshots, -Version minor)
+pwsh ./PowerShell/Publish.ps1                     # Before a release: minify, CI's tests, then the version bump (so a failed run leaves the version alone), then start re-recording the website's media without waiting for it (-SkipMinify, -SkipTests, -NoCache, -SkipScreenshots or -SkipMedia, -WaitForScreenshots, -Version minor)
 pwsh ./PowerShell/screenshots.ps1                 # Re-record every TaskProxy.com loop and video in the website checkout beside this repo (-OutputPath)
 ```
 
@@ -44,24 +45,31 @@ Rust tests are `#[cfg(test)]` modules in `src-tauri/src`. They need `dist/` to e
 - To check that nothing was called, wait for what the app does instead (its alert, the dialog closing), then check.
 - Debounces, intervals, and dates use `page.clock`. An order between responses is forced with a promise the test resolves, not a delay.
 - No longer timeouts, retries, or `toPass` to get a test through.
-- `npm run test:stress -- <spec>` must pass every time for each new or changed spec, then `npm run test:min` once. Never report tests as passing after a rerun made a failure go away.
+- Run each new or changed spec. Don't run the whole suite: `Publish.ps1` runs every test, as CI does, before each of Erik's commits. Never report tests as passing after a rerun made a failure go away.
+- **Stress runs are Erik's, once a week,** with `PowerShell/StressTests.ps1` from the Dev page. Don't stress specs as part of a task. They never run in a normal test run, Publish, or CI.
 - A test that breaks these rules is a bug, and bugs come first (Erik's standard, in `Websites/CLAUDE.md`): fix it as soon as it is found, in whichever spec it is. Never mark a test flaky, skipped, or expected to fail.
+
+**UI tests skip what hasn't changed** (`tests/support/test-cache.mjs`). While a test runs, the harness records every file it used: those served to the page, files the spec reads, the CDN files it downloaded, and the support files. When it passes, that list is saved with a hash of each file, one file per test in `.test-cache/`, which git ignores. Next run, a test whose files all hash the same is skipped as unchanged. So a change to `app.js` or `index.html`, which every test loads, reruns everything, and a change to one component reruns only the tests that loaded it.
+
+- **Every test runs** with `PW_NO_CACHE=1`, under `--repeat-each` (so stress runs always run), on a retry, with `Publish.ps1 -NoCache` or a minor or major version, and on CI for a commit whose message has `[full tests]`. CI keeps the cache between runs with `actions/cache`.
+- **A test that starts a program itself can't be seen reading files, so it is never cached.** Programs Playwright starts don't count.
+- **A spec that reads something the cache can't see,** such as an environment variable or the network outside the CDN, needs that added to what it records, or it may be skipped when it shouldn't be.
 
 UI tests use Playwright and follow the MyFiCDN conventions. `tests/support/app.mjs` serves the frontend straight from the repo with no build or server, and `tests/support/backend.mjs` stands in for every Tauri command through a mock `window.__TAURI__`. Each `wc/` component has a spec in `tests/components/`, and app-wide behavior is in `tests/app/`. `tests/coverage.spec.mjs` fails when a component has no spec, or when a command called from `app.js` is not registered in `lib.rs` or not mocked. Any uncaught error fails the test it happens in.
 
 - **UI tests load `webui-*` components from the live CDN,** so a CDN deploy that breaks the app fails them. `tests/support/app.mjs` downloads each file once per test worker, retrying a failed download, and answers from memory after that, so they need network access but not a request per test. Set `WEBUI_CDN_ROOT` to a MyFiCDN checkout's `cdn` folder to test against components that are not deployed yet. When an app change depends on a CDN change, deploy the CDN first, or CI fails.
 - **`npm test` runs the sources and CI runs the minified files,** for both `.min.js` and `app.min.css`, so after re-minifying, run `npm run test:min` before pushing.
-- **CI's runners are slower than a dev machine, so the order of independent async work differs there.** A test that asserts which call came last, or that one part of the app finished before another, can pass every time locally and fail on CI. Wait for the state you expect with `expect.poll` or a locator, and check order with `callOrder` only between calls that depend on each other. Run new or changed specs with `npm run test:stress -- <spec>` before pushing: heavy parallel load is what shows these races locally, and slowing the CPU alone does not. Locally a test that only passes on retry fails. CI retries once, and lists a test that needed it as flaky: that is a test to fix, not a pass. When CI fails, the failed tests are named in the run's annotations, and its `playwright-report` artifact has their traces.
+- **CI's runners are slower than a dev machine, so the order of independent async work differs there.** A test that asserts which call came last, or that one part of the app finished before another, can pass every time locally and fail on CI. Wait for the state you expect with `expect.poll` or a locator, and check order with `callOrder` only between calls that depend on each other. Heavy parallel load is what shows these races locally, and slowing the CPU alone does not, which is what Erik's weekly stress run checks. Locally a test that only passes on retry fails. CI retries once, and lists a test that needed it as flaky: that is a test to fix, not a pass. When CI fails, the failed tests are named in the run's annotations, and its `playwright-report` artifact has their traces.
 - **`tests/app/service-worker.spec.mjs` and `tests/app/scripts.spec.mjs` are shared** with every website and MyFiCDN, so change them in all of them at once. The script tests run the `PowerShell/` scripts in temporary folders and need `pwsh`.
 
 ## Things that will catch you out
 
 - **Pushing to `main` releases.** `.github/workflows/deploy.yml` runs on every push to `main`: after the backend tests pass, it builds, signs, and publishes to the CDN and the app catalog. There is no separate PR workflow.
-- **The app runs `.min.js` files, and they are committed.** `index.html`, the worker registration, and the component loader all reference minified files, so editing `wc/foo.js`, `root_files/app.js`, or `css/app.css` has no effect until the matching `.min` file is regenerated. The maintainer regenerates them with `PowerShell/Minify.ps1`, which downloads and runs the latest esbuild, or a minifier bound to a keyboard shortcut in their IDE. Don't edit or generate `.min` files unless asked; after changing a source file, list the ones that need re-minifying. Both versions get committed.
+- **The app runs `.min.js` files, and they are committed.** `index.html`, the worker registration, and the component loader all reference minified files, so editing `wc/foo.js`, `root_files/app.js`, or `css/app.css` has no effect until the matching `.min` file is regenerated. After changing a source file, regenerate them with `pwsh ./PowerShell/Minify.ps1`, which downloads and runs the latest esbuild, and never edit a `.min` file by hand. Both versions get committed.
 - **Don't open devtools during startup.** On WebKitGTK, attaching the inspector in the setup hook hung the page right after first render on a profile with existing WebKit data, while a fresh profile looked fine. Set `TASKPROXY_DEVTOOLS=1` to opt in for a debug run, or use the page's context menu.
 - **Don't bump versions by hand.** The version lives in `Cargo.toml`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` (`version` and `userAgent`), `deploy.yml`, `Docs/README.md`, and `root_files/service-worker{,.min}.js`. `IncrementVersion.ps1` updates them all. Don't write the current version anywhere else, such as in a docs table: `scripts.spec.mjs` takes every file that holds it for a version file, and fails when the bump leaves it there. Name a release by the one before it, as "after 0.1.121".
 - **`src/` is not the app.** The root `taskproxy-ui` crate is an empty WASM stub that Trunk builds. The backend is the `taskproxy` crate in `src-tauri/`, and the frontend is `wc/`, `root_files/`, `d/`, `css/`, and `index.html`.
-- **The app always runs the Web UI loader from the CDN, in development too.** There is no local copy: change the loader in `cdn/webui/loader.js` in StoicDreams/MyFiCDN. To try an unreleased loader or component here, run the tests with `WEBUI_CDN_ROOT` set to a MyFiCDN checkout's `cdn` folder.
+- **The app runs the Web UI loader from the CDN, and there is no local copy:** change the loader in `cdn/webui/loader.js` in StoicDreams/MyFiCDN. A development build loads it from a local MyFiCDN server instead when one answers at `http://127.0.0.1:3180` (MyFiCDN's `PowerShell/RunLocal.ps1`): Trunk's post_build hook runs `PowerShell/LocalCdn.ps1`, which rewrites cdn.myfi.ws in the staged `index.html` and `d/` pages, and the loader loads everything else from wherever it came from. `TASKPROXY_CDN` names another server, or `live` keeps cdn.myfi.ws; release builds are never changed. To test against an unreleased loader or component, set `WEBUI_CDN_ROOT` to a MyFiCDN checkout's `cdn` folder.
 - **The Web UI framework changes underneath released apps.** `webui-*` components, the markdown parser, shared CSS, and the loader all load from `cdn.myfi.ws` at runtime, and their source is not in this repo. A CDN deploy reaches installed apps without a release, so `app.js` and `wc/` must keep working with what is live there.
 - **"Script error." with no file or line usually comes from a CDN component.** WebKit hides the details of these errors. Reproducing the action in Chromium shows the real message and stack.
 - **The AppImage brings its own GStreamer, so it must bring the plugins too.** It bundles the build machine's GStreamer library, which cannot load the user's newer system plugins, and WebKit aborts the page (a gray window) when it finds no audio sink for a video. `bundleMediaFramework` in `tauri.conf.json` and the GStreamer packages the Linux build job installs keep media playable; `cargo tauri dev`, `.deb` and `.rpm` use the system's GStreamer and never show this.
@@ -123,6 +131,7 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 | Project variable values | `webui.projectData.data` / `CurrentProject` | `<path-hash>.enc` |
 | Project's last page | `webui.projectData.currentPage` | `<path-hash>.cp.enc` |
 | Nav, variable definitions, pages, scripts | `webui.projectData` | `<project>/.taskproxy/`, committed with that project |
+| The project's icon, an image in its repo | `services/project_icons.rs` | `<project>/.taskproxy/Project.json`, committed with that project |
 
 `.enc` files live in the app-local data dir, encrypted with AES-256-GCM (`src-tauri/src/appdata.rs`) using a passphrase held in the OS keychain.
 

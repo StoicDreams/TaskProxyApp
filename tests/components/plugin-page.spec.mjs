@@ -239,6 +239,36 @@ test.describe('a page beside another', () => {
         await expect(split(page).locator('[slot="start"]')).toContainText('Sorted by key');
     });
 
+    test('another page opened beside leaves, says Loading Content in the middle of its side, and comes in once loaded', async ({ page }) => {
+        await openBeside(page);
+        // The next item is slow to load.
+        await onCommand(page, 'plugin_render', ({ page, params }) => page !== 'item' ? window.__list
+            : params.key === 'P-1' ? { type: 'text', text: 'Item P-1' }
+                : new Promise(resolve => { window.__answer = () => resolve({ type: 'text', text: `Item ${params.key}` }); }));
+        await side(page).evaluate(node => {
+            window.__classes = new Set();
+            new MutationObserver(() => node.classList.forEach(name => window.__classes.add(name))).observe(node, { attributeFilter: ['class'] });
+        });
+        await link(page, 'P-2').click();
+        const loading = side(page).locator('.plugin-loading');
+        await expect(loading).toHaveText(/^Loading Content/);
+        await expect(side(page)).not.toContainText('Item P-1');
+        await expect(loading).toHaveAttribute('role', 'status');
+        // Centered in the side, below its tools.
+        const box = await loading.boundingBox();
+        const pane = await split(page).locator('[slot="end"]').boundingBox();
+        expect(box.height).toBeGreaterThan(pane.height / 2);
+        expect(Math.abs((box.x + box.width / 2) - (pane.x + pane.width / 2))).toBeLessThan(pane.width * 0.1);
+        await expect.poll(() => page.evaluate(() => typeof window.__answer)).toBe('function');
+        await page.evaluate(() => window.__answer());
+        await expect(side(page)).toContainText('Item P-2');
+        await expect(loading).toHaveCount(0);
+        // It left and came in as Web UI pages do.
+        expect(await page.evaluate(() => [...window.__classes].sort())).toEqual(expect.arrayContaining(['plugin-entering', 'plugin-leaving']));
+        // The list it is beside stayed as it was.
+        await expect(split(page).locator('[slot="start"] table')).toBeVisible();
+    });
+
     test('too narrow for both, the side page covers the page, with a button back to each', async ({ page }) => {
         await openBeside(page, 900);
         await expect(split(page)).toHaveAttribute('narrow', '');
@@ -280,6 +310,56 @@ test('a form with changed shows Refresh until a field changes, then Search, and 
     await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBe(renders + 1);
     await expect.poll(() => page.evaluate(() => history.length)).toBe(history);
     await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.form)).toEqual([{ jql: 'order by key', 'f.type': [] }]);
+});
+
+test('a search or refresh disables its button, which says Loading Content until the results are drawn', async ({ page }) => {
+    const form = results => ({
+        type: 'stack', children: [
+            { type: 'form', fields: [{ name: 'jql', label: 'JQL', kind: 'text', value: 'order by key' }], buttons: [], submit: action('search', 'Refresh', { icon: 'refresh' }) },
+            text(results),
+        ],
+    });
+    await openPlugin(page, form('The results'), { pluginActions: { 'test/search': { refresh: true } } });
+    const view = page.locator('app-plugin-page');
+    await onCommand(page, 'plugin_render', () => new Promise(resolve => { window.__answer = resolve; }));
+    const button = view.locator('.plugin-form-actions webui-button');
+    await button.click();
+    await expect(button).toHaveText('Loading Content');
+    await expect(button).toHaveAttribute('disabled', '');
+    await expect(button).toHaveAttribute('start-icon', 'hourglass');
+    // What was found before stays while the search runs again, and clicking again does nothing.
+    await expect(view).toContainText('The results');
+    await button.click({ force: true });
+    expect((await calls(page, 'plugin_action')).length).toBe(1);
+    await expect.poll(() => page.evaluate(() => typeof window.__answer)).toBe('function');
+    await page.evaluate(node => window.__answer(node), form('The newer results'));
+    await expect(view).toContainText('The newer results');
+    await expect(button).toHaveText('Refresh');
+    await expect(button).not.toHaveAttribute('disabled', '');
+    await expect(button).toHaveAttribute('start-icon', 'refresh');
+});
+
+test('a button for something the app does itself, such as a panel, is never made busy', async ({ page }) => {
+    await openPlugin(page, {
+        type: 'stack', children: [
+            { type: 'button', action: { id: 'more', label: 'More', host: { type: 'toggle', key: 'more' } } },
+            { type: 'panel', key: 'more', children: [text('The panel')] },
+        ],
+    });
+    const button = page.locator('app-plugin-page webui-button', { hasText: 'More' });
+    await page.evaluate(() => {
+        window.__labels = [];
+        const button = [...document.querySelectorAll('app-plugin-page webui-button')].find(node => node.textContent.includes('More'));
+        // A busy button is disabled as soon as it is clicked, before it says it is loading.
+        new MutationObserver(() => window.__labels.push(button.hasAttribute('disabled'))).observe(button, { attributes: true });
+    });
+    const panel = page.locator('app-plugin-page').getByText('The panel');
+    await button.click();
+    await expect(panel).toBeVisible();
+    await button.click();
+    await expect(panel).toBeHidden();
+    expect(await page.evaluate(() => window.__labels)).not.toContain(true);
+    await expect(button).toHaveText('More');
 });
 
 test.describe('pages drawn before', () => {

@@ -1,7 +1,7 @@
-//! Copies images to the system clipboard.
+//! Copies images and text to the system clipboard.
 //!
 //! WebKitGTK's own Copy Image, and the Clipboard API in the page, report success on Wayland but leave nothing other
-//! apps can paste, so the window sends images here on every platform. The clipboard lives on its own thread for the
+//! apps can paste, so the window sends what it copies here on every platform. The clipboard lives on its own thread for the
 //! life of the app: on Linux the app that copied serves the image to whoever pastes, so it must stay alive.
 
 use std::borrow::Cow;
@@ -13,7 +13,13 @@ use tauri::ipc::{InvokeBody, Request};
 /// The largest image downloaded for copying.
 const MAX_DOWNLOAD: usize = 50 * 1024 * 1024;
 
-type Job = (arboard::ImageData<'static>, Sender<Result<(), String>>);
+/// What to put on the clipboard.
+enum Content {
+    Image(arboard::ImageData<'static>),
+    Text(String),
+}
+
+type Job = (Content, Sender<Result<(), String>>);
 
 static CLIPBOARD: OnceLock<Mutex<Sender<Job>>> = OnceLock::new();
 
@@ -23,15 +29,18 @@ fn clipboard() -> Sender<Job> {
             let (send, receive) = channel::<Job>();
             std::thread::spawn(move || {
                 let mut clipboard = None;
-                for (image, reply) in receive {
+                for (content, reply) in receive {
                     if clipboard.is_none() {
                         clipboard = arboard::Clipboard::new().ok();
                     }
-                    let result = match clipboard.as_mut() {
-                        Some(clipboard) => clipboard
+                    let result = match (clipboard.as_mut(), content) {
+                        (Some(clipboard), Content::Image(image)) => clipboard
                             .set_image(image)
                             .map_err(|err| format!("The image could not be copied: {err}")),
-                        None => Err("The clipboard could not be reached.".to_string()),
+                        (Some(clipboard), Content::Text(text)) => clipboard
+                            .set_text(text)
+                            .map_err(|err| format!("The text could not be copied: {err}")),
+                        (None, _) => Err("The clipboard could not be reached.".to_string()),
                     };
                     let _ = reply.send(result);
                 }
@@ -57,9 +66,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<arboard::ImageData<'static>, String
 }
 
 fn set_image(image: arboard::ImageData<'static>) -> Result<(), String> {
+    put(Content::Image(image))
+}
+
+fn put(content: Content) -> Result<(), String> {
     let (reply, result) = channel();
     clipboard()
-        .send((image, reply))
+        .send((content, reply))
         .map_err(|_| "The clipboard could not be reached.".to_string())?;
     result
         .recv()
@@ -73,6 +86,14 @@ pub(crate) fn may_download(url: &str, file_server_base: Option<&str>) -> bool {
         return true;
     }
     file_server_base.is_some_and(|base| url.starts_with(&format!("{base}/")))
+}
+
+/// Copies text, such as the sign-in code.
+#[tauri::command]
+pub async fn copy_text(text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || put(Content::Text(text)))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 /// Copies an image the window sends as the request's raw bytes.

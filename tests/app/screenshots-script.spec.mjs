@@ -84,7 +84,7 @@ function Start-TaskProxyTerminal { param($Name, $Command, $WorkingDirectory, [sw
 Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
 `;
     function publish(args = [], env = {}, { withScreenshots = true, inTaskProxy = false } = {}) {
-        const steps = ['IncrementVersion', 'Minify', ...(withScreenshots ? ['screenshots'] : [])];
+        const steps = ['Minify', 'IncrementVersion', ...(withScreenshots ? ['screenshots'] : [])];
         const files = Object.fromEntries(steps.map(step => [`PowerShell/${step}.ps1`, stub(step)]));
         const project = tempProject(files);
         copyFileSync(join(scripts, 'Publish.ps1'), join(project.dir, 'PowerShell', 'Publish.ps1'));
@@ -110,16 +110,16 @@ Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
     test('records the screenshots last, once everything else has passed, without Publish waiting for them', async () => {
         const result = publish([], { PUBLISH_DELAY: '3' });
         expect(result.code, result.output).toBe(0);
-        expect(result.ran, 'Publish ended before the screenshots did').toEqual(['IncrementVersion', 'Minify']);
+        expect(result.ran, 'Publish ended before the screenshots did').toEqual(['Minify', 'IncrementVersion']);
         expect(result.output).toContain('Recording in the background.');
         expect(result.output).toContain('Ready to commit.');
-        await settled(result, ['IncrementVersion', 'Minify', 'screenshots']);
+        await settled(result, ['Minify', 'IncrementVersion', 'screenshots']);
     });
     test('run by Task Proxy, they record in its Website media terminal, replacing one still running', () => {
         const result = publish([], {}, { inTaskProxy: true });
         expect(result.code, result.output).toBe(0);
         expect(result.ran).toEqual([
-            'IncrementVersion', 'Minify',
+            'Minify', 'IncrementVersion',
             `terminal Website media replace=True & '${join(result.project.dir, 'PowerShell', 'screenshots.ps1')}'`,
         ]);
         expect(result.output).toContain("'Website media' terminal");
@@ -127,14 +127,14 @@ Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
     test('-WaitForScreenshots records them before Publish ends', () => {
         const result = publish(['-WaitForScreenshots']);
         expect(result.code, result.output).toBe(0);
-        expect(result.ran).toEqual(['IncrementVersion', 'Minify', 'screenshots']);
+        expect(result.ran).toEqual(['Minify', 'IncrementVersion', 'screenshots']);
         expect(result.output).toContain('Ready to commit.');
     });
     test('-SkipScreenshots, or -SkipMedia, leaves them out', () => {
         for (const flag of ['-SkipScreenshots', '-SkipMedia']) {
             const result = publish([flag]);
             expect(result.code, result.output).toBe(0);
-            expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
+            expect(result.ran).toEqual(['Minify', 'IncrementVersion']);
         }
     });
     test('a failed step before them means no screenshots are taken', () => {
@@ -143,7 +143,8 @@ Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
         expect(result.output).not.toContain('Recording');
         // Publish has ended, and it started no recording to run on after it: starting one creates its log.
         expect(existsSync(result.mediaLog)).toBe(false);
-        expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
+        // The version is left alone too, so running Publish again bumps it once.
+        expect(result.ran).toEqual(['Minify']);
     });
     test('with -WaitForScreenshots, failed screenshots make Publish fail', () => {
         const result = publish(['-WaitForScreenshots'], { PUBLISH_FAIL: 'screenshots' });
@@ -154,6 +155,6 @@ Export-ModuleMember -Function Test-TaskProxy, Start-TaskProxyTerminal
     test('a project without screenshots.ps1 publishes as before', () => {
         const result = publish([], {}, { withScreenshots: false });
         expect(result.code, result.output).toBe(0);
-        expect(result.ran).toEqual(['IncrementVersion', 'Minify']);
+        expect(result.ran).toEqual(['Minify', 'IncrementVersion']);
     });
 });

@@ -41,8 +41,11 @@ pub(crate) const DESKTOP_ONLY: &[&str] = &[
     "greet",
     // Previews stream from 127.0.0.1, which a device can't reach. Phase 2 sends files over the connection.
     "get_file_server_base",
+    // Opens a page in the desktop's browser. A device opens links in its own.
+    "open_url",
     // The desktop's own clipboard.
     "copy_image",
+    "copy_text",
     "copy_image_url",
     "auto_install_powershell",
     "check_update",
@@ -116,6 +119,8 @@ remote_commands! {
     // View: look, without changing anything.
     View get_app_data => crate::appdata::get_app_data(app.clone(), app.state()).await.map(|data| redact_app_data(&data));
     View get_projects => projects::get_projects(app.state());
+    View get_project_icons => crate::services::project_icons::get_project_icons(app.state()).await;
+    View get_project_images => crate::services::project_icons::get_project_images(app.state()).await;
     View load_projects => projects::load_projects(app.state(), app.clone()).await;
     View get_project_data => current_project(app, a.get::<Project>("project")?);
     View reload_project_files => match projects::reload_project_files(app.state()).await {
@@ -173,6 +178,7 @@ remote_commands! {
         check_project_patch(app, &patch)?;
         shared_data::patch_project_data(app.clone(), app.state(), app.state(), a.get("id")?, patch, screen(caller, a)?)
     };
+    Work set_project_icon => crate::services::project_icons::set_project_icon(app.state(), a.get("icon")?).await;
     Work save_project_file => projects::save_project_file(app.state(), a.get("filePath")?, a.get("contents")?).await;
     Work rename_project => projects::rename_project(
         app.clone(), app.state(), &a.get::<String>("path")?, &a.get::<String>("newName")?,
@@ -518,6 +524,9 @@ mod tests {
         "get_version",
         "has_securitykey",
         "get_projects",
+        "get_project_icons",
+        "get_project_images",
+        "set_project_icon",
         "load_projects",
         "get_project_file",
         "get_project_file_size",

@@ -203,7 +203,13 @@ test('a refresh keeps the list where it was scrolled to, and only redraws the ro
     const first = view(page).locator('tr.tm-row').first();
     // Scrolled down the list, as a person would, until a row in the middle of it shows and the first row is out of
     // view. Rows sort by name, so worker-50 is in the middle.
-    await row(page, 1050).scrollIntoViewIfNeeded();
+    // Found and scrolled in one step in the page, since a redraw between Playwright finding the row and scrolling it
+    // would leave it holding a row that is gone.
+    await expect.poll(() => view(page).evaluate(list => {
+        const target = list.querySelector('tr.tm-row[data-pid="1050"]');
+        target?.scrollIntoView({ block: 'center' });
+        return !!target;
+    })).toBe(true);
     await expect(row(page, 1050)).toBeInViewport();
     await expect(first).not.toBeInViewport();
     const kept = await row(page, 1050).elementHandle();

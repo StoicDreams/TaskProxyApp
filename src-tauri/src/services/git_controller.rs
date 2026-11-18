@@ -292,18 +292,13 @@ fn merge_branch_into_head(repository: &Repository, branch: &str) -> Result<Strin
         .map_err(|e| e.to_string())?;
     if !branch.contains('/') {
         let remote_branch_name = format!("origin/{}", branch);
-        if let Ok(remote_ref) = repository.resolve_reference_from_short_name(&remote_branch_name) {
-            if let (Some(local_oid), Some(remote_oid)) = (reference.target(), remote_ref.target()) {
-                if local_oid != remote_oid {
-                    if let Ok((_ahead, behind)) =
-                        repository.graph_ahead_behind(local_oid, remote_oid)
-                    {
-                        if behind > 0 {
-                            reference = remote_ref;
-                        }
-                    }
-                }
-            }
+        if let Ok(remote_ref) = repository.resolve_reference_from_short_name(&remote_branch_name)
+            && let (Some(local_oid), Some(remote_oid)) = (reference.target(), remote_ref.target())
+            && local_oid != remote_oid
+            && let Ok((_ahead, behind)) = repository.graph_ahead_behind(local_oid, remote_oid)
+            && behind > 0
+        {
+            reference = remote_ref;
         }
     }
     let annotated_commit = repository
@@ -714,16 +709,15 @@ pub(crate) fn commit_files(
         Vec::new()
     };
     for rel_path in &conflicts {
-        if let Ok(content) = fs::read_to_string(git_path.join(rel_path)) {
-            if content.contains("<<<<<<<")
-                && content.contains("=======")
-                && content.contains(">>>>>>>")
-            {
-                return Err(format!(
-                    "Conflict markers still present in {}",
-                    rel_path.display()
-                ));
-            }
+        if let Ok(content) = fs::read_to_string(git_path.join(rel_path))
+            && content.contains("<<<<<<<")
+            && content.contains("=======")
+            && content.contains(">>>>>>>")
+        {
+            return Err(format!(
+                "Conflict markers still present in {}",
+                rel_path.display()
+            ));
         }
     }
     for file in files {
@@ -750,10 +744,10 @@ pub(crate) fn commit_files(
     }
     let oid = index.write_tree().map_err(|e| e.to_string())?;
     let mut parent_commits = Vec::new();
-    if let Ok(head) = repository.head() {
-        if let Ok(commit) = head.peel_to_commit() {
-            parent_commits.push(commit);
-        }
+    if let Ok(head) = repository.head()
+        && let Ok(commit) = head.peel_to_commit()
+    {
+        parent_commits.push(commit);
     }
     // Finishing a merge records the merge itself, so it can have no changes of its own.
     if !is_merging {
@@ -775,10 +769,10 @@ pub(crate) fn commit_files(
     if is_merging {
         let merge_head_content = fs::read_to_string(&merge_head_path).unwrap_or_default();
         for line in merge_head_content.lines() {
-            if let Ok(oid) = git2::Oid::from_str(line.trim()) {
-                if let Ok(commit) = repository.find_commit(oid) {
-                    parent_commits.push(commit);
-                }
+            if let Ok(oid) = git2::Oid::from_str(line.trim())
+                && let Ok(commit) = repository.find_commit(oid)
+            {
+                parent_commits.push(commit);
             }
         }
     }
@@ -1314,11 +1308,11 @@ pub(crate) fn create_branch(
     let mut new_branch = repository
         .branch(branch, &target_commit, false)
         .map_err(|e| format!("Failed to create branch: {}", e))?;
-    if let Some(name) = new_branch.get().name().map(str::to_string) {
-        if let Err(err) = switch_to_reference(repository, &name, &target_commit) {
-            let _ = new_branch.delete();
-            return Err(err);
-        }
+    if let Some(name) = new_branch.get().name().map(str::to_string)
+        && let Err(err) = switch_to_reference(repository, &name, &target_commit)
+    {
+        let _ = new_branch.delete();
+        return Err(err);
     }
     Ok(format!("Branch '{}' created.", branch))
 }
@@ -1403,32 +1397,24 @@ fn remote_status(repository: &Repository) -> Result<GitRemoteStatus, String> {
         .find_remote("origin")
         .map(|remote| remote.url().unwrap_or("").to_string())
         .unwrap_or_default();
-    if let Ok(head) = repository.head() {
-        if head.is_branch() {
-            if let Some(branch_name) = head.shorthand() {
-                if let Ok(local_branch) =
-                    repository.find_branch(branch_name, git2::BranchType::Local)
-                {
-                    if let Ok(upstream) = local_branch.upstream() {
-                        has_upstream = true;
-                        upstream_name = upstream
-                            .name()
-                            .unwrap_or(Some(""))
-                            .unwrap_or("")
-                            .to_string();
-                        if let (Some(local_oid), Some(upstream_oid)) =
-                            (local_branch.get().target(), upstream.get().target())
-                        {
-                            if let Ok((a, b)) =
-                                repository.graph_ahead_behind(local_oid, upstream_oid)
-                            {
-                                ahead = a as u32;
-                                behind = b as u32;
-                            }
-                        }
-                    }
-                }
-            }
+    if let Ok(head) = repository.head()
+        && head.is_branch()
+        && let Some(branch_name) = head.shorthand()
+        && let Ok(local_branch) = repository.find_branch(branch_name, git2::BranchType::Local)
+        && let Ok(upstream) = local_branch.upstream()
+    {
+        has_upstream = true;
+        upstream_name = upstream
+            .name()
+            .unwrap_or(Some(""))
+            .unwrap_or("")
+            .to_string();
+        if let (Some(local_oid), Some(upstream_oid)) =
+            (local_branch.get().target(), upstream.get().target())
+            && let Ok((a, b)) = repository.graph_ahead_behind(local_oid, upstream_oid)
+        {
+            ahead = a as u32;
+            behind = b as u32;
         }
     }
     Ok(GitRemoteStatus {
@@ -1611,14 +1597,14 @@ fn restore_all(repository: &Repository, git_path: &Path) -> Result<String, Strin
         .recurse_untracked_dirs(true);
     if let Ok(statuses) = repository.statuses(Some(&mut status_opts)) {
         for entry in statuses.iter() {
-            if entry.status().contains(git2::Status::WT_NEW) {
-                if let Some(path_str) = entry.path() {
-                    let target_path = git_path.join(path_str);
-                    if target_path.is_dir() {
-                        let _ = fs::remove_dir_all(&target_path);
-                    } else {
-                        let _ = fs::remove_file(&target_path);
-                    }
+            if entry.status().contains(git2::Status::WT_NEW)
+                && let Some(path_str) = entry.path()
+            {
+                let target_path = git_path.join(path_str);
+                if target_path.is_dir() {
+                    let _ = fs::remove_dir_all(&target_path);
+                } else {
+                    let _ = fs::remove_file(&target_path);
                 }
             }
         }

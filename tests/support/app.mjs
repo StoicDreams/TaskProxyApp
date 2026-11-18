@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installBackend } from './backend.mjs';
+import { cdnBodyFingerprint, finishRecording, noteCdn, startRecording, unchangedSincePassing } from './test-cache.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 // Set to a MyFiCDN checkout's cdn folder to test against unreleased components instead of the live CDN.
@@ -63,6 +64,7 @@ async function serveLiveCdn(route) {
     const url = `https://cdn.myfi.ws${new URL(request.url()).pathname}`;
     if (!liveCdn.has(url)) liveCdn.set(url, downloadLiveCdn(url));
     const file = await liveCdn.get(url);
+    noteCdn(url, file?.body);
     if (!file) {
         liveCdn.delete(url);
         return route.continue();
@@ -93,9 +95,22 @@ function serve(route, useMinified) {
     return route.fulfill({ contentType: 'text/html', body: buildIndex() });
 }
 
+/** A live CDN file's fingerprint now, for the test cache, downloaded once per worker like the files tests load. */
+async function cdnFingerprint(url) {
+    if (!liveCdn.has(url)) liveCdn.set(url, downloadLiveCdn(url));
+    return cdnBodyFingerprint((await liveCdn.get(url))?.body);
+}
+
 export const test = base.extend({
     useMinified: [false, { option: true }],
-    page: async ({ page, useMinified }, use) => {
+    // Skips a test when nothing it used has changed since it last passed (support/test-cache.mjs).
+    testCache: [async ({}, use, testInfo) => {
+        testInfo.skip(await unchangedSincePassing(testInfo, cdnFingerprint), 'Nothing it uses changed since it last passed');
+        startRecording(testInfo);
+        await use();
+        finishRecording(testInfo);
+    }, { auto: true }],
+    page: async ({ page, useMinified, testCache }, use) => {
         const errors = [];
         page.on('pageerror', error => {
             // Closing a dialog with Cancel rejects its promise, which most callers have no use for.

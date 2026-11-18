@@ -746,16 +746,14 @@ pub(crate) async fn plugin_host_action(
             .map_err(|err| err.to_string())?
         }
         "openUrl" => {
-            use tauri_plugin_opener::OpenerExt;
             let url = action.get("url").and_then(Value::as_str).unwrap_or("");
             let parsed =
                 reqwest::Url::parse(url).map_err(|_| format!("Invalid address: {}", url))?;
             if parsed.scheme() != "https" {
                 return Err(String::from("Plugins can only open https addresses."));
             }
-            app_handle
-                .opener()
-                .open_url(parsed.as_str(), None::<&str>)
+            crate::services::browser::open_in_browser(parsed.as_str())
+                .await
                 .map_err(|err| format!("Could not open {}: {}", url, err))?;
             Ok(String::new())
         }

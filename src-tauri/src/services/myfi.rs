@@ -45,6 +45,8 @@ pub(crate) struct MyFiStatus {
 pub(crate) struct SignInStarted {
     pub code: String,
     pub url: String,
+    /// Whether the browser opened the page. When it didn't, the dialog shows the address to open.
+    pub opened: bool,
 }
 
 /// What the keychain holds: the session, and its account, which is shown while api.myfi.ws can't be reached.
@@ -425,7 +427,7 @@ pub(crate) async fn myfi_account() -> Result<Option<MyFiStatus>, String> {
 
 /// Starts signing in, opens the approval page in the user's browser, and returns the code it should show.
 #[tauri::command]
-pub(crate) async fn myfi_sign_in_start(app: AppHandle) -> Result<SignInStarted, String> {
+pub(crate) async fn myfi_sign_in_start() -> Result<SignInStarted, String> {
     let (secret, challenge) = new_secret();
     let name = computer_name(sysinfo::System::host_name().ok());
     let started = api()?.start(&challenge, &name).await?;
@@ -435,14 +437,14 @@ pub(crate) async fn myfi_sign_in_start(app: AppHandle) -> Result<SignInStarted, 
         secret,
         Duration::from_secs(started.expires_in.min(3600)),
     )?;
-    {
-        use tauri_plugin_opener::OpenerExt;
-        // The page's address is shown too, so a browser that doesn't open is not the end of it.
-        let _ = app.opener().open_url(url.as_str(), None::<&str>);
-    }
+    // The dialog shows the page's address when the browser doesn't open, so that is not the end of it.
+    let opened = crate::services::browser::open_in_browser(&url)
+        .await
+        .is_ok();
     Ok(SignInStarted {
         code: started.code,
         url,
+        opened,
     })
 }
 
@@ -495,6 +497,17 @@ pub(crate) mod tests {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
+
+    /// CI runs this before every release, so Task Proxy never ships without its key, as it once did: every sign-in
+    /// then failed with "Unknown app".
+    #[test]
+    fn the_app_key_is_set() {
+        let key = uuid::Uuid::parse_str(APP_KEY).expect("APP_KEY is a UUID");
+        assert!(
+            !key.is_nil(),
+            "set APP_KEY to the key from the Stoic Dreams company's Apps page"
+        );
+    }
 
     /// A request the fake API received: its first line, headers in lowercase, and body.
     #[derive(Debug)]

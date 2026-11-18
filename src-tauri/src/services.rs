@@ -1,3 +1,4 @@
+pub(crate) mod browser;
 pub(crate) mod ci_status;
 pub(crate) mod clipboard;
 pub(crate) mod commit_queue;
@@ -6,6 +7,7 @@ pub(crate) mod file_server;
 pub(crate) mod git_controller;
 pub(crate) mod myfi;
 pub(crate) mod page_scripts;
+pub(crate) mod project_icons;
 pub(crate) mod projects;
 pub(crate) mod runs;
 pub(crate) mod script_api;

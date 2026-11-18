@@ -21,6 +21,8 @@
      */
     const screenKeys = ['page-path', 'page-title', 'page-subtitle', 'app-nav-routes', 'app-terminals-filter', 'app-terminal-refresh', 'app-terminal-cleared', 'app-home-state'];
     const isScreenKey = key => screenKeys.includes(key) || key.startsWith('session-');
+    /** Session data the desktop saves with its app data, since the loader keeps session data only while it may store data. */
+    const savedSessionKeys = ['session-theme', 'session-theme-colors'];
     const copyOf = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     /** What changed from `before` to `after`: values set and removed in their `data`, and other fields given whole. */
@@ -210,10 +212,8 @@
      * A project or repo name for an html-options dropdown, with icons for its CI result, changed files, and commits
      * behind and ahead of the remote. Each count is a badge on its icon. The name is shown as text.
      */
-    function gitStatusHtml(name, status) {
-        // The list widens to fit a name and its counts on one line. In a narrow picker a long name wraps, and the
-        // counts move below it when there is no room beside it.
-        const label = `<span class="git-name" style="flex:1 1 auto;min-width:0;overflow-wrap:anywhere;text-align:start;">${webui.escapeHtml(`${name}`)}</span>`;
+    /** A project's CI result and its changed files and commits ahead and behind, as icons with counts, or ''. */
+    function gitStatusMarkersHtml(status) {
         const shown = gitStatusMarkers
             .filter(marker => status?.[marker.key] > 0)
             .map(marker => {
@@ -223,8 +223,15 @@
             });
         const ci = ciStatusHtml(status?.ci);
         if (ci) shown.unshift(ci);
-        if (shown.length === 0) return label;
-        const markers = `<span class="git-status" style="display:inline-flex;align-items:center;gap:0;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
+        if (shown.length === 0) return '';
+        return `<span class="git-status" style="display:inline-flex;align-items:center;gap:0;margin-left:auto;flex-shrink:0;">${shown.join('')}</span>`;
+    }
+    function gitStatusHtml(name, status) {
+        // The list widens to fit a name and its counts on one line. In a narrow picker a long name wraps, and the
+        // counts move below it when there is no room beside it.
+        const label = `<span class="git-name" style="flex:1 1 auto;min-width:0;overflow-wrap:anywhere;text-align:start;">${webui.escapeHtml(`${name}`)}</span>`;
+        const markers = gitStatusMarkersHtml(status);
+        if (!markers) return label;
         return `<span class="git-option" style="display:flex;flex-wrap:wrap;align-items:center;column-gap:1em;flex:1 1 auto;min-width:0;">${label}${markers}</span>`;
     }
     const invokeGit = async (command, args = {}, errHandler = defaultErrHandler) => {
@@ -248,7 +255,11 @@
         }
     };
     class Tauri {
-        openUrl = tauri.opener.openUrl;
+        /**
+         * Opens an address in the computer's browser. Rust opens it, since the opener plugin hands the browser an
+         * AppImage's environment, which stops it opening at all. A device opens links itself.
+         */
+        openUrl = remote ? tauri.opener.openUrl : (url => tauri.core.invoke('open_url', { url }).catch(defaultErrHandler));
         /** This device, when the app runs on a paired device: `{level, deviceName, desktopName}`. Null on the desktop. */
         remote = remote;
         constructor() {
@@ -276,6 +287,40 @@
          * Copies an image, a Blob or an <img>, to the system clipboard through Rust (services/clipboard.rs), since
          * WebKitGTK's own copy leaves nothing to paste on Wayland. Resolves to true once copied.
          */
+        /**
+         * A project's icon: an image in its repo, chosen in Settings and saved in its .taskproxy/Project.json
+         * (services/project_icons.rs). Icons come back as data URIs.
+         */
+        projectIcons = {
+            /** Every saved project's icon, as `[{path, icon}]`. Quiet, since the dropdown shows names without them. */
+            all: () => tauri.core.invoke('get_project_icons').catch(() => []),
+            /** The open project's images that could be its icon, and the one it uses: `{images, icon}`. */
+            images: (err) => tauri.core.invoke('get_project_images').catch(err ?? defaultErrHandler),
+            /** Sets the open project's icon, or clears it with an empty one. Resolves to its data URI, null, or false when refused. */
+            set: async (icon, err) => {
+                const result = await tauri.core.invoke('set_project_icon', { icon: icon || null }).catch(error => {
+                    (err ?? defaultErrHandler)(error);
+                    return false;
+                });
+                if (result !== false) document.dispatchEvent(new CustomEvent('app-project-icons-changed'));
+                return result;
+            },
+        };
+        /**
+         * Copies text to the system clipboard through Rust, as images are, since the webview's own clipboard is
+         * unreliable on Wayland. A device copies it itself. Resolves to true once copied.
+         */
+        async copyText(text, errHandler) {
+            errHandler ??= defaultErrHandler;
+            try {
+                if (remote) await navigator.clipboard.writeText(`${text}`);
+                else await tauri.core.invoke('copy_text', { text: `${text}` });
+                return true;
+            } catch (error) {
+                errHandler(error?.message || error);
+                return undefined;
+            }
+        }
         async copyImage(image, errHandler) {
             errHandler ??= defaultErrHandler;
             try {
@@ -334,6 +379,7 @@
             /** Changed files and commits ahead and behind, by repo, for the open project. */
             getRepoStatus: (err) => invokeGit('get_git_repo_status', {}, err),
             statusHtml: gitStatusHtml,
+            statusMarkersHtml: gitStatusMarkersHtml,
             withCiStatus,
             /** Changed files and commits ahead and behind, by project path, for every saved project. */
             getProjectStatus: (err) => {
@@ -1179,6 +1225,19 @@
             if (data.data[key] === undefined) setData(key, true);
         });
         webui.watchAppDataChanges(queueAppDataChanges);
+        // The theme and its adjusted colors (webui-theme-selector) are session data, which the loader keeps in the
+        // browser only while it may store data, so they are saved with the app's data too, and restored from it above.
+        // A device's theme is its own, so it never replaces the desktop's.
+        if (!remote) {
+            webui.watchSessionDataChanges((changes, sessionData) => {
+                if (!savedSessionKeys.includes(changes.property)) return;
+                const value = sessionData[changes.property];
+                if (same(value, webui.taskProxyData.data[changes.property])) return;
+                if (value === undefined) delete webui.taskProxyData.data[changes.property];
+                else webui.taskProxyData.data[changes.property] = copyOf(value);
+                webui.proxy.syncAppData();
+            });
+        }
         let currentProject = webui.getData('app-current-project');
         if (currentProject) {
             await queueProjectChange(() => loadProject({

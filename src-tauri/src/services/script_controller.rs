@@ -30,11 +30,12 @@ fn collect_scripts(root: &Path, scripts: &mut Vec<String>) {
             let name = name.to_string_lossy();
             name.starts_with("taskproxy_tmp_") || name.starts_with("taskproxy_live_")
         });
-        if is_script && !is_temp {
-            if let Ok(relative_path) = path.strip_prefix(root) {
-                // The frontend compares these paths, and joins them with forward slashes.
-                scripts.push(relative_path.to_string_lossy().replace('\\', "/"));
-            }
+        if is_script
+            && !is_temp
+            && let Ok(relative_path) = path.strip_prefix(root)
+        {
+            // The frontend compares these paths, and joins them with forward slashes.
+            scripts.push(relative_path.to_string_lossy().replace('\\', "/"));
         }
     });
     scripts.sort();

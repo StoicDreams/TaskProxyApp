@@ -1,7 +1,6 @@
 use crate::prelude::*;
 use background::background_tasks;
 use std::sync::{LazyLock, Mutex};
-use std::time::Instant;
 use tauri::{Emitter, Manager, WindowEvent};
 use tracing_subscriber::EnvFilter;
 
@@ -9,16 +8,11 @@ pub mod appdata;
 pub mod background;
 pub mod common;
 pub mod datatypes;
-pub mod errors;
 pub mod plugins;
 pub mod prelude;
 pub mod remote;
 pub mod services;
 
-pub(crate) static PROJECT_LAST_SYNC: LazyLock<Mutex<Option<Instant>>> =
-    LazyLock::new(|| Mutex::new(None));
-pub(crate) static APP_LAST_SYNC: LazyLock<Mutex<Option<Instant>>> =
-    LazyLock::new(|| Mutex::new(None));
 const MAIN_WINDOW_LABEL: &str = "taskproxy";
 static DID_SAVE_ON_CLOSE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
@@ -60,8 +54,8 @@ pub fn run() {
         .manage(crate::remote::Remote::default());
 
     // Save data on close
-    builder = builder.on_window_event(|window, event| match event {
-        WindowEvent::CloseRequested { api, .. } => {
+    builder = builder.on_window_event(|window, event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
             let can_close = DID_SAVE_ON_CLOSE.load(Ordering::SeqCst);
             if can_close {
                 return;
@@ -118,7 +112,6 @@ pub fn run() {
                 let _ = window.close();
             });
         }
-        _ => {}
     });
 
     // App setup. Tauri keeps only the last setup hook, so all setup belongs here.
@@ -134,10 +127,10 @@ pub fn run() {
         // Opt-in, because attaching the inspector during startup can hang the page in WebKitGTK.
         // Devtools can still be opened at any time from the page's context menu.
         #[cfg(debug_assertions)]
-        if std::env::var_os("TASKPROXY_DEVTOOLS").is_some() {
-            if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-                window.open_devtools();
-            }
+        if std::env::var_os("TASKPROXY_DEVTOOLS").is_some()
+            && let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL)
+        {
+            window.open_devtools();
         }
         services::terminal_controller::remove_stale_temp_scripts(app.handle());
         // The paired devices and the log of what they did, for Remote Access.
@@ -221,9 +214,14 @@ pub fn run() {
             services::projects::get_project_file,
             services::projects::get_project_file_size,
             services::file_server::get_file_server_base,
+            services::browser::open_url,
             services::clipboard::copy_image,
+            services::clipboard::copy_text,
             services::clipboard::copy_image_url,
             services::projects::get_projects,
+            services::project_icons::get_project_icons,
+            services::project_icons::get_project_images,
+            services::project_icons::set_project_icon,
             services::projects::load_projects,
             services::projects::rename_project,
             services::projects::remove_project,
