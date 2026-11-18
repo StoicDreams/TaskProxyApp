@@ -14,7 +14,7 @@ const API: &str = "https://api.myfi.ws";
 /// Task Proxy's app key, sent as x-app: the key myfi.ws gave the Task Proxy app added to the Stoic Dreams company on its
 /// Apps page, as any company adds its apps. It ships inside the app, so it names the app and is not a secret.
 /// Until it is set, api.myfi.ws answers "Unknown app" and signing in can't start.
-const APP_KEY: &str = "00000000-0000-0000-0000-000000000000";
+const APP_KEY: &str = "b961e1fc-0e9b-471f-9c25-44ea6cfdb044";
 const SIGNIN_PAGE: &str = "https://www.stoicdreams.com/signin";
 /// The API names a request by its agent's first word when there is no Origin, as from here: agent:taskproxy.
 const USER_AGENT: &str = "TaskProxy";
