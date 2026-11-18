@@ -5,7 +5,7 @@
 //! life of the app: on Linux the app that copied serves the image to whoever pastes, so it must stay alive.
 
 use std::borrow::Cow;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request};

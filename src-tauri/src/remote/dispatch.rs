@@ -30,7 +30,6 @@ pub(crate) struct Caller {
 /// or need the desktop's screen, such as choosing a folder. Opening and closing projects are here until the
 /// desktop's window can follow a project changed elsewhere.
 pub(crate) const DESKTOP_ONLY: &[&str] = &[
-    "has_securitykey",
     "set_securitykey",
     "delete_securitykey",
     "save_app_data",
@@ -46,7 +45,6 @@ pub(crate) const DESKTOP_ONLY: &[&str] = &[
     "copy_image",
     "copy_image_url",
     "auto_install_powershell",
-    "get_version",
     "check_update",
     "install_update",
     "myfi_sign_in_start",
@@ -155,6 +153,11 @@ remote_commands! {
     View plugin_notifications => crate::plugins::commands::plugin_notifications(app.clone()).await;
     View plugin_settings => crate::plugins::commands::plugin_settings(app.clone(), a.get("id")?).await;
     View myfi_account => myfi::myfi_account().await;
+    // The app asks both as it starts, and neither says more than a version number or that a key exists.
+    View get_version => Ok::<_, String>(app.package_info().version.to_string());
+    View has_securitykey => Ok::<_, String>(crate::appdata::has_securitykey().await);
+    // Only devices send this, for the app they run from this desktop.
+    View remote_app_file => super::app_files::app_file(app, a.get("path")?).await;
     View get_powershell_status => terminal_controller::get_powershell_status().await;
     View init_emoji_search => emojis::init_emoji_search(app.clone(), a.get("supportedEmojis")?, app.state()).await;
     View search_emojis => emojis::search_emojis(app.clone(), a.get("query")?, app.state()).await;
@@ -380,6 +383,9 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    /// Commands only a device sends, which the window has no use for, so lib.rs doesn't register them.
+    const DEVICE_ONLY: &[&str] = &["remote_app_file"];
+
     /// The commands `lib.rs` registers for the window.
     fn registered() -> Vec<String> {
         let source = include_str!("../lib.rs");
@@ -413,9 +419,18 @@ mod tests {
         );
         let unknown: Vec<_> = remote
             .union(&desktop)
+            .filter(|name| !DEVICE_ONLY.contains(name))
             .filter(|name| !registered.iter().any(|registered| registered == *name))
             .collect();
         assert!(unknown.is_empty(), "not commands in lib.rs: {:?}", unknown);
+        for name in DEVICE_ONLY {
+            assert!(remote.contains(name), "{} is a remote command", name);
+            assert!(
+                !registered.iter().any(|registered| registered == name),
+                "{} isn't for the window",
+                name
+            );
+        }
         assert!(remote.is_disjoint(&desktop));
         assert_eq!(remote.len(), COMMANDS.len(), "a command is listed twice");
     }
@@ -499,6 +514,9 @@ mod tests {
     /// Commands that never return a variable's value. Page script previews and runs show the masked copy. Plugin
     /// settings never send their secrets. A script's output is what the script printed, as on the desktop.
     const NO_VALUES: &[&str] = &[
+        "remote_app_file",
+        "get_version",
+        "has_securitykey",
         "get_projects",
         "load_projects",
         "get_project_file",

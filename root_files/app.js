@@ -50,6 +50,8 @@
         const isProject = scope === 'project';
         const base = isProject ? (syncedCopy.project?.id === data.id ? syncedCopy.project : null) : syncedCopy.app;
         const patch = patchFrom(base, data, isProject ? ['id', 'path'] : []);
+        // A View device can't change data, and the desktop would refuse it, so its changes stay on the device.
+        if (remote?.level === 'view') return Promise.resolve(isProject ? 'Project data synced' : 'App Data Synced');
         if (!patch) return Promise.resolve(isProject ? 'Project data synced' : 'App Data Synced');
         const sent = copyOf(data);
         syncedCopy[scope] = sent;
@@ -92,6 +94,13 @@
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
+    /**
+     * Set when the app runs on a paired device, in taskproxy.com's frame (Docs/RemoteAccess.md, 2.4):
+     * `{level, deviceName, desktopName}`. The page shown is each screen's own, so a device starts on the route the
+     * frame restored, not the desktop's, and never changes the desktop's.
+     */
+    const remote = window.__taskProxyRemote ? Object.freeze({ ...window.__taskProxyRemote }) : null;
+    let remoteStartPage = remote ? `${location.pathname}${location.search}` : null;
     let firstLoad = true;
     let isLoading = {};
     const defaultErrHandler = msg => webui.alert(msg);
@@ -240,6 +249,8 @@
     };
     class Tauri {
         openUrl = tauri.opener.openUrl;
+        /** This device, when the app runs on a paired device: `{level, deviceName, desktopName}`. Null on the desktop. */
+        remote = remote;
         constructor() {
             const t = this;
             worker.onmessage = (event) => {
@@ -608,6 +619,8 @@
         }
         saveAppData(errHandler) {
             errHandler ??= defaultErrHandler;
+            // A device sends its change, and the desktop saves it with the rest.
+            if (remote) return this.syncAppData(errHandler);
             syncedCopy.app = copyOf(webui.taskProxyData);
             return tauri.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(errHandler);
         }
@@ -620,6 +633,12 @@
         /** Saves the open project, or data, a project that is no longer open, without making it the open one. */
         saveProjectData(errHandler, data) {
             errHandler ??= defaultErrHandler;
+            // A device sends changes to the open project, and the desktop saves them with the rest.
+            if (remote) {
+                if (data && data !== webui.projectData) return Promise.resolve();
+                if (webui.projectData?.navigation) webui.setData('app-nav-routes', webui.projectData.navigation);
+                return this.syncProjectData(errHandler);
+            }
             if (data && data !== webui.projectData) {
                 if (!data.id) return;
                 return tauri.core.invoke('save_project_data', { data }).catch(errHandler);
@@ -1190,6 +1209,8 @@
             case 'page-path':
                 // A project reload passes through this page on its way back, and it is never a page to reopen on.
                 if (changes.newValue === '/_reloading') break;
+                // A device's page is its own, and it must not move the desktop's.
+                if (remote) break;
                 let project = webui.getData('app-current-project');
                 webui.projectData.currentPage = changes.newValue == '/root' ? '/' : changes.newValue;
                 webui.proxy.syncProjectData();
@@ -1247,7 +1268,9 @@
             // Plugins' settings belong to projects, so their pages and notifications change with the project.
             refreshPluginNav();
             webui.setData('app-nav-routes', webui.projectData.navigation);
-            let startPage = webui.projectData.currentPage || '/';
+            // A device opens the route the frame restored the first time, and a project's home after that.
+            let startPage = remote ? (remoteStartPage || '/') : (webui.projectData.currentPage || '/');
+            remoteStartPage = null;
             setTimeout(() => {
                 handlePagePath(startPage, true);
             }, 300);

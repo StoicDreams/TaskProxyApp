@@ -94,7 +94,8 @@
                 webui.proxy.openUrl(href);
                 return false;
             });
-            if (location.host !== '127.0.0.1:1426') {
+            // On a paired device the frame's page is taskproxy.com's to leave, so it must not ask to stay.
+            if (location.host !== '127.0.0.1:1426' && !window.__taskProxyRemote) {
                 // Pause any attempts to navigate away from app.
                 window.addEventListener('beforeunload', ev => {
                     ev.stopPropagation();

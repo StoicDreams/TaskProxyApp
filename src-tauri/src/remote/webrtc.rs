@@ -546,6 +546,39 @@ mod tests {
         desk.abort();
     }
 
+    /// A data channel offer from Chromium, as taskproxy.com's page makes it. Browsers name their local addresses with
+    /// random `.local` hostnames rather than the address itself, and may have none at all.
+    const CHROMIUM_OFFER: &str = "v=0\r\no=- 391879584622361032 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
+        a=group:BUNDLE 0\r\na=extmap-allow-mixed\r\na=msid-semantic: WMS\r\n\
+        m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\n\
+        a=ice-ufrag:RFpp\r\na=ice-pwd:4uqvs2DiTAWhcFeHjTPu9sHz\r\na=ice-options:trickle\r\n\
+        a=fingerprint:sha-256 C0:7B:00:5C:E4:3F:FD:71:D2:AC:8E:13:53:30:99:6A:69:6C:BF:CC:1A:98:CA:72:89:28:3F:61:7B:FE:71:06\r\n\
+        a=setup:actpass\r\na=mid:0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n";
+
+    #[tokio::test]
+    async fn a_browsers_offer_is_answered_with_this_computers_addresses() {
+        let answered = answer_offer(CHROMIUM_OFFER, &[IpAddr::V4(Ipv4Addr::LOCALHOST)])
+            .await
+            .expect("an offer with no addresses of its own");
+        assert!(
+            answered.answer.contains("a=candidate:"),
+            "{}",
+            answered.answer
+        );
+        assert!(answered.answer.contains("a=fingerprint:sha-256 "));
+    }
+
+    #[tokio::test]
+    async fn a_browsers_offer_naming_its_address_by_mdns_is_answered() {
+        let offer = CHROMIUM_OFFER.replace(
+            "a=ice-options:trickle\r\n",
+            "a=ice-options:trickle\r\na=candidate:3651283711 1 udp 2113937151 0a4e46b0-1f0e-4a4e-9a49-58c6d3e2a1b7.local 54321 typ host generation 0 network-cost 999\r\n",
+        );
+        answer_offer(&offer, &[IpAddr::V4(Ipv4Addr::LOCALHOST)])
+            .await
+            .expect("an offer with a .local candidate");
+    }
+
     #[test]
     fn this_computer_has_an_address_to_offer() {
         // CI machines and desktops have at least one network interface; none of them is loopback.

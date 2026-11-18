@@ -439,41 +439,101 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 
 ### 2.4 The client on TaskProxy.com
 
-**Files:** `webapp/root_files/remote/index.html` and `remote.js` in the website repo. This is a static page outside the site's nav shell.
+*Built and tested against a test desktop, not yet against a real one.* What's done, and what's left:
+
+- **Done:** signing in, pairing, the desktop list, connecting, and the app running from the desktop in the frame. Also the app's remote mode, `remote_app_file`, and the tests.
+- **Left:**
+  - a run between a real phone and Task Proxy on a desktop
+  - file previews (`get_project_file_range`)
+  - components hiding what the level doesn't allow
+  - "Continue on another device"
+  - caching the app's files between visits
+
+**Files,** in the website repo's `webapp/root_files/remote/`, a static page outside the site's nav shell:
+
+| File | What it does |
+|---|---|
+| `index.html`, `remote.css` | The page |
+| `remote.js` | Signing in, pairing, the desktop list, and connecting |
+| `api.js` | api.myfi.ws |
+| `store.js` | IndexedDB |
+| `noise.js` | Noise, checked against the Noise test vectors |
+| `connection.js` | The mailbox, pairing, connecting, and the protocol |
+| `frame.js` | The app in the frame |
+| `sw.js` | The service worker |
+| `app.webmanifest` | Add to Home Screen |
+
+`web.config` rewrites `/remote/` to the page, since the site's rule otherwise sends every path that isn't a file to the home page.
 
 **Signing in comes first.**
 - **Signed out:** the page keeps the `#pair=` payload in `sessionStorage` for that tab, then signs in through the usual stoicdreams.com handoff.
 - **A return path for the handoff (done):** `/signin?domain=<site>&return=<path>` on stoicdreams.com sends you back to `https://<site><path>#myfi-signin=<code>`, accepting only a path on that same site, and falls back to the site's home page otherwise. `webui-myfi-info` sends the page you're on, and its `signinUrl(path)` builds the address for any page, such as `/remote/`.
 - **Back on `/remote/`:** the page exchanges the code as the loader does, then continues the pairing.
 
-**Your desktops:** the page lists them from `GET remote/desktops`, showing which are paired on this device and which are online.
+**Your desktops:** the page lists them from `GET remote/desktops`, showing which are paired on this device and which are online. A paired one has Connect and Forget. A tab that was connected connects again when it reloads.
 
 **Device keys:**
-- Kept in IndexedDB, with the account id they belong to.
-- After you sign in as another account, only that account's pairings show.
+- Kept in IndexedDB, one pairing per desktop, with the device's private key for it.
+- **Only the signed-in account's desktops are listed,** so after you sign in as another account, only that account's pairings show. The API only lists an account's own desktops, so the pairings need no account id of their own.
+- **Pairing sends no name,** so the desktop keeps the one chosen with the QR code. The page checks that the key the desktop proved in the handshake is the QR code's.
 
-**The app comes from the desktop:**
+**Codes in the address:** `#pair=` and `#myfi-signin=` are taken off the address at once. A code opened in a tab that already shows `/remote/` changes only the `#` part, which doesn't load the page again, so the page acts on `hashchange` too. A connection open at the time is closed first.
+
+**Waiting for the desktop:** the page reads its reply mailbox 150 ms after sending, then twice as long each time, up to once a second, so an answer the desktop has ready isn't kept waiting.
+
+**WebRTC:**
+- The page waits for its own addresses before sending its offer, up to 5 s.
+- Browsers name their local addresses with random `.local` names, or offer none. `str0m` accepts both (tested with a real Chromium offer), and the desktop learns the browser's real address from its connectivity checks.
+- **Check on the real run:** Chrome's Local Network Access checks, which may ask before a public site such as taskproxy.com reaches the desktop's private address.
+
+**The app comes from the desktop** (proven by the spike below):
 - The outer page holds the connection.
-- The app runs in a same-origin `<iframe>` at `/remote/app/`, so moving between its pages never drops the connection.
-- A service worker, `remote/sw.js` scoped to `/remote/app/`, answers the iframe's requests by asking the outer page, which asks the desktop.
-- **The `__TAURI__` stand-in** is put into the app's `index.html` before `app.min.js`:
+- The app runs in a same-origin `<iframe>`, opened at `/remote/app/?c=<connection>`, so moving between its pages never drops the connection. `<connection>` is a random id the outer page makes for its connection.
+- **A service worker, `remote/sw.js` scoped to `/remote/app/`,** controls the frame because the frame first loads inside that path. From then on it answers every request the frame makes, whatever its path, so the app's `/d/`, `/wc/` and `/appConfig.json` never reach the website. Requests to other sites, such as the CDN, go to the network.
+- **The service worker keeps nothing,** since the browser stops an idle one and its memory with it:
+  - The frame's first load names its connection (`?c=`), and the outer page holding that connection answers. Another tab's outer page says nothing.
+  - Every other request goes to the frame that made it, whose stand-in passes it to the outer page above it.
+  - Anything that fails answers 503, such as a request made while the frame is going away.
+- **The `__TAURI__` stand-in** is put first in the app's `index.html` `<head>`. Anywhere later deadlocks: the stylesheet above it waits on the frame's message handler, which the stand-in sets, and the browser won't run the stand-in until that stylesheet loads. The stand-in:
+  - **Replaces the frame's address with the app's own route** (`/`, or the route the tab was on), so the loader's paths, routes and `<base href="/">` work exactly as on the desktop.
+  - Passes the service worker's requests to the outer page.
+  - **Wraps `Worker`:** a worker's own script never reaches the page's service worker, so the stand-in starts it from a blob that imports the real script. The import carries `remote-connection=<id>` to name the connection, since the service worker hasn't seen the worker before.
+  - **Reports the route** on every `pushState`, `replaceState` and `popstate`, except a project reload's `/_reloading`. The outer page keeps it in `sessionStorage`, so reloading opens the app where it was.
+  - **Tells the outer page when the frame unloads,** and the outer page opens the app again. The frame's address is outside the service worker's scope, so a reload of the frame alone would otherwise load the website. Neither the app nor the loader reloads the page, so this is only a safeguard.
   - `core.invoke` and `event.listen` go over the connection.
   - `opener.openUrl` uses `window.open`.
   - `dialog.open` says "Only on the desktop".
+- **The outer page removes the app's own service worker registration** from `index.html`, which would otherwise register the website's.
 - **Caching:** files are cached by content hash.
 - **The CDN:** `webui-*` components still load from it.
 
-**`app.js` changes:**
-- `webui.proxy.remote` gives `{level, deviceName, account}`.
+**`app.js` changes** (done unless noted):
+- `webui.proxy.remote` gives `{level, deviceName, desktopName}`, from `window.__taskProxyRemote`, which the stand-in sets. `index.html` checks the same flag, so the frame never asks to stay when the outer page reloads.
+- **Saving on a device sends a patch,** since `save_app_data` and `save_project_data` are desktop-only and the desktop saves on its own. A View device sends nothing, since the desktop would refuse it.
+- **`get_version` and `has_securitykey` are View commands,** since the app asks both as it starts. Neither says more than a version number or that a key exists.
+- **`remote_app_file`** gives a device the app's files, built into the app or from the dev server under `cargo tauri dev`. Only devices send it, so `lib.rs` doesn't register it, and the dispatch test accepts it from its `DEVICE_ONLY` list.
+- *Left:* components hiding what the level doesn't allow.
 - Components hide what the level doesn't allow. The backend refuses those commands anyway.
+- **The page shown is each screen's own.** At startup the app opens the project's last page, which the backend keeps, and every page change updates it. On a device, that is the desktop's page. So in remote mode the app starts on the route the stand-in restored, and its page changes don't change the project's last page.
 
 **File previews:** the service worker answers `/remote/app/files/<path>` with byte ranges, through a new `get_project_file_range`, so videos stream.
 
 **Add to Home Screen:** `remote/app.webmanifest`, scoped to `/remote/`, lets the page be installed. On iOS, Safari can delete a site's storage after 7 days without a visit unless it's on the Home Screen. If keys are lost, pair again.
 
-**Spike this first:** whether the Web UI loader, routes, and `wc/` paths work under `/remote/app/` in an iframe, since the app assumes `<base href="/">`.
-- **Fallback:** a static subdomain such as `remote.taskproxy.com`.
-- **What a subdomain needs:** registering in `identity.Sites` for MyFi sign-in, and its own session.
+**The spike (done 2026-11-17): the app runs under `/remote/app/` in a frame, so no subdomain is needed.** A prototype stood in for taskproxy.com with a local server, played the desktop with the UI tests' mock backend in the outer page, and served the app's files from this repo as the connection will. In Chromium and Firefox:
+- The app starts in the frame, controlled by the remote service worker, and its home page loads.
+- Routes, lazy-loaded components, and a real click on a nav link all load through the service worker. None of the app's requests reached the website.
+- The app's background worker answers through the blob import.
+- Reloading the outer page, or the frame alone, opens the app again on its route.
+
+The approach above is the one the prototype settled on. Each of its points fixed a failure the prototype hit:
+- **Answering the frame's requests:** keeping each connection in the service worker's memory failed after the browser restarted it.
+- **The stand-in's place in `<head>`:** later than first, it deadlocked.
+- **The worker's script** reached the website until the stand-in started it from a blob.
+- **The frame's address:** a reload of the frame alone loaded the website until the outer page reopened the app.
+- **Failures:** Firefox reported the service worker throwing for a request made while the frame unloaded, until it answered 503.
+
+taskproxy.com sends no content security policy, so the blob worker needs no change there.
 
 **The shared website tests:** `service-worker.spec.mjs` is shared with every site and stays unchanged. Add a test that the main service worker never answers under `/remote/app/`.
 
@@ -493,12 +553,14 @@ When Phase 2 ships, the signed-in desktop shows a QR code. The phone, signed in 
 - a message whose account id doesn't match is refused (`pairing.rs`, `connect.rs`)
 - signing out removes every device (`devices.rs`)
 
-**Website:**
+**Website:** *done, in `tests/remote.spec.mjs` and `tests/remote-noise.spec.mjs` in the website repo.* They run against a test desktop in the browser (`tests/fixtures/remote/desktop.js`) and a mock of the mailbox, with real service workers and WebRTC. They run in Playwright's own Chromium, since Arch's Chromium 156 offers no WebRTC addresses at all when Playwright drives it. Covered:
+- the Noise test vectors, both handshakes
 - **The pairing page:**
   - signed out, it keeps the payload through sign-in and comes back to `/remote/`
   - a refused account says so
   - an expired code says so
 - **End to end:** a test peer in the browser plays the desktop and loads the app through the service worker.
+- reloading, a dropped connection, Disconnect, the desktop list, another protocol version, and the site's own service worker
 - **On stoicdreams.com:** the `return` path, including refusing another site's path.
 
 **By hand:** the phone on cellular data with the desktop at home. Count Direct against failed, which settles TURN.
@@ -605,6 +667,6 @@ Each item opens the right screen.
 - **Sign-in phishing:** someone sends you an approval link for their own request. The page names the computer and shows a code that must match Task Proxy's, and requests expire in 10 minutes. A desktop signed in that way would also show in your account's desktop list.
 - **Moving state to Rust** touches the Git Controller, the Terminal Manager, and the Variables panel.
 - **Some phone networks block direct connections,** which settles the TURN decision.
-- **The iframe and service worker approach** depends on the Web UI loader working under a path. That's the spike, with a subdomain as the fallback.
+- **The iframe and service worker approach** was proven in Chromium and Firefox by the 2.4 spike. Safari on iOS is the browser most phones will use, so the client's end-to-end test should run in WebKit too, and a subdomain such as `remote.taskproxy.com` stays the fallback if WebKit differs.
 - **Polling** makes a connection start within about 10 s, and costs one small request every 10 s per desktop with Remote Access on.
 - **iOS can drop a site's storage.** Recommend the Home Screen, and make pairing again quick.

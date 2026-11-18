@@ -1,5 +1,6 @@
 //! Remote Access: using this desktop's Task Proxy from a paired phone or laptop (Docs/RemoteAccess.md).
 //!
+//! - `app_files.rs` gives a device the app's own files, so it runs the same frontend as the window.
 //! - `noise.rs` encrypts the connection, and `protocol.rs` says what crosses it.
 //! - `devices.rs` keeps the paired devices, and checks each connection's key and MyFi account.
 //! - `dispatch.rs` runs a device's commands at its level, with secrets redacted.
@@ -12,6 +13,7 @@
 //! opens, the connection calls `Remote::open`, passes each message it decrypts to `receive`, and sends what the
 //! returned receiver yields.
 
+pub(crate) mod app_files;
 pub(crate) mod audit;
 pub(crate) mod awake;
 pub(crate) mod connect;

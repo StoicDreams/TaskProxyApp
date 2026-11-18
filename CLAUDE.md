@@ -160,6 +160,7 @@ Commits run in Rust as jobs (`services/commit_queue.rs`): the Run Before Commit 
 - **Every command in `generate_handler!` must be in `remote_commands!` in `dispatch.rs`, with its level, or in `DESKTOP_ONLY`,** and the test that reads `lib.rs` fails otherwise. A remote command must also be placed in `REDACTED` or `NO_VALUES` in that file's tests, after checking whether it returns variable values.
 - **Send events with `remote::hub::broadcast`, not `app.emit`,** so devices get them. An event carrying variable values uses `broadcast_redacted`, as `data-changed` does.
 - **Devices get secrets as `{"$secret": true}`** (`services/secrets.rs`), and a patch carrying the marker keeps the real value.
+- **A device runs this app from taskproxy.com** (`webapp/root_files/remote/` in the website repo), in a frame whose files come from the desktop through `remote_app_file`. There `window.__taskProxyRemote` is set and `webui.proxy.remote` gives the device's level. Code that saves, starts on a page, or asks to stay on the page checks it. A command the app calls as it starts must work at View level, or the device sees it refused.
 - **The Remote Access panel's commands (`remote_*` in `service.rs`) are desktop-only.** The window follows `remote-changed`, which `app.emit` sends to the window alone, since devices never need it.
 
 ### Plugins
