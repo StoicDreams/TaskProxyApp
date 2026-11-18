@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.158
+  VERSION: 0.1.159
 
 jobs:
   test:
@@ -57,11 +57,22 @@ jobs:
           path: .test-cache
           key: ui-test-cache-${{ github.run_id }}
           restore-keys: ui-test-cache-
-      # The minified files are what the app loads, so test those. A commit message with [full tests] runs them all.
+      # A commit message with [full tests] as a line of its own runs every test. Only a line of its own counts, so a
+      # message that describes the switch, such as in a Feature line, doesn't turn it on.
+      - name: choose whether every UI test runs
+        id: full-tests
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if printf '%s\n' "$MESSAGE" | tr -d '\r' | grep -qx '[[:space:]]*\[full tests\][[:space:]]*'; then
+            echo "no-cache=1" >> "$GITHUB_OUTPUT"
+            echo "Every UI test runs, as the commit message asks."
+          fi
+      # The minified files are what the app loads, so test those.
       - name: run UI tests
         run: npm run test:min
         env:
-          PW_NO_CACHE: ${{ contains(github.event.head_commit.message, '[full tests]') && '1' || '' }}
+          PW_NO_CACHE: ${{ steps.full-tests.outputs.no-cache }}
       # Passes from a run that failed elsewhere still hold, so the cache is saved either way.
       - name: save the UI test cache
         if: ${{ always() }}

@@ -14,13 +14,15 @@ import { createHash } from 'node:crypto';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+// PW_TEST_CACHE_ROOT stands in for the repo in the cache's own tests (tests/app/test-cache.spec.mjs), which run it in
+// a process of their own on a temporary folder, so they can never touch this repo's cache or another test's state.
+const ROOT = resolve(process.env.PW_TEST_CACHE_ROOT || fileURLToPath(new URL('../..', import.meta.url)));
 const CACHE_DIR = join(ROOT, '.test-cache');
 /**
  * Files every test depends on, beyond what it is seen using: the config, the installed tools, and the support files,
  * which specs import rather than read, such as the mock backend.
  */
-const ALWAYS = ['playwright.config.mjs', 'package-lock.json', ...fs.readdirSync(join(ROOT, 'tests', 'support'))
+const ALWAYS = ['playwright.config.mjs', 'package-lock.json', ...(fs.existsSync(join(ROOT, 'tests', 'support')) ? fs.readdirSync(join(ROOT, 'tests', 'support')) : [])
     .filter(name => name.endsWith('.mjs') || name.endsWith('.js'))
     .map(name => `tests/support/${name}`)];
 /** Folders whose files never decide a result, and change on every run. */

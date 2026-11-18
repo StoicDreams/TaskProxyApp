@@ -18,6 +18,15 @@ const publishHasSiteMap = readFileSync(join(scripts, 'Publish.ps1'), 'utf8').inc
 const temps = [];
 test.afterAll(() => temps.forEach(dir => rmSync(dir, { recursive: true, force: true })));
 
+// Programs these tests start get the same environment wherever the tests run: the run's own settings, such as CI's
+// and Publish's, are left out, so a script never behaves differently on CI, in a full run, or beside other specs.
+const RUN_SETTINGS = ['CI', 'GITHUB_ACTIONS', 'PW_NO_CACHE', 'PW_WORKERS', 'PW_NICE', 'PW_TEST_CACHE_ROOT', 'WEBUI_CDN_ROOT', 'TASKPROXY_CDN'];
+function programEnv(env = {}) {
+    const clean = { ...process.env };
+    for (const key of Object.keys(clean)) if (RUN_SETTINGS.includes(key.toUpperCase())) delete clean[key];
+    return { ...clean, ...env };
+}
+
 function tempFolder() {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'scripts-spec-')));
     temps.push(dir);
@@ -30,7 +39,7 @@ function write(dir, path, text) {
 }
 function pwsh(cwd, script, args = [], env = {}) {
     const result = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', script, ...args],
-        { cwd, encoding: 'utf8', env: { ...process.env, ...env }, timeout: 180000 });
+        { cwd, encoding: 'utf8', env: programEnv(env), timeout: 180000 });
     if (result.error) throw new Error(`Could not run pwsh, which these tests need: ${result.error.message}`);
     return { code: result.status, output: result.stdout + result.stderr };
 }
@@ -258,7 +267,7 @@ test.describe('StressTests.ps1', () => {
         const dir = tempFolder();
         copyFileSync(join(root, 'PowerShell', 'StressTests.ps1'), join(dir, 'PowerShell', 'StressTests.ps1'));
         write(dir, 'package.json', JSON.stringify({ name: 'stress-spec', private: true, scripts }));
-        const git = (args, env = {}) => execFileSync('git', args, { cwd: dir, env: { ...process.env, ...env }, stdio: 'pipe' });
+        const git = (args, env = {}) => execFileSync('git', args, { cwd: dir, env: programEnv(env), stdio: 'pipe' });
         git(['init', '-q']);
         git(['config', 'user.email', 'spec@example.com']);
         git(['config', 'user.name', 'Spec']);

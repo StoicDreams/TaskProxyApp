@@ -45,8 +45,8 @@
         return box;
     }
 
-    function dropdown(label, role, options, value) {
-        const input = el('webui-dropdown', { label, 'data-role': role });
+    function choice(label, role, options, value) {
+        const input = el('webui-select', { label, 'data-role': role });
         input.setAttribute('options', JSON.stringify(options.map(option => ({ id: `${option.value}`, value: `${option.value}`, display: option.display }))));
         input.setAttribute('value', `${value}`);
         return input;
@@ -69,7 +69,7 @@
     }
 
     webui.define("app-remote-access", {
-        preload: 'button dropdown input-text alert icon',
+        preload: 'button select input-text alert icon',
         constructor() {
             this._load = 0;
         },
@@ -193,12 +193,12 @@
                     part.appendChild(el('p', { class: 'remote-awake' }, 'This computer is kept awake, so your devices can reach it. Its screen can still turn off.'));
                 }
             }
-            const keep = dropdown('Sleep', 'keep-awake', [
+            const keep = choice('Sleep', 'keep-awake', [
                 { value: 'awake', display: 'Keep this computer awake' },
                 { value: 'sleep', display: 'Let this computer sleep as usual' },
             ], status.keepAwake ? 'awake' : 'sleep');
             const hourName = hours => hours === 0 ? 'Never' : hours === 1 ? 'After an hour without a device connecting' : `After ${hours} hours without a device connecting`;
-            const off = dropdown('Turn off by itself', 'off-after', (status.offAfterChoices || [0]).map(hours => ({ value: hours, display: hourName(hours) })), status.offAfterHours || 0);
+            const off = choice('Turn off by itself', 'off-after', (status.offAfterChoices || [0]).map(hours => ({ value: hours, display: hourName(hours) })), status.offAfterHours || 0);
             const save = () => {
                 const keepAwake = (keep.value || 'awake') === 'awake';
                 const hours = parseInt(off.value ?? '0', 10) || 0;
@@ -238,8 +238,8 @@
             }
             part.appendChild(el('p', {}, 'Choose what the device may do and how long it stays paired, then scan the QR code with it.'));
             const name = el('webui-input-text', { label: 'Device name', 'data-role': 'device-name', value: 'Phone' });
-            const level = dropdown('What it may do', 'level', LEVELS, 'view');
-            const days = dropdown('How long it stays paired', 'days', (status.pairingDays || [7, 30, 90, 0]).map(days => ({ value: days, display: daysName(days) })), 30);
+            const level = choice('What it may do', 'level', LEVELS, 'view');
+            const days = choice('How long it stays paired', 'days', (status.pairingDays || [7, 30, 90, 0]).map(days => ({ value: days, display: daysName(days) })), 30);
             const show = button('Show QR Code', 'primary', 'qrcode', 'show-qr');
             show.addEventListener('click', () => t.apply(() => webui.proxy.remoteAccess.invite(
                 `${name.value ?? 'Phone'}`.trim() || 'Phone',
@@ -266,7 +266,7 @@
                 row.appendChild(el('p', { class: 'remote-device-details' },
                     `Paired ${when(device.pairedAt)}. Last connected ${device.lastSeen ? when(device.lastSeen) : 'never'}. ${device.days === 0 ? 'Stays paired for good.' : `Unpaired after ${device.days} days without connecting, on ${when(device.expiresAt)}.`}`));
                 const actions = el('webui-flex', { gap: 'var(--padding)', align: 'end', justify: 'start' });
-                const level = dropdown('What it may do', 'device-level', LEVELS, device.level);
+                const level = choice('What it may do', 'device-level', LEVELS, device.level);
                 level.addEventListener('change', () => {
                     if (level.value && level.value !== device.level) {
                         t.apply(() => webui.proxy.remoteAccess.updateDevice(device.id, { level: level.value }));

@@ -51,7 +51,7 @@ test("a project's own settings can be changed, and it can stop using them", asyn
 test('a project with no settings can use those of another project', async ({ page }) => {
     const settings = await openSettings(page, { hasProject: true, signIn: null, settings: fields(), signIns: [work] });
     const choice = settings.locator('[data-role="sign-in-choice"]');
-    await expect(choice.locator('webui-dropdown')).toContainText('https://team.atlassian.net (2 projects)');
+    await expect(choice.locator('webui-select .pick-name')).toHaveText('https://team.atlassian.net (2 projects)');
     await choice.locator('webui-button', { hasText: 'Use these' }).click();
     await expect.poll(() => calls(page, 'plugin_use_sign_in')).toEqual([{ id: 'jira', signIn: 'sign-in-1' }]);
     await expect(settings.locator('[data-role="stop-using"]')).toBeVisible();

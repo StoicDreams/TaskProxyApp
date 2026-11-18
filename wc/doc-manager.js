@@ -3,10 +3,10 @@
 {
     webui.define("app-doc-manager", {
         linkCss: true,
-        preload: 'dropdown input-message content',
+        preload: 'select input-message content',
         constructor() {
             const t = this;
-            t._fileSelector = t.template.querySelector('webui-dropdown[label="File"]');
+            t._fileSelector = t.template.querySelector('webui-select[label="File"]');
             t._content = t.template.querySelector('webui-content');
             t._message = t.template.querySelector('webui-input-message');
             t._btnReset = t.template.querySelector('webui-button[label="Reset"]');
@@ -101,7 +101,7 @@ display:none;
 }
 </style>
 <webui-grid columns="1fr max-content max-content">
-<webui-dropdown label="File"></webui-dropdown>
+<webui-select label="File"></webui-select>
 <webui-button theme="warning" label="Reset"></webui-button>
 <webui-button theme="success" label="Save"></webui-button>
 </webui-grid>

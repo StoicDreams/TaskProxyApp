@@ -8,7 +8,7 @@
         linkCss: false,
         watchVisibility: false,
         isInput: false,
-        preload: 'app:script-runner app:terminal-view dropdown toggle-icon input-message dialogs',
+        preload: 'app:script-runner app:terminal-view select toggle-icon input-message dialogs',
         constructor() {
             const t = this;
             t.icon = t.template.querySelector('webui-icon');
@@ -89,7 +89,7 @@
             container.innerHTML = `
 <div id="term-content-wrapper" style="display:none; flex-direction:column; gap:var(--padding); height:100%;">
     <webui-flex gap="0.5rem" align="center" wrap="wrap">
-        <webui-dropdown label="Script" id="term-dropdown" style="flex: 1 1 15em;"></webui-dropdown>
+        <webui-select label="Script" id="term-dropdown" style="flex: 1 1 15em;"></webui-select>
         <webui-button id="btn-kill-all" theme="danger" label="Kill All" title="End every running script now"></webui-button>
         <webui-button id="btn-remove-script" theme="secondary" label="Remove" title="Remove this finished page script from the list"></webui-button>
         <webui-button id="btn-remove-finished" theme="secondary" label="Remove Finished Page Scripts"></webui-button>
@@ -298,7 +298,7 @@
                 const watching = filter === t._listedFilter ? viewing : null;
                 const options = await helpers.getDropdownOptions(helpers.getState(), filter, watching);
                 if (!options.length) {
-                    t._activeDropdown.setOptions([{ id: '', value: '', display: 'None' }]);
+                    t._activeDropdown.setOptions([{ id: '', value: '', display: 'None', icon: 'xmark' }]);
                     t.setListEnabled(false);
                     if (viewing) next = { id: null };
                 } else {

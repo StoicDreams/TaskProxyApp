@@ -2,10 +2,10 @@
 {
     webui.define("app-script-manager", {
         linkCss: true,
-        preload: 'app:script-runner dropdown',
+        preload: 'app:script-runner select',
         constructor() {
             const t = this;
-            t._fileSelector = t.template.querySelector('webui-dropdown[label="Script"]');
+            t._fileSelector = t.template.querySelector('webui-select[label="Script"]');
             t._runner = t.template.querySelector('app-script-runner');
             t._btnNew = t.template.querySelector('webui-button[label="New Script"]');
         },
@@ -58,7 +58,7 @@
 }
 </style>
 <webui-flex align="center">
-    <webui-dropdown label="Script"></webui-dropdown>
+    <webui-select label="Script"></webui-select>
     <webui-button theme="primary" label="New Script"></webui-button>
 </webui-flex>
 <app-script-runner style="min-height: 70vh;"></app-script-runner>

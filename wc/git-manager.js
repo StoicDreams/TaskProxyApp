@@ -495,16 +495,16 @@
             + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}"><webui-icon icon="${isNew ? 'trash' : 'undo'}"></webui-icon></button>`
             + `</div>`;
     }
-    // How often the Repo dropdown asks again about CI runs that have not finished.
+    // How often the Repo list asks again about CI runs that have not finished.
     const ciRecheck = 60000;
     webui.define("app-git-manager", {
         linkCss: true,
         watchVisibility: false,
         isInput: false,
-        preload: 'tabs table dropdown input-message input-text toggle-icon alert content-compare file-preview icon',
+        preload: 'tabs table select input-message input-text toggle-icon alert content-compare file-preview icon',
         constructor() {
             const t = this;
-            t._repos = t.template.querySelector('webui-dropdown[label="Repo"]');
+            t._repos = t.template.querySelector('webui-select[label="Repo"]');
             t._fileName = t.template.querySelector('.preview h2');
             t._filesContainer = t.template.querySelector('.files');
             t._diffViewer = t.template.querySelector('webui-content-compare');
@@ -607,7 +607,7 @@
             if (t._repos.value !== repo) return;
             await whenReady(t._beforeScript);
             t._loadingBeforeCommit = true;
-            t._beforeScript.setOptions([{ id: '', value: '', display: 'Nothing' }, ...scripts.map(path => ({ id: path, value: path, display: path }))]);
+            t._beforeScript.setOptions([{ id: '', value: '', display: 'Nothing', icon: 'xmark' }, ...scripts.map(path => ({ id: path, value: path, display: path }))]);
             t._beforeScript.value = selected;
             t._loadingBeforeCommit = false;
             await t.showBeforeCommitParameters(selected);
@@ -649,7 +649,7 @@
                     if (param.kind === 'switch' || param.kind === 'bool') {
                         el = webui.create('webui-toggle-icon', { label, 'theme-on': 'primary' });
                     } else if (param.kind === 'choice') {
-                        el = webui.create('webui-dropdown', { label });
+                        el = webui.create('webui-select', { label });
                     } else {
                         el = webui.create('webui-input-text', { label });
                         if (param.kind === 'number') el.setAttribute('type', 'number');
@@ -849,7 +849,7 @@
                 webui.setData('git-branches', []);
             } else {
                 t._repoList = repos;
-                // On a slow load the dropdown definition can arrive after this component starts.
+                // On a slow load the select's definition can arrive after this component starts.
                 await whenReady(t._repos);
                 t.renderRepoOptions();
                 t._repos.classList.remove('hidden');
@@ -968,14 +968,14 @@
             const binaryNote = binary ? ` <span class="binary-note">(${binary} binary ${binary === 1 ? 'file' : 'files'} not counted)</span>` : '';
             t._valCommitLines.innerHTML = `${badge('success', `+${additions.toLocaleString()}`)} ${badge('danger', `-${deletions.toLocaleString()}`)}${binaryNote}`;
         },
-        /** Each repo's name in the Repo dropdown, with its changed files and commits behind and ahead. */
+        /** Each repo's name in the Repo list, with its CI result, changed files, and commits behind and ahead. */
         renderRepoOptions() {
             const t = this;
             if (!t._repoList) return;
             const status = webui.proxy.git.withCiStatus(t._repoStatus, t._repoCi);
             t._repos.setOptions(t._repoList.map(repo => {
                 const display = repo === '' ? 'Root' : repo;
-                return { id: repo, value: repo, display, html: webui.proxy.git.statusHtml(display, status[repo]) };
+                return { id: repo, value: repo, display, badge: webui.proxy.git.statusMarkersHtml(status[repo]) };
             }));
         },
         async loadRepoStatus() {
@@ -1014,7 +1014,7 @@
             t._valSyncStatus.innerHTML = '<em>Checking remote sync status...</em>';
             t.loadExistingPat();
             await whenProxyReady();
-            // Called after changes load and after every fetch, pull, and push, so the Repo dropdown's counts follow.
+            // Called after changes load and after every fetch, pull, and push, so the Repo list's counts follow.
             t.loadRepoStatus();
             let status = await webui.proxy.git.getRemoteStatus(repo, msg => t.setAlert(msg));
             if (!status) {
@@ -1819,7 +1819,7 @@ pre {
     display: none;
 }
 .before-commit-params > webui-input-text,
-.before-commit-params > webui-dropdown {
+.before-commit-params > webui-select {
     flex: 1 1 10em;
 }
 .before-commit-params .note {
@@ -2014,7 +2014,7 @@ button.revert {
 </style>
 <webui-flex align="center">
     <webui-button theme="info" label="Refresh"></webui-button>
-    <webui-dropdown class="hidden" html-options data-bind="project.selectedGitRepo" label="Repo"></webui-dropdown>
+    <webui-select class="hidden" data-bind="project.selectedGitRepo" label="Repo" title="Repos"></webui-select>
     <webui-flex align="center" gap="0.5rem" style="margin-left: auto;">
         <webui-button id="btn-revert-all" theme="danger" label="Revert All"></webui-button>
         <webui-button id="btn-stash" theme="warning" label="Stash"></webui-button>
@@ -2051,7 +2051,7 @@ button.revert {
             <div class="commit-side">
                 <webui-input-message theme="title" label="Commit Message" max-height="12em"></webui-input-message>
                 <div class="commit-actions" data-state="ready">
-                    <webui-dropdown id="before-commit-script" label="Run Before Commit" title="A script in this project to run before each commit. If it fails, nothing is committed."></webui-dropdown>
+                    <webui-select id="before-commit-script" label="Run Before Commit" title="A script in this project to run before each commit. If it fails, nothing is committed."></webui-select>
                     <div class="commit-controls">
                         <webui-toggle-icon id="toggle-queue" class="when-ready" label="Queue" data-bind="app-git-queue" theme-on="primary" title="Wait for earlier queued commits, so commits run one at a time and in order"></webui-toggle-icon>
                         <webui-toggle-icon id="toggle-sync" class="when-ready" label="Sync after commit" data-bind="app-git-autosync" theme-on="primary"></webui-toggle-icon>
@@ -2103,7 +2103,7 @@ button.revert {
             <p class="pa-1">Set your Personal Access Token (PAT) for remote Git operations.</p>
             <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="end">
                 <webui-input-text id="input-git-pat" label="Personal Access Token (PAT)"></webui-input-text>
-                <webui-dropdown id="dropdown-pat-scope" label="Scope"></webui-dropdown>
+                <webui-select id="dropdown-pat-scope" label="Scope"></webui-select>
                 <webui-button id="btn-save-pat" theme="success" label="Save Token"></webui-button>
             </webui-grid>
         </webui-flex>

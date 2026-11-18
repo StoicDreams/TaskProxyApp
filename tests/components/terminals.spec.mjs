@@ -193,7 +193,7 @@ test('a status change during a dropdown refresh is not lost', async ({ page }) =
         webui.proxy.terminalHelpers.getState().terminals['a.ps1'].status = 'Finished';
         el.refreshDropdown();
     });
-    await expect.poll(() => page.evaluate(() => document.querySelector('#term-dropdown')._select.textContent)).toContain('a.ps1 (Finished)');
+    await expect.poll(() => page.evaluate(() => document.querySelector('#term-dropdown')._options.map(option => option.display).join('\n'))).toContain('a.ps1 (Finished)');
 });
 test('finishing a script updates the kill button', async ({ page }) => {
     await open(page);
@@ -208,7 +208,7 @@ test('markup in a script name is shown as text', async ({ page }) => {
     await open(page, { scripts: ['<img src=q onerror="window.__xss=1">.ps1'], appData: { 'app-terminals-filter': 'Saved' } });
     await ready(page);
     // The list shows the name as it was written.
-    await expect.poll(() => page.evaluate(() => document.querySelector('#term-dropdown')._select.textContent)).toContain('<img src=q onerror="window.__xss=1">.ps1');
+    await expect.poll(() => page.evaluate(() => document.querySelector('#term-dropdown')._options.map(option => option.display).join('\n'))).toContain('<img src=q onerror="window.__xss=1">.ps1');
     await expect(page.locator('#term-dropdown img')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
@@ -361,8 +361,8 @@ test.describe('run status', () => {
 test.describe('script filter', () => {
     const filter = page => page.locator('webui-drawer.shared [slot="header"] webui-switch');
     const choose = (page, name) => filter(page).locator('button', { hasText: new RegExp(`^${name}$`) }).click();
-    // The dropdown's own select holds its options, as the earlier status test reads them.
-    const listed = page => page.locator('#term-dropdown').evaluate(el => [...el._select.options].map(option => option.textContent));
+    // The names of the scripts the list offers, as the earlier status test reads them.
+    const listed = page => page.locator('#term-dropdown').evaluate(el => el._options.map(option => option.display));
 
     const dropdown = page => page.locator('#term-dropdown');
     const shown = page => page.evaluate(() => webui.proxy.terminalHelpers.getState().activeId);
@@ -385,7 +385,7 @@ test.describe('script filter', () => {
         await expect(filter(page).locator('button[aria-checked="true"]').first()).toHaveText('Live');
         await expect.poll(() => listed(page)).toEqual([]);
         await expect(dropdown(page)).toHaveAttribute('disabled');
-        await expect(page.getByRole('combobox', { name: 'Script' })).toBeDisabled();
+        await expect(dropdown(page).getByRole('button', { name: 'Script' })).toBeDisabled();
         await expect.poll(() => shown(page)).toBe('live');
         await choose(page, 'Saved');
         await expect(dropdown(page)).not.toHaveAttribute('disabled');

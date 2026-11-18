@@ -16,7 +16,7 @@ const select = (page, file) => page.evaluate(file => {
 
 test('file names show as written', async ({ page }) => {
     await open(page, { docs: ['R&D/notes.md'], files: { 'R&D/notes.md': '# Notes' } });
-    await expect.poll(() => manager(page).evaluate(el => el._fileSelector._select.options[0].textContent)).toBe('R&D/notes.md');
+    await expect.poll(() => manager(page).evaluate(el => el._fileSelector._options[0]?.display)).toBe('R&D/notes.md');
 });
 test('the readme is listed first and shown', async ({ page }) => {
     await open(page, docs);
@@ -91,5 +91,5 @@ test('markup in a file name is shown as text', async ({ page }) => {
     await open(page, { docs: [name], files: { [name]: '# Doc' } });
     await expect(manager(page).locator('webui-input-message textarea')).toHaveValue('# Doc');
     await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
-    await expect(manager(page).locator('webui-dropdown img')).toHaveCount(0);
+    await expect(manager(page).locator('webui-select img')).toHaveCount(0);
 });

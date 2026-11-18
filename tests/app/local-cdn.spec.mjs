@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { programEnv } from '../support/program-env.mjs';
 
 // PowerShell/LocalCdn.ps1, which Trunk runs after each build: a development build loads Web UI from a local MyFiCDN
 // server. It runs in a temporary staging folder, as Trunk's, never in this repo, and needs PowerShell 7 (pwsh).
@@ -26,7 +27,7 @@ function staging() {
 function run(dir, env, args = []) {
     return new Promise((resolve, reject) => {
         const child = spawn('pwsh', ['-NoProfile', '-NonInteractive', '-File', script, ...args],
-            { cwd: dir, env: { ...process.env, TASKPROXY_CDN: '', TRUNK_STAGING_DIR: dir, ...env } });
+            { cwd: dir, env: programEnv({ TRUNK_STAGING_DIR: dir, ...env }) });
         let output = '';
         child.stdout.on('data', chunk => { output += chunk; });
         child.stderr.on('data', chunk => { output += chunk; });

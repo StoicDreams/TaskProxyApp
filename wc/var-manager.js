@@ -268,7 +268,7 @@
     <webui-content slot="content" nodetach>
         <webui-flex align="center" justify="start" gap="var(--padding)" style="margin-bottom: 1rem;">
             <label>Environment:</label>
-            <webui-dropdown id="env-selector" aria-label="Environment" style="flex-grow: 1; padding: 0.25rem;"></webui-dropdown>
+            <webui-select id="env-selector" aria-label="Environment" title="Environments" style="flex-grow: 1; padding: 0.25rem;"></webui-select>
             <webui-button id="btn-manage-env" label="Manage" theme="primary"></webui-button>
         </webui-flex>
         <webui-flex justify="center" gap="var(--padding)">
@@ -549,7 +549,7 @@
         linkCss: false,
         watchVisibility: false,
         isInput: false,
-        preload: '',
+        preload: 'select',
         constructor() {
             const t = this;
             t.icon = t.template.querySelector('webui-icon');

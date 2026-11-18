@@ -19,11 +19,12 @@ async function panel(page, state = {}) {
 }
 const alerts = page => page.evaluate(() => window.__alerts);
 const role = (el, name) => el.locator(`[data-role="${name}"]`);
-/** Chooses an option in a webui-dropdown, as picking it from its list does. */
-const pick = (dropdown, value) => dropdown.evaluate((d, value) => {
-    d._select.value = value;
-    d._select.dispatchEvent(new Event('change', { bubbles: true }));
-}, value);
+/** Chooses an option in a webui-select by its value: opens its tiles and clicks that one. */
+async function pick(select, value) {
+    await select.locator('button[aria-haspopup]').click();
+    await select.locator(`.tile[data-value="${value}"]`).click();
+    await expect(select.locator('.panel')).toBeHidden();
+}
 
 test('signed out, it asks to sign in first, and turning on says why it can not', async ({ page }) => {
     const el = await panel(page, { myfi: null });

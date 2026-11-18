@@ -39,37 +39,49 @@ const refresh = async page => {
 const include = (page, file) => manager(page).locator(`.files .file-row[data-path="${file}"] select.include`);
 
 test.describe('repo dropdown', () => {
-    const repoDropdown = page => manager(page).locator('webui-dropdown[label="Repo"]');
-    const repoOption = (page, value) => repoDropdown(page).locator(`[role="option"][data-value="${value}"]`);
+    const repoDropdown = page => manager(page).locator('webui-select[label="Repo"]');
+    // The repos are tiles in the select's panel, opened from the field once the repos are listed. A click elsewhere
+    // closes it, so it is opened again when needed.
+    const openRepos = async page => {
+        const select = repoDropdown(page);
+        await expect.poll(() => select.evaluate(el => el._options?.length || 0)).toBeGreaterThan(0);
+        if (!await select.evaluate(el => el.isOpen())) await select.locator('button[aria-haspopup]').click();
+        await expect(select.locator('.panel')).toBeVisible();
+    };
+    const repoTile = async (page, value) => {
+        await openRepos(page);
+        return repoDropdown(page).locator(`.tile[data-value="${value}"]`);
+    };
     const repoStatus = { '': { changes: 2 }, 'libs/api': { behind: 4, ahead: 1 }, docs: {} };
 
     test('each repo shows its changed files and commits behind and ahead', async ({ page }) => {
         await open(page, { repos: ['', 'libs/api', 'docs'], repoStatus });
-        await expect(repoOption(page, '').locator('.git-changes webui-icon')).toHaveAttribute('count', '2');
-        await expect(repoOption(page, '').locator('.git-name')).toHaveText('Root');
-        await expect(repoOption(page, 'libs/api').locator('.git-behind webui-icon')).toHaveAttribute('count', '4');
-        await expect(repoOption(page, 'libs/api').locator('.git-behind')).toHaveAttribute('title', '4 commits behind the remote');
-        await expect(repoOption(page, 'libs/api').locator('.git-ahead webui-icon')).toHaveAttribute('count', '1');
-        await expect(repoOption(page, 'libs/api').locator('.git-changes')).toHaveCount(0);
-        await expect(repoOption(page, 'docs')).toHaveText('docs');
+        await expect((await repoTile(page, '')).locator('.git-changes webui-icon')).toHaveAttribute('count', '2');
+        await expect((await repoTile(page, '')).locator('.name')).toHaveText('Root');
+        await expect((await repoTile(page, 'libs/api')).locator('.git-behind webui-icon')).toHaveAttribute('count', '4');
+        await expect((await repoTile(page, 'libs/api')).locator('.git-behind')).toHaveAttribute('title', '4 commits behind the remote');
+        await expect((await repoTile(page, 'libs/api')).locator('.git-ahead webui-icon')).toHaveAttribute('count', '1');
+        await expect((await repoTile(page, 'libs/api')).locator('.git-changes')).toHaveCount(0);
+        await expect((await repoTile(page, 'docs')).locator('.name')).toHaveText('docs');
+        await expect((await repoTile(page, 'docs')).locator('.git-status')).toHaveCount(0);
         // The chosen repo shows its counts in the picker too.
-        await expect(repoDropdown(page).locator('button .git-changes webui-icon')).toHaveAttribute('count', '2');
+        await expect(repoDropdown(page).locator('.picked .git-changes webui-icon')).toHaveAttribute('count', '2');
     });
     test('each repo shows the result of the CI runs for its last push', async ({ page }) => {
         const ciStatus = { 'libs/api': { state: 'failure', service: 'GitHub Actions', url: '' }, docs: { state: 'success', service: 'GitHub Actions', url: '' } };
         await open(page, { repos: ['', 'libs/api', 'docs'], repoStatus, ciStatus });
-        await expect(repoOption(page, 'libs/api').locator('.git-ci-failure')).toHaveAttribute('title', 'GitHub Actions failed for the last push');
-        await expect(repoOption(page, 'libs/api').locator('.git-behind webui-icon')).toHaveAttribute('count', '4');
-        await expect(repoOption(page, 'docs').locator('.git-ci-success webui-icon')).toHaveAttribute('icon', 'check');
-        await expect(repoOption(page, '').locator('.git-ci')).toHaveCount(0);
+        await expect((await repoTile(page, 'libs/api')).locator('.git-ci-failure')).toHaveAttribute('title', 'GitHub Actions failed for the last push');
+        await expect((await repoTile(page, 'libs/api')).locator('.git-behind webui-icon')).toHaveAttribute('count', '4');
+        await expect((await repoTile(page, 'docs')).locator('.git-ci-success webui-icon')).toHaveAttribute('icon', 'check');
+        await expect((await repoTile(page, '')).locator('.git-ci')).toHaveCount(0);
     });
     test('the Repo dropdown asks again while a CI run is unfinished, and stops once it finishes', async ({ page }) => {
         await page.clock.install();
         await open(page, { repos: ['', 'libs/api'], repoStatus, ciStatus: { '': { state: 'running', service: 'GitHub Actions', url: '' } } });
-        await expect(repoOption(page, '').locator('.git-ci-running')).toHaveCount(1);
+        await expect((await repoTile(page, '')).locator('.git-ci-running')).toHaveCount(1);
         await page.evaluate(() => { window.__backend.git.ciStatus = { '': { state: 'success', service: 'GitHub Actions', url: '' } }; });
         await page.clock.runFor(61000);
-        await expect(repoOption(page, '').locator('.git-ci-success')).toHaveCount(1);
+        await expect((await repoTile(page, '')).locator('.git-ci-success')).toHaveCount(1);
         // The run has finished, and the clock only moves when the test moves it, so nothing asks in between.
         const asked = (await calls(page, 'get_git_repo_ci_status')).length;
         await page.clock.runFor(180000);
@@ -78,23 +90,24 @@ test.describe('repo dropdown', () => {
     test('a repo name is shown as text, not markup', async ({ page }) => {
         const odd = '<img src=x onerror="window.__xss=1">';
         await open(page, { repos: ['', odd], repoStatus: { [odd]: { changes: 1 } } });
+        await openRepos(page);
         await expect(repoDropdown(page).locator('[role="option"] .git-changes webui-icon')).toHaveAttribute('count', '1');
+        await expect(repoDropdown(page).locator('[role="option"] .name').nth(1)).toHaveText(odd);
         await expect(repoDropdown(page).locator('img')).toHaveCount(0);
         await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
     });
     test('counts update after the changes reload, such as after a fetch or commit', async ({ page }) => {
         await open(page, { repos: ['', 'libs/api'], repoStatus });
-        await expect(repoOption(page, 'libs/api').locator('.git-behind webui-icon')).toHaveAttribute('count', '4');
+        await expect((await repoTile(page, 'libs/api')).locator('.git-behind webui-icon')).toHaveAttribute('count', '4');
         await page.evaluate(() => { window.__backend.git.repoStatus = { 'libs/api': { behind: 0, ahead: 0 }, '': { changes: 0, ahead: 3 } }; });
         await manager(page).locator('webui-button[label="Refresh"]').click();
-        await expect(repoOption(page, '').locator('.git-ahead webui-icon')).toHaveAttribute('count', '3');
-        await expect(repoOption(page, 'libs/api').locator('.git-status')).toHaveCount(0);
-        await expect(repoOption(page, '').locator('.git-changes')).toHaveCount(0);
+        await expect((await repoTile(page, '')).locator('.git-ahead webui-icon')).toHaveAttribute('count', '3');
+        await expect((await repoTile(page, 'libs/api')).locator('.git-status')).toHaveCount(0);
+        await expect((await repoTile(page, '')).locator('.git-changes')).toHaveCount(0);
     });
     test('choosing a repo from the list switches to it', async ({ page }) => {
         await open(page, { repos: ['', 'libs/api'], repoStatus });
-        await repoDropdown(page).locator('button').first().click();
-        await repoOption(page, 'libs/api').click();
+        await (await repoTile(page, 'libs/api')).click();
         await expect.poll(() => repoDropdown(page).evaluate(el => el.value)).toBe('libs/api');
         await expect.poll(async () => (await calls(page, 'get_git_changes')).map(call => call.path)).toContain('libs/api');
     });
@@ -113,8 +126,7 @@ test.describe('repo dropdown', () => {
             };
         });
         await markFiles(page);
-        await repoDropdown(page).locator('button').first().click();
-        await repoOption(page, 'libs/api').click();
+        await (await repoTile(page, 'libs/api')).click();
         await expect.poll(() => page.evaluate(() => typeof window.__releaseChanges)).toBe('function');
         await commit(page);
         await expect(alertBox(page)).toContainText('still loading');
@@ -549,7 +561,7 @@ test.describe('commit message memory', () => {
     test('each repo keeps its own message', async ({ page }) => {
         await open(page, { repos: ['', 'sub'] });
         await typeMessage(page, 'root message');
-        const selectRepo = repo => manager(page).locator('webui-dropdown[label="Repo"]').evaluate((el, repo) => {
+        const selectRepo = repo => manager(page).locator('webui-select[label="Repo"]').evaluate((el, repo) => {
             el.value = repo;
             el.dispatchEvent(new Event('change', { bubbles: true }));
         }, repo);
@@ -862,10 +874,11 @@ Write-Host 'done'
     const saved = { _gitBeforeCommit: { scripts: { '': SCRIPT }, values: { [SCRIPT]: VALUES } } };
     const field = (page, name) => manager(page).locator(`.before-commit-params [data-param="${name}"]`);
     const drawerOpen = page => page.locator('webui-drawer.shared.open');
-    // Web UI dropdowns open a list of options rather than the native select, so an option is picked from that list.
-    const pick = async (dropdown, value) => {
-        await dropdown.locator('button').first().click();
-        await dropdown.locator(`[role="option"][data-value="${value}"]`).click();
+    // A webui-select opens its options as tiles, so an option is picked by opening it and clicking that tile.
+    const pick = async (select, value) => {
+        await select.locator('button[aria-haspopup]').click();
+        await select.locator(`.tile[data-value="${value}"]`).click();
+        await expect(select.locator('.panel')).toBeHidden();
     };
     const finish = (page, code) => page.evaluate(code => window.__backend.runs.end({ projectId: 'project-id', terminalId: 'Before Commit', code }), code);
 
@@ -874,7 +887,7 @@ Write-Host 'done'
         await pick(manager(page).locator('#before-commit-script'), SCRIPT);
         await expect(field(page, 'Version')).toHaveCount(1);
         await expect.poll(() => manager(page).locator('.before-commit-params [data-param]').evaluateAll(els => els.map(el => `${el.localName}:${el.dataset.param}`))).toEqual([
-            'webui-dropdown:Version', 'webui-toggle-icon:SkipMinify', 'webui-input-text:Note', 'webui-input-text:Tags', 'webui-input-text:Count', 'webui-toggle-icon:Check',
+            'webui-select:Version', 'webui-toggle-icon:SkipMinify', 'webui-input-text:Note', 'webui-input-text:Tags', 'webui-input-text:Count', 'webui-toggle-icon:Check',
         ]);
         // Starting values come from the script's defaults.
         await expect.poll(() => field(page, 'Version').evaluate(el => el.value)).toBe('minor');
@@ -1083,7 +1096,7 @@ Write-Host 'done'
         await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
     });
     test.describe('queue', () => {
-        const repoDropdown = page => manager(page).locator('webui-dropdown[label="Repo"]');
+        const repoDropdown = page => manager(page).locator('webui-select[label="Repo"]');
         /** Commits the root repo with Queue on, whose script then runs, and goes to the libs/api repo. */
         const startFirst = async page => {
             await openWith(page, saved, { repos: ['', 'libs/api'] });

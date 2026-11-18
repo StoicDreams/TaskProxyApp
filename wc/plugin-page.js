@@ -891,8 +891,8 @@
                     return;
                 }
                 case 'select': {
-                    input = el('webui-dropdown', { label: escape(field.label), title: field.help || null });
-                    // The dropdown escapes what it shows, so labels are passed as they are.
+                    input = el('webui-select', { label: escape(field.label), title: field.help || null });
+                    // The select shows names as text, so labels are passed as they are.
                     const options = (field.options || []).map(option => ({ id: `${option.value}`, value: `${option.value}`, display: `${option.label ?? ''}` }));
                     input.setAttribute('options', JSON.stringify(options));
                     const chosen = value !== undefined && value !== null && value !== '' ? `${value}` : options[0]?.value;

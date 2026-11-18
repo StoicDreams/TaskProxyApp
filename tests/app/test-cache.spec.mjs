@@ -1,101 +1,66 @@
 import { test, expect } from '@playwright/test';
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cdnBodyFingerprint, finishRecording, noteCdn, startRecording, startedHere, unchangedSincePassing } from '../support/test-cache.mjs';
-import fs from 'node:fs';
+import { startedHere } from '../support/test-cache.mjs';
 
-// The UI tests' result cache (tests/support/test-cache.mjs), with made-up tests, so its own tests run every time.
+// The UI tests' result cache (tests/support/test-cache.mjs), with made-up tests. Each test runs the cache in a Node
+// process of its own (test-cache.child.mjs), on a temporary folder in place of the repo and with only the environment
+// it sets, so it can't touch this repo's cache, and nothing else in the run, such as PW_NO_CACHE, can reach it.
 // This spec uses Playwright's test directly, since the harness's cache would record these tests too.
-const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-// Each worker has its own folder, since these run in parallel.
-const SCRATCH = join(ROOT, 'tests', '.cache-check', `${process.pid}`);
-const file = name => join(SCRATCH, name);
-let count = 0;
+const here = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(here, '..', '..');
+const temps = [];
+test.afterAll(() => temps.forEach(dir => rmSync(dir, { recursive: true, force: true })));
 
-/** A test as Playwright describes it to fixtures. */
-function testInfo(overrides = {}) {
-    return {
-        project: { name: 'cache-check', repeatEach: 1 },
-        file: fileURLToPath(import.meta.url),
-        titlePath: ['test-cache.spec.mjs', `made up ${process.pid} ${++count}`],
-        retry: 0,
-        status: 'passed',
-        errors: [],
-        ...overrides,
-    };
+/** Runs `steps` against a fresh folder, and gives what each check found: whether the made-up test would be skipped. */
+function cache(steps) {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'test-cache-spec-')));
+    temps.push(root);
+    mkdirSync(join(root, 'tests'));
+    const result = spawnSync(process.execPath, [join(here, 'test-cache.child.mjs'), JSON.stringify(steps)], {
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH, PW_TEST_CACHE_ROOT: root },
+        timeout: 60000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return JSON.parse(result.stdout);
 }
+const passed = (reads = [], cdn = {}) => ({ run: { reads, cdn } });
+const check = (info = {}, cdn = {}) => ({ check: { info, cdn } });
 
-/** Runs a made-up test that reads `reads` and downloads `cdn` ({url: body}), and ends as `info` says. */
-function run(info, reads = [], cdn = {}) {
-    startRecording(info);
-    reads.forEach(path => fs.readFileSync(path));
-    Object.entries(cdn).forEach(([url, body]) => noteCdn(url, body));
-    finishRecording(info);
-}
-const cdnNow = files => async url => cdnBodyFingerprint(files[url]);
-
-test.beforeAll(() => mkdirSync(SCRATCH, { recursive: true }));
-test.afterAll(() => {
-    rmSync(SCRATCH, { recursive: true, force: true });
-    // The made-up tests' entries, which no real run needs.
-    const cache = join(ROOT, '.test-cache');
-    for (const name of (() => { try { return readdirSync(cache); } catch { return []; } })()) {
-        try {
-            if (JSON.parse(readFileSync(join(cache, name), 'utf8')).id.includes(`made up ${process.pid} `)) rmSync(join(cache, name));
-        } catch { }
-    }
-});
-test.afterEach(() => { delete process.env.PW_NO_CACHE; });
-
-test('a test that passed is skipped while nothing it used changes', async () => {
-    writeFileSync(file('a.txt'), 'one');
-    const info = testInfo();
-    run(info, [file('a.txt')]);
-    expect(await unchangedSincePassing(info, cdnNow({}))).toBe(true);
+test('a test that passed is skipped while nothing it used changes', () => {
+    expect(cache([{ write: ['a.txt', 'one'] }, passed(['a.txt']), check()])).toEqual([true]);
 });
 
-test('a change to a file it read runs it again', async () => {
-    writeFileSync(file('b.txt'), 'one');
-    const info = testInfo();
-    run(info, [file('b.txt')]);
-    writeFileSync(file('b.txt'), 'two, a different size');
-    expect(await unchangedSincePassing(info, cdnNow({}))).toBe(false);
+test('a change to a file it read runs it again', () => {
+    expect(cache([{ write: ['b.txt', 'one'] }, passed(['b.txt']), { write: ['b.txt', 'two, a different size'] }, check()])).toEqual([false]);
 });
 
-test('a change to a CDN file it downloaded runs it again', async () => {
-    const info = testInfo();
+test('a change to a CDN file it downloaded runs it again', () => {
     const url = 'https://cdn.myfi.ws/webui/example.min.js';
-    run(info, [], { [url]: Buffer.from('old') });
-    expect(await unchangedSincePassing(info, cdnNow({ [url]: Buffer.from('old') }))).toBe(true);
-    expect(await unchangedSincePassing(info, cdnNow({ [url]: Buffer.from('new') }))).toBe(false);
+    expect(cache([passed([], { [url]: 'old' }), check({}, { [url]: 'old' }), check({}, { [url]: 'new' })])).toEqual([true, false]);
 });
 
-test('a test that failed, or had errors, runs again', async () => {
-    const failed = testInfo({ status: 'failed' });
-    run(failed);
-    expect(await unchangedSincePassing(failed, cdnNow({}))).toBe(false);
-    const errored = testInfo({ errors: [new Error('Uncaught errors happened')] });
-    run(errored);
-    expect(await unchangedSincePassing(errored, cdnNow({}))).toBe(false);
+test('a test that failed, or had errors, runs again', () => {
+    expect(cache([{ run: { info: { status: 'failed' } } }, check()])).toEqual([false]);
+    expect(cache([{ run: { errors: ['Uncaught errors happened'] } }, check()])).toEqual([false]);
 });
 
-test('a test that fails after passing forgets its pass', async () => {
-    const title = testInfo().titlePath;
-    run(testInfo({ titlePath: title }));
-    run(testInfo({ titlePath: title, status: 'failed' }));
-    expect(await unchangedSincePassing(testInfo({ titlePath: title }), cdnNow({}))).toBe(false);
+test('a test that fails after passing forgets its pass', () => {
+    expect(cache([passed(), check(), { run: { info: { status: 'failed' } } }, check()])).toEqual([true, false]);
 });
 
-test('every test runs with PW_NO_CACHE, under --repeat-each, and on a retry', async () => {
-    const title = testInfo().titlePath;
-    run(testInfo({ titlePath: title }));
-    process.env.PW_NO_CACHE = '1';
-    expect(await unchangedSincePassing(testInfo({ titlePath: title }), cdnNow({}))).toBe(false);
-    delete process.env.PW_NO_CACHE;
-    expect(await unchangedSincePassing(testInfo({ titlePath: title, project: { name: 'cache-check', repeatEach: 10 } }), cdnNow({}))).toBe(false);
-    expect(await unchangedSincePassing(testInfo({ titlePath: title, retry: 1 }), cdnNow({}))).toBe(false);
-    expect(await unchangedSincePassing(testInfo({ titlePath: title }), cdnNow({}))).toBe(true);
+test('every test runs with PW_NO_CACHE, under --repeat-each, and on a retry', () => {
+    expect(cache([
+        passed(),
+        { env: { PW_NO_CACHE: '1' } }, check(), { env: { PW_NO_CACHE: null } },
+        check({ project: { name: 'cache-check', repeatEach: 10 } }),
+        check({ retry: 1 }),
+        check(),
+    ])).toEqual([false, false, false, true]);
 });
 
 test('a program a spec starts is seen, and one Playwright starts is not', () => {

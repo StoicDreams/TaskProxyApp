@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { programEnv } from '../support/program-env.mjs';
 
 // Task Proxy's own screenshots.ps1, and how Publish.ps1 runs it. The shared script tests are in scripts.spec.mjs.
 // Each test runs a script in a temporary folder, never in this repo. They need PowerShell 7 (pwsh).
@@ -24,7 +25,7 @@ function tempProject(files) {
 }
 function pwsh(cwd, script, args = [], env = {}) {
     const result = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', script, ...args],
-        { cwd, encoding: 'utf8', env: { ...process.env, ...env }, timeout: 180000 });
+        { cwd, encoding: 'utf8', env: programEnv(env), timeout: 180000 });
     if (result.error) throw new Error(`Could not run pwsh, which these tests need: ${result.error.message}`);
     return { code: result.status, output: result.stdout + result.stderr };
 }

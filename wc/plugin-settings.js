@@ -27,7 +27,7 @@
     }
 
     webui.define("app-plugin-settings", {
-        preload: 'input-text button dropdown',
+        preload: 'input-text button select',
         constructor() {
             this._load = 0;
         },
@@ -104,10 +104,10 @@
                 if (signIns.length) {
                     box.appendChild(el('strong', {}, 'Use settings from another project'));
                     const row = el('webui-flex', { wrap: true, gap: 'var(--padding)', align: 'center', 'data-role': 'sign-in-choice' });
-                    const choose = el('webui-dropdown', { label: 'Settings', style: 'flex: 1 1 16em;' });
+                    const choose = el('webui-select', { label: 'Settings', style: 'flex: 1 1 16em;' });
                     choose.setAttribute('options', JSON.stringify(signIns.map(choice => ({
                         id: choice.id, value: choice.id,
-                        // The dropdown shows display as text, so it is not escaped here.
+                        // The select shows display as text, so it is not escaped here.
                         display: `${choice.label} (${choice.projects === 1 ? '1 project' : `${choice.projects} projects`})`,
                     }))));
                     choose.setAttribute('value', signIns[0].id);

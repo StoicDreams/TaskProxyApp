@@ -819,9 +819,9 @@ test.describe('spec 0.1.2', () => {
             fields: ['Issue', 'Parent', 'Grandparent'].map((label, layer) => ({ name: `layer${layer}`, label, kind: 'select', options: choices, value: '' })),
         }, { pluginActions: { 'test/add': {} } });
         const form = page.locator('app-plugin-page form.plugin-form-row');
-        await expect(form.locator('webui-dropdown')).toHaveCount(3);
+        await expect(form.locator('webui-select')).toHaveCount(3);
         // The three fields and the button are the row's own items, in order. How the row looks is checked by eye.
-        await expect.poll(() => form.locator(':scope > *').evaluateAll(nodes => nodes.map(node => node.localName))).toEqual(['webui-dropdown', 'webui-dropdown', 'webui-dropdown', 'webui-flex']);
+        await expect.poll(() => form.locator(':scope > *').evaluateAll(nodes => nodes.map(node => node.localName))).toEqual(['webui-select', 'webui-select', 'webui-select', 'webui-flex']);
         await expect(form.locator(':scope > webui-flex webui-button', { hasText: 'Add' })).toHaveCount(1);
         await form.locator('webui-button', { hasText: 'Add' }).click();
         await expect.poll(async () => (await calls(page, 'plugin_action'))[0]?.request.form).toEqual({ layer0: '', layer1: '', layer2: '' });

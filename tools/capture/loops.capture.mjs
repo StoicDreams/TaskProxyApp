@@ -511,7 +511,7 @@ test.describe('plugins', () => {
             const layer = () => view(page).locator('details.plugin-section')
                 .filter({ has: page.locator(':scope > summary strong', { hasText: /^Grandparent$/ }) });
             await layer().scrollIntoViewIfNeeded();
-            const field = layer().locator('webui-dropdown').first();
+            const field = layer().locator('webui-select').first();
             await moveTo(page, field);
             await page.waitForTimeout(400);
             await field.evaluate(el => { el.value = 'status'; });
