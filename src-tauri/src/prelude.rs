@@ -23,6 +23,6 @@ pub(crate) use std::{
     fs, io,
     path::{Path, PathBuf},
 };
-pub(crate) use tauri::{AppHandle, Manager, State};
+pub(crate) use tauri::{AppHandle, Emitter, Manager, State};
 pub(crate) use tokio::{join, task, time::sleep};
 pub(crate) use uuid::Uuid;

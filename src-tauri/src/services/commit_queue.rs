@@ -326,7 +326,7 @@ fn emit_jobs(app: &AppHandle) {
         }
         Err(_) => return,
     };
-    crate::remote::hub::broadcast(app, "commit-jobs-changed", jobs);
+    let _ = app.emit("commit-jobs-changed", jobs);
 }
 
 /// Changes a job and tells every screen.

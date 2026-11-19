@@ -607,8 +607,7 @@ struct TerminalData {
 }
 
 fn emit_changed(app: &AppHandle, info: &RunInfo) {
-    crate::remote::hub::broadcast(
-        app,
+    let _ = app.emit(
         "run-changed",
         RunChanged {
             project_id: info.project_id.clone(),
@@ -619,8 +618,7 @@ fn emit_changed(app: &AppHandle, info: &RunInfo) {
 }
 
 fn emit_removed(app: &AppHandle, project_id: &str, terminal_id: &str) {
-    crate::remote::hub::broadcast(
-        app,
+    let _ = app.emit(
         "run-changed",
         RunChanged {
             project_id: project_id.into(),
@@ -637,8 +635,7 @@ pub(crate) fn output(app: &AppHandle, project_id: &str, terminal_id: &str, run: 
         Err(_) => None,
     };
     if let Some(seq) = seq {
-        crate::remote::hub::broadcast(
-            app,
+        let _ = app.emit(
             "terminal-data",
             TerminalData {
                 project_id: project_id.into(),

@@ -52,14 +52,3 @@ test('the saved theme and its colors are applied when the app starts', async ({ 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'forest');
     await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--color-primary'))).toBe('#224466');
 });
-
-test('on a paired device the theme is the device\'s own, and never replaces the desktop\'s', async ({ page }) => {
-    await page.addInitScript(() => { window.__taskProxyRemote = { level: 'work', deviceName: 'Phone', desktopName: 'Desk' }; });
-    await openApp(page);
-    const panel = await openThemes(page);
-    await panel.getByRole('button', { name: 'Sky' }).click();
-    await expect(page.locator('html')).toHaveAttribute('data-theme', 'sky');
-    // Everything waiting to be sent goes now, so nothing about the theme is still on its way.
-    await page.evaluate(() => webui.proxy.syncAppData());
-    expect(await sent(page, 'session-theme')).toEqual([]);
-});

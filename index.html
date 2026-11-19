@@ -83,7 +83,6 @@
             <webui-feedback title="Provide us your feedback" data-post="https://api.myfi.ws/feedback/new" data-json-name="message">
                 <p>You can also come <a href="https://discord.com/channels/972856291909332993/1025781071608037466">chat with us on the Stoic Dreams discord server.</a></p>
             </webui-feedback>
-            <app-remote-access indicator hidden></app-remote-access>
             <app-account></app-account>
         </header>
         <noscript>Javascript is required to view this site</noscript>
@@ -102,8 +101,7 @@
                 webui.proxy.openUrl(href);
                 return false;
             });
-            // On a paired device the frame's page is taskproxy.com's to leave, so it must not ask to stay.
-            if (location.host !== '127.0.0.1:1426' && !window.__taskProxyRemote) {
+            if (location.host !== '127.0.0.1:1426') {
                 // Pause any attempts to navigate away from app.
                 window.addEventListener('beforeunload', ev => {
                     ev.stopPropagation();

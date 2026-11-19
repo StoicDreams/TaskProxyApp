@@ -88,6 +88,65 @@
         }
         setMarkdown(md || '');
     }
+    /** The page's segments as markdown, as saving writes them, including any being edited. */
+    function currentSegmentsMarkdown() {
+        let md = [];
+        comp.querySelectorAll('app-markdown-segment').forEach(segment => {
+            if (segment.parentNode !== comp) return;
+            let markdown = segment.getMarkdown();
+            if (markdown) md.push(markdown);
+        });
+        return md;
+    }
+    const PREPEND = 'Before this page\'s content';
+    const APPEND = 'After this page\'s content';
+    /**
+     * Adds one of the project's markdown files to this page and saves it (services/page_import.rs). The file is only
+     * read. Before or after only matters when the page has content, so it can't be chosen on an empty page.
+     */
+    function openImport() {
+        if (!myFile) return;
+        const docs = webui.projectData?.docs || [];
+        if (!docs.length) {
+            webui.alert('This project has no markdown files to import.', 'warning');
+            return;
+        }
+        const hasContent = currentSegmentsMarkdown().length > 0;
+        // File names come from the project, so they are escaped as the attribute's text.
+        const options = webui.escapeForHTML(JSON.stringify(docs.map(path => ({ value: path, display: path, icon: 'file' }))));
+        webui.dialog({
+            title: 'Import a Markdown File',
+            content: `<webui-flex column gap="var(--padding)" class="page-import-dialog">
+                <webui-select label="Markdown file" class="import-file" item-size="10em" options="${options}"></webui-select>
+                <webui-switch label="Where it goes" class="import-position" options="${PREPEND}|${APPEND}" value="${APPEND}"${hasContent ? '' : ' inert aria-disabled="true"'}></webui-switch>
+                ${hasContent ? '' : '<p class="import-empty-note">This page is empty, so the file becomes its content.</p>'}
+                <p>The file itself is left as it is.</p>
+            </webui-flex>`,
+            confirm: 'Import',
+            cancel: 'Cancel',
+            onconfirm: async (data, content) => {
+                const file = content.querySelector('.import-file')?.value;
+                if (!file) return false;
+                const before = content.querySelector('.import-position')?.value === PREPEND;
+                const imported = await webui.proxy.importPageFile(file, msg => content.alert(msg));
+                if (imported === undefined) return false;
+                return await addToPage(imported, before);
+            }
+        });
+    }
+    /** Puts imported markdown before or after the page's segments, saves the page, and shows it. */
+    async function addToPage(imported, before) {
+        const file = myFile;
+        if (!file) return false;
+        const current = currentSegmentsMarkdown();
+        const body = imported ? (before ? [imported, ...current] : [...current, imported]) : current;
+        const md = [pageDataComponent, ...body].filter(Boolean).join('\n\n').trim();
+        const saved = await webui.proxy.saveProjectFile(file, md);
+        if (!saved || myFile !== file) return false;
+        setMarkdown(md);
+        webui.alert('Imported the file into this page.', 'success');
+        return true;
+    }
     function setupBar(isEnd) {
         let wrap = webui.create('webui-flex', { column: true, gap: 0 });
         let bar = webui.create('webui-flex', { justify: 'right' });
@@ -132,6 +191,13 @@
             segments = Array.from(comp.querySelectorAll('app-markdown-segment'));
         });
         bar.appendChild(btnAdd);
+        if (!isEnd) {
+            let btnImport = webui.create('webui-button', {
+                html: 'Import', title: 'Import a markdown file into this page', 'start-icon': 'download', theme: 'secondary', class: 'page-import'
+            });
+            btnImport.addEventListener('click', () => openImport());
+            bar.appendChild(btnImport);
+        }
         bar.appendChild(webui.create('webui-flex', { 'grow': true }));
         bar.appendChild(btnSave);
         return wrap;
@@ -616,7 +682,7 @@
         webui.setData('page-subtitle', webui.escapeForHTML(page?.name || ''));
     }
     webui.define("app-page-handler", {
-        preload: 'app:markdown-segment app:files dropdown input-text input-message code page-help',
+        preload: 'app:markdown-segment app:files dropdown select switch input-text input-message code page-help',
         constructor() {
             const t = this;
             comp = t;

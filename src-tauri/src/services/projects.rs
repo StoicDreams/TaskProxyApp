@@ -214,7 +214,7 @@ pub(crate) async fn get_project_data(
     Ok(data)
 }
 
-fn current_project_path(
+pub(crate) fn current_project_path(
     state: &State<'_, CurrentProject>,
     context: &str,
 ) -> Result<PathBuf, String> {
@@ -272,7 +272,7 @@ pub(crate) fn project_file_path(root: &Path, file_path: &str) -> Result<PathBuf,
 
 /// The frontend treats "File not found" as a page that has not been created yet, and "too large" or a UTF-8 error
 /// as a file to preview rather than show as text.
-fn read_project_file(root: &Path, file_path: &str) -> Result<String, String> {
+pub(crate) fn read_project_file(root: &Path, file_path: &str) -> Result<String, String> {
     let file = project_file_path(root, file_path)
         .map_err(|err| format!("{}: {}", GET_FILE_CONTEXT, err))?;
     let size = fs::metadata(&file)
@@ -641,7 +641,7 @@ pub(crate) async fn remove_project(
     Ok(String::from("Project Successfully Removed"))
 }
 
-fn get_project_docs(project_path: &str) -> Vec<String> {
+pub(crate) fn get_project_docs(project_path: &str) -> Vec<String> {
     const SKIP_DIRS: &[&str] = &[
         ".taskproxy",
         "target",

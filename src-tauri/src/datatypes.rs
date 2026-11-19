@@ -20,13 +20,13 @@ pub(crate) struct ProjectData {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectNavItem {
     #[serde(alias = "Name")]
-    name: String,
+    pub(crate) name: String,
     #[serde(alias = "Icon")]
-    icon: String,
+    pub(crate) icon: String,
     #[serde(alias = "Url")]
-    url: Option<String>,
+    pub(crate) url: Option<String>,
     #[serde(alias = "Children")]
-    children: Option<Vec<ProjectNavItem>>,
+    pub(crate) children: Option<Vec<ProjectNavItem>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

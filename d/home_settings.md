@@ -5,6 +5,7 @@
 <webui-button align="left" slot="tabs" start-icon="folder-open" class="settings-tab-projects">Projects</webui-button>
 <webui-content slot="content" nodetach class="settings-projects">
 <app-project-manager></app-project-manager>
+<app-page-import></app-page-import>
 <h3>Add a project</h3>
 <app-add-project></app-add-project>
 </webui-content>
@@ -13,10 +14,6 @@
 <p>Set a new security key, or delete the one saved in this computer's keychain.</p>
 <webui-quote theme="warning">Deleting your key only removes it from your keychain. Your encrypted secrets stay, and come back when you enter the same key again.</webui-quote>
 <app-security-key-setter></app-security-key-setter>
-</webui-content>
-<webui-button align="left" slot="tabs" start-icon="mobile" class="settings-tab-remote">Remote Access</webui-button>
-<webui-content slot="content" nodetach class="settings-remote">
-<app-remote-access></app-remote-access>
 </webui-content>
 </webui-tabs>
 <webui-flex slot="side" column gap="var(--padding)">

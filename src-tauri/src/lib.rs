@@ -10,7 +10,6 @@ pub mod common;
 pub mod datatypes;
 pub mod plugins;
 pub mod prelude;
-pub mod remote;
 pub mod services;
 
 const MAIN_WINDOW_LABEL: &str = "taskproxy";
@@ -50,8 +49,7 @@ pub fn run() {
         .manage(crate::services::runs::Runs::default())
         .manage(crate::services::commit_queue::CommitQueue::default())
         .manage(crate::services::shared_data::DataRevs::default())
-        .manage(crate::services::task_manager::TaskManagerState::default())
-        .manage(crate::remote::Remote::default());
+        .manage(crate::services::task_manager::TaskManagerState::default());
 
     // Save data on close
     builder = builder.on_window_event(|window, event| {
@@ -105,9 +103,8 @@ pub fn run() {
                         println!("{:?}", result);
                     }
                 };
-                let save_remote_log = crate::remote::save_log(&app_handle);
-                let (_save_app_result, _save_project_result, _save_log_result) =
-                    join!(save_app_data, save_project_data, save_remote_log);
+                let (_save_app_result, _save_project_result) =
+                    join!(save_app_data, save_project_data);
                 println!("Saves complete - Closing window.");
                 let _ = window.close();
             });
@@ -133,8 +130,6 @@ pub fn run() {
             window.open_devtools();
         }
         services::terminal_controller::remove_stale_temp_scripts(app.handle());
-        // The paired devices and the log of what they did, for Remote Access.
-        tauri::async_runtime::spawn(crate::remote::load(app.handle().clone()));
         // Spawn background task
         let app_handle = app.handle().clone();
         tauri::async_runtime::spawn(background_tasks(app_handle));
@@ -198,15 +193,6 @@ pub fn run() {
             services::myfi::myfi_sign_in_wait,
             services::myfi::myfi_sign_in_cancel,
             services::myfi::myfi_sign_out,
-            remote::service::remote_status,
-            remote::service::remote_set_enabled,
-            remote::service::remote_invite,
-            remote::service::remote_invite_cancel,
-            remote::service::remote_device_update,
-            remote::service::remote_device_remove,
-            remote::service::remote_device_disconnect,
-            remote::service::remote_log,
-            remote::service::remote_settings,
             services::projects::greet,
             services::projects::add_project,
             services::projects::add_projects_multi,
@@ -222,6 +208,8 @@ pub fn run() {
             services::project_icons::get_project_icons,
             services::project_icons::get_project_images,
             services::project_icons::set_project_icon,
+            services::page_import::import_page_folder,
+            services::page_import::import_page_file,
             services::projects::load_projects,
             services::projects::rename_project,
             services::projects::remove_project,

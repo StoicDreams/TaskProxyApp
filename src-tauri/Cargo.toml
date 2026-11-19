@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.159"
+version = "0.1.160"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -61,7 +61,7 @@ tauri-plugin-updater = { version = "2.13.3", features = ["rustls-tls"] }
 ignore = "0.4"
 portable-pty = "0.9"
 # Already built for the updater. Used to ask Git servers for CI results.
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # Already built for the updater. Checks the signatures of plugins from the catalog.
 minisign-verify = "0.3"
@@ -71,15 +71,6 @@ extism = { version = "1.41.0", default-features = false, features = ["wasmtime-d
 sysinfo = { version = "0.40", default-features = false, features = ["system", "user", "network"] }
 # The ports each process listens on, for the Task Manager.
 listeners = "0.6"
-# Remote Access: the Noise handshakes and encryption between the desktop and a paired device.
-snow = "0.10"
-# Remote Access: the pairing QR code, drawn as SVG.
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-# Remote Access: keeps the computer from sleeping while it is on. Its system libraries are already built for Tauri.
-keepawake = "0.6"
-# Remote Access: WebRTC to a paired device. Its OpenSSL backend reuses the OpenSSL git2 already vendors, so it adds the
-# least to the app (Docs/RemoteAccess.md, 2.3).
-str0m = { version = "0.25", default-features = false, features = ["openssl", "vendored"] }
 # Copies images to the system clipboard, which WebKitGTK's own Copy Image leaves empty on Wayland.
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
 # Reads the images copied, in more formats than arboard's own PNG.

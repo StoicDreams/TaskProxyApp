@@ -16,6 +16,8 @@
  *   Missing numbers are 0.
  * - ciStatus: { path: { state, service, url } } for each project, which get_project_ci_status returns.
  * - git.ciStatus: { repo: { state, service, url } } for the open project, which get_git_repo_ci_status returns.
+ * - folderImport: the pages import_page_folder makes, as [{ name, content }] (default one page), and importSkipped
+ *   the files it reports leaving out. fileImports: { path: segments } for what import_page_file returns.
  * - projectFiles: what search_project_files returns. With holdSearch set, each search waits until the test calls
  *   window.__backend.releaseSearch(), so a test decides when a slow search arrives.
  * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
@@ -49,11 +51,6 @@
  * - myfi: { account } for the MyFi account the app is signed in to, as { id, displayName, offline }, or leave
  *   it out for signed out. myfi_sign_in_wait waits until a test calls window.__backend.myfi.approve(account) or
  *   .end(reason), or the app cancels. myfiStartError: why myfi_sign_in_start fails, when it should.
- * - remote: Remote Access as services/remote's commands keep it: { enabled, devices: [{ id, name, level, days,
- *   pairedAt, expiresAt, lastSeen, connected }], log, reachability, enableError, keepAwake, awakeError,
- *   offAfterHours }. Turning it on needs a MyFi
- *   account. window.__backend.remote.pair(name) pairs a device with the open QR code, as a phone would, and
- *   .changed(notice) sends remote-changed.
  *
  * Page scripts are filled as services/page_scripts.rs fills them, from the page values the window sends, then the
  * backend's copies of the project's and global values. run_page_script refuses a project that appData does not trust.
@@ -334,54 +331,6 @@ function setup(state) {
         entry.info.interactive = true;
         if ('code' in run) Object.assign(entry.info, { status: 'Finished', exitCode: run.code, endedAt: Date.now() });
     }
-    const remote = {
-        enabled: !!state.remote?.enabled,
-        devices: (state.remote?.devices || []).map(device => ({ days: 30, pairedAt: 1, expiresAt: Date.now() + 30 * 86400000, lastSeen: null, connected: false, route: null, ...device })),
-        log: state.remote?.log || [],
-        keepAwake: state.remote?.keepAwake ?? true,
-        awakeError: state.remote?.awakeError ?? null,
-        offAfterHours: state.remote?.offAfterHours ?? 0,
-        reachability: state.remote?.reachability || { reachable: !!state.remote?.enabled, error: null },
-        invite: null,
-        status() {
-            return {
-                enabled: this.enabled,
-                signedIn: !!myfi.account,
-                desktopName: 'Desk PC',
-                desktopId: this.enabled ? 'b1c2d3e4-0000-4000-8000-000000000001' : null,
-                fingerprint: 'a1b2c3d4e5f60718',
-                reachability: this.reachability,
-                invite: this.invite,
-                devices: this.devices.map(device => ({ ...device })),
-                pairingDays: [7, 30, 90, 0],
-                keepAwake: this.keepAwake,
-                awake: this.enabled && this.keepAwake && !this.awakeError,
-                awakeError: this.enabled && this.keepAwake ? this.awakeError : null,
-                offAfterHours: this.offAfterHours,
-                offAfterChoices: [0, 1, 4, 8, 12, 24, 48],
-            };
-        },
-        changed(notice) {
-            emitEvent('remote-changed', { notice: notice || null });
-        },
-        /** A device pairs with the open QR code, as one would through the mailbox. */
-        pair(name) {
-            if (!this.invite) throw new Error('No QR code is open.');
-            const device = {
-                id: `device-${this.devices.length + 1}`, name, level: this.invite.level, days: this.invite.days,
-                pairedAt: Date.now(), expiresAt: Date.now() + 86400000, lastSeen: null, connected: false,
-            };
-            this.devices.push(device);
-            this.invite = null;
-            this.changed({ text: `${name} is paired, at the ${device.level[0].toUpperCase()}${device.level.slice(1)} level.`, severity: 'success' });
-            return device;
-        },
-        find(id) {
-            const device = this.devices.find(device => device.id === id);
-            if (!device) throw 'No such device.';
-            return device;
-        },
-    };
     const myfi = {
         account: state.myfi?.account ? { offline: false, ...state.myfi.account } : null,
         waiting: null,
@@ -467,7 +416,6 @@ function setup(state) {
             emitEvent('data-changed', { scope, id: scope === 'app' ? '' : openProject.id, rev: ++dataRev, screen: 'other-screen', set: {}, remove: [], fields: {}, ...patch });
         },
         myfi,
-        remote,
         runs,
         commits,
         /** Lets searches held by the state's holdSearch answer, now and from now on. */
@@ -546,6 +494,21 @@ function setup(state) {
                 if (filePath in binaryFiles) return atob(binaryFiles[filePath]).length;
                 if (filePath in files) return new TextEncoder().encode(files[filePath]).length;
                 throw 'Get Project File: File not found';
+            },
+            // Folder imports add one page per entry of state.folderImport (default one page), as page_import.rs would.
+            import_page_folder: ({ folder, parent, navigation }) => {
+                const pages = (state.folderImport || [{ name: 'Imported', content: '# Imported' }]).map((page, index) => {
+                    const url = `/imported-${index}`;
+                    files[`.taskproxy/pages/imported-${index}.md`] = page.content;
+                    return { name: page.name, icon: 'file', url, children: null };
+                });
+                const items = parent ? [{ name: parent, icon: 'folder', url: null, children: pages }] : pages;
+                return { navigation: [...(navigation || []), ...items], pages: pages.length, skipped: state.importSkipped || [] };
+            },
+            // The page segments page_import.rs would make of a file, from state.fileImports.
+            import_page_file: ({ file }) => {
+                if (state.fileImports && file in state.fileImports) return state.fileImports[file];
+                throw `Import Failed: The project has no file '${file}'.`;
             },
             save_project_file: ({ filePath, contents }) => {
                 files[filePath] = contents;
@@ -806,56 +769,7 @@ function setup(state) {
             },
             myfi_sign_out: () => {
                 myfi.account = null;
-                Object.assign(remote, { enabled: false, devices: [], invite: null });
                 return null;
-            },
-            remote_status: () => remote.status(),
-            remote_set_enabled: ({ enabled }) => {
-                if (enabled && !myfi.account) throw 'Sign in to your Stoic Dreams account first, from the account button at the top.';
-                if (enabled && state.remote?.enableError) throw state.remote.enableError;
-                remote.enabled = enabled;
-                remote.reachability = { reachable: enabled, error: null };
-                if (!enabled) {
-                    remote.invite = null;
-                    remote.devices.forEach(device => device.connected = false);
-                }
-                return remote.status();
-            },
-            remote_invite: ({ invite }) => {
-                if (!remote.enabled) throw 'Turn Remote Access on first.';
-                if (![7, 30, 90, 0].includes(invite.days)) throw 'Choose 7, 30 or 90 days, or for good.';
-                remote.invite = {
-                    link: 'https://www.taskproxy.com/remote/#pair=eyJ2IjoxfQ', name: invite.name, level: invite.level, days: invite.days,
-                    expiresAt: Date.now() + 600000,
-                    svg: '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#fff"/><rect class="qr-test" x="20" y="20" width="60" height="60"/></svg>',
-                };
-                return remote.status();
-            },
-            remote_invite_cancel: () => {
-                remote.invite = null;
-                return remote.status();
-            },
-            remote_device_update: ({ id, change }) => {
-                const device = remote.find(id);
-                if (change.name !== undefined && change.name !== null) device.name = change.name.trim() || 'Device';
-                if (change.level) device.level = change.level;
-                return remote.status();
-            },
-            remote_device_remove: ({ id }) => {
-                remote.find(id);
-                remote.devices = remote.devices.filter(device => device.id !== id);
-                return remote.status();
-            },
-            remote_device_disconnect: ({ id }) => {
-                remote.find(id).connected = false;
-                return remote.status();
-            },
-            remote_log: () => remote.log,
-            remote_settings: ({ settings }) => {
-                if (![0, 1, 4, 8, 12, 24, 48].includes(settings.offAfterHours)) throw 'Choose never, or 1, 4, 8, 12, 24 or 48 hours.';
-                remote.keepAwake = settings.keepAwake;
-                remote.offAfterHours = settings.offAfterHours;
-                return remote.status();
             },
             plugin_host_action: ({ action }) => action.type === 'git.createBranch' ? `Branch '${action.name}' created.` : '',
         },

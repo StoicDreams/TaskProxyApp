@@ -121,3 +121,21 @@ test('content typed into the editor is sanitized in the preview', async ({ page 
     await expect(page.locator('#seg webui-content img')).not.toHaveAttribute('onerror');
     await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
+test("images and videos with relative addresses load the project's files, from beside the page's file", async ({ page }) => {
+    // Pages are saved in .taskproxy/pages, so ../../ is the project's root, as imported pages write it.
+    await segment(page, [
+        '![logo](../../docs/logo%20big.svg)',
+        '<video src="../../media/demo.mp4" poster="../../media/poster.png"></video>',
+        '![web](https://example.com/a.png)',
+        '![outside](../../../outside.png)',
+        '```md\n![code](../../docs/logo.svg)\n```',
+    ].join('\n\n'));
+    const content = page.locator('#seg webui-content');
+    await expect(content.locator('img[alt="logo"]')).toHaveAttribute('src', 'http://files.localhost/token/docs%2Flogo%20big.svg');
+    await expect(content.locator('video')).toHaveAttribute('src', 'http://files.localhost/token/media%2Fdemo.mp4');
+    await expect(content.locator('video')).toHaveAttribute('poster', 'http://files.localhost/token/media%2Fposter.png');
+    // Websites, and paths that leave the project, are left as written, and code shows what was written.
+    await expect(content.locator('img[alt="web"]')).toHaveAttribute('src', 'https://example.com/a.png');
+    await expect(content.locator('img[alt="outside"]')).toHaveAttribute('src', '../../../outside.png');
+    await expect(content.locator('code')).toContainText('![code](../../docs/logo.svg)');
+});

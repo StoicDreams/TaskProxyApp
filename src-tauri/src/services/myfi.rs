@@ -1,10 +1,13 @@
-//! Signing Task Proxy in to a MyFi account (api.myfi.ws), which Remote Access needs (see Docs/RemoteAccess.md).
+//! Signing Task Proxy in to a MyFi account (api.myfi.ws).
 //!
 //! The app never sees a password. It starts a sign-in with the SHA-256 of a secret only it knows, opens
 //! www.stoicdreams.com in the user's browser, and shows a code. The user signs in there, checks the code matches,
-//! and approves. The app then collects its session with the secret. The session is kept in the OS keychain and
-//! used only here: the window gets the account's id and name, never the session. Apps belong to client companies,
-//! so MyFi gives them no more than that, never the user's email.
+//! and approves. The app then collects its sign-in with the secret, and the API sets the session cookie.
+//!
+//! The session is only ever in that cookie. The app keeps its cookies as a browser does, in `ApiCookies`, sends them
+//! with every call, and saves them in the OS keychain. It never reads or checks the session in them, and the window
+//! gets the account's id and name, never the cookies. Apps belong to client companies, so MyFi gives them no more
+//! than that, never the user's email.
 use crate::prelude::*;
 use keyring::Entry;
 use std::sync::LazyLock;
@@ -49,10 +52,11 @@ pub(crate) struct SignInStarted {
     pub opened: bool,
 }
 
-/// What the keychain holds: the session, and its account, which is shown while api.myfi.ws can't be reached.
+/// What the keychain holds: the API's cookies, and the account, which is shown while api.myfi.ws can't be reached.
+/// A sign-in saved before the session moved to a cookie has no cookies, so it reads as signed out.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct StoredSignIn {
-    session: String,
+    cookies: Vec<String>,
     account: Option<MyFiAccount>,
 }
 
@@ -68,7 +72,8 @@ pub(crate) struct Started {
 pub(crate) enum Collected {
     /// Not approved yet.
     Waiting,
-    Session(String),
+    /// Approved: the API set the session cookie, which the client now keeps.
+    SignedIn,
     /// Refused, expired, or started by another app, with the API's reason.
     Ended(String),
 }
@@ -118,13 +123,10 @@ impl SignIns {
         Ok(())
     }
 
-    /// Waits for the user to approve the sign-in, asking the API every `poll`, and returns its session. None when
-    /// it was cancelled or replaced by a new sign-in. A refusal or expiry is an error with the reason.
-    pub(crate) async fn wait(
-        &self,
-        api: &MyFiApi,
-        poll: Duration,
-    ) -> Result<Option<String>, String> {
+    /// Waits for the user to approve the sign-in, asking the API every `poll`. True once signed in, when `api` holds
+    /// the session cookie. False when it was cancelled or replaced by a new sign-in. A refusal or expiry is an error
+    /// with the reason.
+    pub(crate) async fn wait(&self, api: &MyFiApi, poll: Duration) -> Result<bool, String> {
         let Some(id) = self
             .pending
             .lock()
@@ -132,7 +134,7 @@ impl SignIns {
             .as_ref()
             .map(|p| p.id)
         else {
-            return Ok(None);
+            return Ok(false);
         };
         let take = || {
             if let Ok(mut pending) = self.pending.lock()
@@ -150,7 +152,7 @@ impl SignIns {
                         p.secret.clone(),
                         Instant::now() >= p.expires,
                     ),
-                    _ => return Ok(None),
+                    _ => return Ok(false),
                 }
             };
             if expired {
@@ -164,7 +166,7 @@ impl SignIns {
                     take();
                     return Err(reason);
                 }
-                Ok(Collected::Session(session)) => {
+                Ok(Collected::SignedIn) => {
                     // A sign-in cancelled while the API answered is not kept.
                     let current = self
                         .pending
@@ -173,37 +175,126 @@ impl SignIns {
                         .as_ref()
                         .map(|p| p.id);
                     if current != Some(id) {
-                        return Ok(None);
+                        return Ok(false);
                     }
                     take();
-                    return Ok(Some(session));
+                    return Ok(true);
                 }
             }
         }
     }
 }
 
-/// api.myfi.ws, as the app uses it. The address can change for tests.
+/// The cookies api.myfi.ws sets, kept as a browser keeps a site's cookies: each as the `name=value` the API sent,
+/// sent back with every call, until the API replaces it or ends it with `Max-Age=0`. The session is one of them.
+/// Nothing here reads or checks what a cookie holds.
+#[derive(Default)]
+pub(crate) struct ApiCookies {
+    pairs: Mutex<std::collections::BTreeMap<String, String>>,
+}
+
+impl ApiCookies {
+    fn from_saved(saved: &[String]) -> Self {
+        let pairs = saved
+            .iter()
+            .filter_map(|pair| Some((pair.split_once('=')?.0.trim().to_string(), pair.clone())))
+            .collect();
+        Self {
+            pairs: Mutex::new(pairs),
+        }
+    }
+
+    fn saved(&self) -> Vec<String> {
+        self.pairs
+            .lock()
+            .map(|pairs| pairs.values().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+impl reqwest::cookie::CookieStore for ApiCookies {
+    fn set_cookies(
+        &self,
+        cookie_headers: &mut dyn Iterator<Item = &reqwest::header::HeaderValue>,
+        _url: &reqwest::Url,
+    ) {
+        let Ok(mut pairs) = self.pairs.lock() else {
+            return;
+        };
+        for header in cookie_headers {
+            let Ok(text) = header.to_str() else {
+                continue;
+            };
+            let mut parts = text.split(';');
+            let pair = parts.next().unwrap_or_default().trim();
+            let Some((name, _)) = pair.split_once('=') else {
+                continue;
+            };
+            let ended = parts.any(|attribute| {
+                attribute
+                    .trim()
+                    .to_ascii_lowercase()
+                    .strip_prefix("max-age=")
+                    .is_some_and(|age| age.trim().parse::<i64>().is_ok_and(|age| age <= 0))
+            });
+            if ended {
+                pairs.remove(name.trim());
+            } else {
+                pairs.insert(name.trim().to_string(), pair.to_string());
+            }
+        }
+    }
+
+    fn cookies(&self, _url: &reqwest::Url) -> Option<reqwest::header::HeaderValue> {
+        let pairs = self.pairs.lock().ok()?;
+        if pairs.is_empty() {
+            return None;
+        }
+        let joined = pairs.values().cloned().collect::<Vec<_>>().join("; ");
+        reqwest::header::HeaderValue::from_str(&joined).ok()
+    }
+}
+
+/// api.myfi.ws, as the app uses it, with the cookies it set. The address can change for tests.
 pub(crate) struct MyFiApi {
     base: String,
     client: reqwest::Client,
+    cookies: Arc<ApiCookies>,
 }
 
 impl MyFiApi {
+    /// A client with no cookies, as before signing in.
     pub fn new(base: &str) -> Result<Self, String> {
+        Self::with_cookies(base, ApiCookies::default())
+    }
+
+    /// A client with the cookies saved when it last signed in.
+    pub fn signed_in(base: &str, saved: &[String]) -> Result<Self, String> {
+        Self::with_cookies(base, ApiCookies::from_saved(saved))
+    }
+
+    fn with_cookies(base: &str, cookies: ApiCookies) -> Result<Self, String> {
         // The updater sets this up the same way, and whichever runs first installs it.
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             let _ = rustls::crypto::ring::default_provider().install_default();
         }
+        let cookies = Arc::new(cookies);
         let client = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(15))
+            .cookie_provider(cookies.clone())
             .build()
             .map_err(|err| err.to_string())?;
         Ok(Self {
             base: base.trim_end_matches('/').to_string(),
             client,
+            cookies,
         })
+    }
+
+    /// The cookies to save, so the next start is still signed in.
+    pub fn saved_cookies(&self) -> Vec<String> {
+        self.cookies.saved()
     }
 
     /// The status and text of a response. Only failing to reach the API is an error.
@@ -212,15 +303,11 @@ impl MyFiApi {
         method: reqwest::Method,
         path: &str,
         body: Option<Value>,
-        session: Option<&str>,
     ) -> Result<(u16, String), String> {
         let mut request = self
             .client
             .request(method, format!("{}/{}", self.base, path))
             .header("x-app", APP_KEY);
-        if let Some(session) = session {
-            request = request.header("x-auth", session);
-        }
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -236,12 +323,7 @@ impl MyFiApi {
     pub async fn start(&self, challenge: &str, name: &str) -> Result<Started, String> {
         let body = serde_json::json!({ "challenge": challenge, "name": name });
         let (status, text) = self
-            .send(
-                reqwest::Method::POST,
-                "user/signin/app/start",
-                Some(body),
-                None,
-            )
+            .send(reqwest::Method::POST, "user/signin/app/start", Some(body))
             .await?;
         if status != 200 {
             return Err(failure(status, &text, "Signing in could not start."));
@@ -253,34 +335,22 @@ impl MyFiApi {
     pub async fn collect(&self, request: &str, secret: &str) -> Result<Collected, String> {
         let body = serde_json::json!({ "request": request, "secret": secret });
         let (status, text) = self
-            .send(
-                reqwest::Method::POST,
-                "user/signin/app/collect",
-                Some(body),
-                None,
-            )
+            .send(reqwest::Method::POST, "user/signin/app/collect", Some(body))
             .await?;
         Ok(match status {
             202 => Collected::Waiting,
-            200 => match serde_json::from_str::<Value>(&text).ok().and_then(|json| {
-                json.get("session")
-                    .and_then(|s| s.as_str())
-                    .map(String::from)
-            }) {
-                Some(session) => Collected::Session(session),
-                None => Collected::Ended(String::from(
-                    "api.myfi.ws answered with something unexpected.",
-                )),
-            },
+            // Signed in means the API set a cookie, which the session is in.
+            200 if !self.saved_cookies().is_empty() => Collected::SignedIn,
+            200 => Collected::Ended(String::from(
+                "api.myfi.ws answered with something unexpected.",
+            )),
             _ => Collected::Ended(failure(status, &text, "The sign-in ended.")),
         })
     }
 
-    /// The account the session belongs to, or None when the API no longer accepts the session.
-    pub async fn account(&self, session: &str) -> Result<Option<MyFiAccount>, String> {
-        let (status, text) = self
-            .send(reqwest::Method::GET, "app/account", None, Some(session))
-            .await?;
+    /// The account the app is signed in to, or None when the API no longer accepts its session.
+    pub async fn account(&self) -> Result<Option<MyFiAccount>, String> {
+        let (status, text) = self.send(reqwest::Method::GET, "app/account", None).await?;
         match status {
             200 => serde_json::from_str(&text)
                 .map(Some)
@@ -290,13 +360,12 @@ impl MyFiApi {
         }
     }
 
-    pub async fn sign_out(&self, session: &str) -> Result<(), String> {
+    pub async fn sign_out(&self) -> Result<(), String> {
         let (status, text) = self
             .send(
                 reqwest::Method::POST,
                 "user/signout",
                 Some(serde_json::json!({})),
-                Some(session),
             )
             .await?;
         if status == 200 {
@@ -385,14 +454,6 @@ async fn delete_stored() {
     .await;
 }
 
-/// The stored session and the account it was last read as, or None when signed out. Reads the keychain, so callers
-/// that ask often keep the session themselves.
-pub(crate) async fn session() -> Option<(String, Option<MyFiAccount>)> {
-    read_stored()
-        .await
-        .map(|stored| (stored.session, stored.account))
-}
-
 pub(crate) fn api() -> Result<MyFiApi, String> {
     MyFiApi::new(API)
 }
@@ -403,10 +464,14 @@ pub(crate) async fn myfi_account() -> Result<Option<MyFiStatus>, String> {
     let Some(mut stored) = read_stored().await else {
         return Ok(None);
     };
-    match api()?.account(&stored.session).await {
+    let api = MyFiApi::signed_in(API, &stored.cookies)?;
+    match api.account().await {
         Ok(Some(account)) => {
-            if stored.account.as_ref() != Some(&account) {
+            // The API renews the cookie as it is used, so what it set last is what is kept.
+            let cookies = api.saved_cookies();
+            if stored.account.as_ref() != Some(&account) || stored.cookies != cookies {
                 stored.account = Some(account.clone());
+                stored.cookies = cookies;
                 let _ = write_stored(stored).await;
             }
             Ok(Some(MyFiStatus {
@@ -448,23 +513,20 @@ pub(crate) async fn myfi_sign_in_start() -> Result<SignInStarted, String> {
     })
 }
 
-/// Waits for the user to approve the sign-in, then saves the session. None when it was cancelled or replaced by a
-/// new sign-in. A refusal or expiry is an error with the reason.
+/// Waits for the user to approve the sign-in, then saves the cookies the API set. None when it was cancelled or
+/// replaced by a new sign-in. A refusal or expiry is an error with the reason.
 #[tauri::command]
-pub(crate) async fn myfi_sign_in_wait(app: AppHandle) -> Result<Option<MyFiStatus>, String> {
+pub(crate) async fn myfi_sign_in_wait() -> Result<Option<MyFiStatus>, String> {
     let api = api()?;
-    let Some(session) = SIGN_INS.wait(&api, POLL).await? else {
+    if !SIGN_INS.wait(&api, POLL).await? {
         return Ok(None);
-    };
-    let account = api.account(&session).await.ok().flatten();
+    }
+    let account = api.account().await.ok().flatten();
     write_stored(StoredSignIn {
-        session,
+        cookies: api.saved_cookies(),
         account: account.clone(),
     })
     .await?;
-    if let Some(account) = &account {
-        crate::remote::service::signed_in_as(&app, &account.id.to_string()).await?;
-    }
     Ok(account.map(|account| MyFiStatus {
         account,
         offline: false,
@@ -477,15 +539,13 @@ pub(crate) async fn myfi_sign_in_cancel() -> Result<(), String> {
     SIGN_INS.cancel()
 }
 
-/// Ends the session with the API, when it can be reached, and forgets it here either way. Remote Access turns off
-/// and every paired device is forgotten, since they were paired under this account.
+/// Ends the session with the API, when it can be reached, and forgets the cookies here either way.
 #[tauri::command]
-pub(crate) async fn myfi_sign_out(app: AppHandle) -> Result<(), String> {
-    crate::remote::forget_all(&app).await?;
+pub(crate) async fn myfi_sign_out() -> Result<(), String> {
     if let Some(stored) = read_stored().await
-        && let Ok(api) = api()
+        && let Ok(api) = MyFiApi::signed_in(API, &stored.cookies)
     {
-        let _ = api.sign_out(&stored.session).await;
+        let _ = api.sign_out().await;
     }
     delete_stored().await;
     Ok(())
@@ -517,19 +577,29 @@ pub(crate) mod tests {
         pub body: String,
     }
 
+    /// One answer from the fake API: its status, body, and a Set-Cookie header when it sets one.
+    pub(crate) struct Answer(u16, String, Option<String>);
+
+    impl From<(u16, &str)> for Answer {
+        fn from((status, body): (u16, &str)) -> Self {
+            Answer(status, body.into(), None)
+        }
+    }
+
+    impl From<(u16, &str, &str)> for Answer {
+        fn from((status, body, cookie): (u16, &str, &str)) -> Self {
+            Answer(status, body.into(), Some(cookie.into()))
+        }
+    }
+
     /// An API that answers each connection with the next of `answers`, and reports what it received.
-    pub(crate) fn fake_api<S: Into<String>>(
-        answers: Vec<(u16, S)>,
-    ) -> (String, mpsc::Receiver<Received>) {
-        let answers: Vec<(u16, String)> = answers
-            .into_iter()
-            .map(|(status, body)| (status, body.into()))
-            .collect();
+    pub(crate) fn fake_api<A: Into<Answer>>(answers: Vec<A>) -> (String, mpsc::Receiver<Received>) {
+        let answers: Vec<Answer> = answers.into_iter().map(Into::into).collect();
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            for (status, body) in answers {
+            for Answer(status, body, cookie) in answers {
                 let Ok((stream, _)) = listener.accept() else {
                     return;
                 };
@@ -560,10 +630,14 @@ pub(crate) mod tests {
                     body: String::from_utf8(bytes).unwrap(),
                 });
                 let mut stream = stream;
+                let set_cookie = cookie
+                    .map(|cookie| format!("Set-Cookie: {}\r\n", cookie))
+                    .unwrap_or_default();
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {} X\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
                     status,
+                    set_cookie,
                     body.len(),
                     body
                 );
@@ -593,6 +667,7 @@ pub(crate) mod tests {
         assert_eq!(request.line, "POST /user/signin/app/start HTTP/1.1");
         assert_eq!(request.headers["x-app"], APP_KEY);
         assert_eq!(request.headers["user-agent"], "TaskProxy");
+        assert!(!request.headers.contains_key("cookie"));
         assert!(!request.headers.contains_key("x-auth"));
         assert_eq!(
             body_of(&request),
@@ -618,22 +693,25 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn collect_waits_then_returns_the_session() {
+    async fn collect_waits_then_keeps_the_session_cookie_the_api_sets() {
         let (base, received) = fake_api(vec![
-            (202, "Waiting for approval"),
-            (
-                200,
-                r#"{"session":"0f9eb2b1-01ce-422f-af58-d758144125c8","expiresIn":7776000}"#,
-            ),
+            Answer::from((202, "Waiting for approval")),
+            Answer::from(SIGNED_IN),
         ]);
         let api = MyFiApi::new(&base).unwrap();
         assert_eq!(
             api.collect("req", "secret").await.unwrap(),
             Collected::Waiting
         );
+        assert!(api.saved_cookies().is_empty());
         assert_eq!(
             api.collect("req", "secret").await.unwrap(),
-            Collected::Session(String::from("0f9eb2b1-01ce-422f-af58-d758144125c8"))
+            Collected::SignedIn
+        );
+        // Kept as the API sent it, without its attributes, to send back and to save.
+        assert_eq!(
+            api.saved_cookies(),
+            vec![String::from("__Host-myfi-session=token-1")]
         );
         let first = received.recv().unwrap();
         assert_eq!(first.line, "POST /user/signin/app/collect HTTP/1.1");
@@ -644,6 +722,19 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn collect_without_a_cookie_is_not_signed_in() {
+        let (base, _received) = fake_api(vec![(200, r#"{"expiresIn":7776000}"#)]);
+        assert!(matches!(
+            MyFiApi::new(&base)
+                .unwrap()
+                .collect("r", "s")
+                .await
+                .unwrap(),
+            Collected::Ended(_)
+        ));
+    }
+
+    #[tokio::test]
     async fn collect_ends_with_the_reason_for_a_refusal_or_expiry() {
         let (base, _received) = fake_api(vec![
             (
@@ -651,7 +742,6 @@ pub(crate) mod tests {
                 "This sign-in has expired or was refused. Start signing in again.",
             ),
             (403, "This sign-in was started by another app."),
-            (200, "not json"),
         ]);
         let api = MyFiApi::new(&base).unwrap();
         assert_eq!(
@@ -664,20 +754,21 @@ pub(crate) mod tests {
             api.collect("r", "s").await.unwrap(),
             Collected::Ended(String::from("This sign-in was started by another app."))
         );
-        assert!(matches!(
-            api.collect("r", "s").await.unwrap(),
-            Collected::Ended(_)
-        ));
     }
 
     #[tokio::test]
-    async fn account_sends_the_session_and_reads_the_account() {
+    async fn account_sends_the_saved_cookie_and_keeps_the_one_the_api_renews() {
         let (base, received) = fake_api(vec![
-            (200, r#"{"id":1,"displayName":"Test User"}"#),
-            (401, ""),
+            Answer::from((
+                200,
+                r#"{"id":1,"displayName":"Test User"}"#,
+                "__Host-myfi-session=token-2; Path=/; Secure; HttpOnly; Max-Age=1800",
+            )),
+            Answer::from((401, "")),
         ]);
-        let api = MyFiApi::new(&base).unwrap();
-        let account = api.account("the-session").await.unwrap().unwrap();
+        let api =
+            MyFiApi::signed_in(&base, &[String::from("__Host-myfi-session=token-1")]).unwrap();
+        let account = api.account().await.unwrap().unwrap();
         assert_eq!(
             account,
             MyFiAccount {
@@ -687,23 +778,35 @@ pub(crate) mod tests {
         );
         let request = received.recv().unwrap();
         assert_eq!(request.line, "GET /app/account HTTP/1.1");
-        assert_eq!(request.headers["x-auth"], "the-session");
+        assert_eq!(request.headers["cookie"], "__Host-myfi-session=token-1");
         assert_eq!(request.headers["x-app"], APP_KEY);
-        // A session the API refuses means signed out, not an error.
-        assert_eq!(api.account("old-session").await.unwrap(), None);
+        assert!(!request.headers.contains_key("x-auth"));
+        assert_eq!(
+            api.saved_cookies(),
+            vec![String::from("__Host-myfi-session=token-2")]
+        );
+        // A session the API refuses means signed out, not an error, and the next call sends the renewed cookie.
+        assert_eq!(api.account().await.unwrap(), None);
+        assert_eq!(
+            received.recv().unwrap().headers["cookie"],
+            "__Host-myfi-session=token-2"
+        );
     }
 
     #[tokio::test]
-    async fn sign_out_ends_the_session() {
-        let (base, received) = fake_api(vec![(200, "Signout Successful")]);
-        MyFiApi::new(&base)
-            .unwrap()
-            .sign_out("the-session")
-            .await
-            .unwrap();
+    async fn sign_out_sends_the_cookie_and_a_cookie_the_api_ends_is_dropped() {
+        let (base, received) = fake_api(vec![Answer::from((
+            200,
+            "Signout Successful",
+            "__Host-myfi-session=gone; Max-Age=0",
+        ))]);
+        let api =
+            MyFiApi::signed_in(&base, &[String::from("__Host-myfi-session=token-1")]).unwrap();
+        api.sign_out().await.unwrap();
         let request = received.recv().unwrap();
         assert_eq!(request.line, "POST /user/signout HTTP/1.1");
-        assert_eq!(request.headers["x-auth"], "the-session");
+        assert_eq!(request.headers["cookie"], "__Host-myfi-session=token-1");
+        assert!(api.saved_cookies().is_empty());
     }
 
     #[tokio::test]
@@ -711,7 +814,7 @@ pub(crate) mod tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
-        let err = MyFiApi::new(&base).unwrap().account("s").await.unwrap_err();
+        let err = MyFiApi::new(&base).unwrap().account().await.unwrap_err();
         assert!(err.starts_with("Could not reach api.myfi.ws"), "{}", err);
     }
 
@@ -753,8 +856,8 @@ pub(crate) mod tests {
         assert!(sign_in_page_url("x&domain=evil.example").is_err());
     }
 
-    const SESSION: &str =
-        r#"{"session":"0f9eb2b1-01ce-422f-af58-d758144125c8","expiresIn":7776000}"#;
+    const COOKIE: &str = "__Host-myfi-session=token-1; Path=/; Secure; SameSite=None; HttpOnly; Max-Age=1800; Partitioned";
+    const SIGNED_IN: (u16, &str, &str) = (200, r#"{"expiresIn":7776000}"#, COOKIE);
     const FAST: Duration = Duration::from_millis(10);
 
     fn unreachable_api() -> MyFiApi {
@@ -765,27 +868,28 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn waiting_returns_the_session_once_the_user_approves() {
-        let (base, received) = fake_api(vec![(202, "Waiting"), (202, "Waiting"), (200, SESSION)]);
+    async fn waiting_signs_in_once_the_user_approves() {
+        let (base, received) = fake_api(vec![
+            Answer::from((202, "Waiting")),
+            Answer::from((202, "Waiting")),
+            Answer::from(SIGNED_IN),
+        ]);
         let sign_ins = SignIns::default();
         sign_ins
             .begin("req".into(), "secret".into(), Duration::from_secs(60))
             .unwrap();
-        let session = sign_ins
-            .wait(&MyFiApi::new(&base).unwrap(), FAST)
-            .await
-            .unwrap();
+        let api = MyFiApi::new(&base).unwrap();
+        assert!(sign_ins.wait(&api, FAST).await.unwrap());
         assert_eq!(
-            session.as_deref(),
-            Some("0f9eb2b1-01ce-422f-af58-d758144125c8")
+            api.saved_cookies(),
+            vec![String::from("__Host-myfi-session=token-1")]
         );
         assert_eq!(received.try_iter().count(), 3, "it asked until approved");
-        assert_eq!(
-            sign_ins
+        assert!(
+            !sign_ins
                 .wait(&MyFiApi::new(&base).unwrap(), FAST)
                 .await
                 .unwrap(),
-            None,
             "a sign-in is used once"
         );
     }
@@ -803,7 +907,7 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, "This sign-in was refused.");
-        assert_eq!(sign_ins.wait(&unreachable_api(), FAST).await.unwrap(), None);
+        assert!(!sign_ins.wait(&unreachable_api(), FAST).await.unwrap());
     }
 
     #[tokio::test]
@@ -833,7 +937,7 @@ pub(crate) mod tests {
         };
         sleep(Duration::from_millis(50)).await;
         sign_ins.cancel().unwrap();
-        assert_eq!(waiting.await.unwrap().unwrap(), None);
+        assert!(!waiting.await.unwrap().unwrap());
     }
 
     #[tokio::test]
@@ -850,31 +954,25 @@ pub(crate) mod tests {
         sign_ins
             .begin("second".into(), "s2".into(), Duration::from_secs(60))
             .unwrap();
-        assert_eq!(
-            waiting.await.unwrap().unwrap(),
-            None,
-            "the first wait stops"
-        );
+        assert!(!waiting.await.unwrap().unwrap(), "the first wait stops");
         // The new one is still there to wait for.
-        let (base, received) = fake_api(vec![(200, SESSION)]);
+        let (base, received) = fake_api(vec![Answer::from(SIGNED_IN)]);
         assert!(
             sign_ins
                 .wait(&MyFiApi::new(&base).unwrap(), FAST)
                 .await
                 .unwrap()
-                .is_some()
         );
         assert_eq!(body_of(&received.recv().unwrap())["request"], "second");
     }
 
     #[tokio::test]
     async fn waiting_with_no_sign_in_started_returns_at_once() {
-        assert_eq!(
-            SignIns::default()
+        assert!(
+            !SignIns::default()
                 .wait(&unreachable_api(), FAST)
                 .await
-                .unwrap(),
-            None
+                .unwrap()
         );
     }
 }

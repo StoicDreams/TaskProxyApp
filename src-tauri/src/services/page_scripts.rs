@@ -8,7 +8,6 @@
 
 use crate::prelude::*;
 use crate::services::runs::{self, RunInfo, RunRequest};
-use crate::services::secrets;
 use regex::Regex;
 use serde_json::Map;
 
@@ -164,12 +163,8 @@ impl Values<'_> {
         if never_filled(name) {
             return None;
         }
-        // A page value that is a secret's marker stands for the project or global value it was copied from.
         if scope_enabled(self.global, PAGE_ENABLED)
-            && let Some(value) = self
-                .page
-                .get(name)
-                .filter(|value| !secrets::is_marker(value))
+            && let Some(value) = self.page.get(name)
         {
             return Some(value);
         }
@@ -644,21 +639,6 @@ mod tests {
                 false
             ),
             script
-        );
-    }
-
-    #[test]
-    fn a_secrets_marker_on_the_page_lets_the_real_value_through() {
-        let page = json!({ "token": secrets::marker() });
-        assert_eq!(
-            filled(
-                "$token = 'x'",
-                page,
-                json!({ "token": "real-value" }),
-                json!({}),
-                false
-            ),
-            "$token = 'real-value'"
         );
     }
 

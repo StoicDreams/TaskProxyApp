@@ -110,7 +110,25 @@ export const test = base.extend({
         await use();
         finishRecording(testInfo);
     }, { auto: true }],
-    page: async ({ page, useMinified, testCache }, use) => {
+    // A worker's first test would otherwise download every framework file the app loads while it opens the app. With
+    // many workers starting at once on a busy machine, that took most of a test's time, so whichever test ran first in
+    // a worker could time out. Each worker opens the app once, in its own time, before its first test that loads a
+    // page, so tests start with the files in memory. Tests the cache skips never start it.
+    warmCdn: [async ({ browser }, use, workerInfo) => {
+        if (!CDN_ROOT) {
+            const { baseURL, serviceWorkers, viewport, useMinified } = workerInfo.project.use;
+            const context = await browser.newContext({ baseURL, serviceWorkers, viewport });
+            const page = await context.newPage();
+            await page.route('**/*', route => serve(route, !!useMinified));
+            // Only a head start: if it can't finish, tests download what they need as before.
+            let timer;
+            await Promise.race([openApp(page).catch(() => { }), new Promise(resolve => { timer = setTimeout(resolve, 90000); })]);
+            clearTimeout(timer);
+            await context.close();
+        }
+        await use();
+    }, { scope: 'worker', timeout: 120000 }],
+    page: async ({ page, useMinified, testCache, warmCdn }, use) => {
         const errors = [];
         page.on('pageerror', error => {
             // Closing a dialog with Cancel rejects its promise, which most callers have no use for.

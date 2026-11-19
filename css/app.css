@@ -921,3 +921,12 @@ app-project-manager .project-actions {
     flex-wrap: wrap;
     gap: var(--padding);
 }
+
+/* Settings' page import (wc/page-import.js). Web UI components set their own display, which would override hidden. */
+app-page-import[hidden],
+app-page-import [hidden] {
+    display: none !important;
+}
+.page-import-dialog webui-switch[inert] {
+    opacity: 0.5;
+}

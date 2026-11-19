@@ -52,8 +52,6 @@
         const isProject = scope === 'project';
         const base = isProject ? (syncedCopy.project?.id === data.id ? syncedCopy.project : null) : syncedCopy.app;
         const patch = patchFrom(base, data, isProject ? ['id', 'path'] : []);
-        // A View device can't change data, and the desktop would refuse it, so its changes stay on the device.
-        if (remote?.level === 'view') return Promise.resolve(isProject ? 'Project data synced' : 'App Data Synced');
         if (!patch) return Promise.resolve(isProject ? 'Project data synced' : 'App Data Synced');
         const sent = copyOf(data);
         syncedCopy[scope] = sent;
@@ -96,13 +94,6 @@
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
-    /**
-     * Set when the app runs on a paired device, in taskproxy.com's frame (Docs/RemoteAccess.md, 2.4):
-     * `{level, deviceName, desktopName}`. The page shown is each screen's own, so a device starts on the route the
-     * frame restored, not the desktop's, and never changes the desktop's.
-     */
-    const remote = window.__taskProxyRemote ? Object.freeze({ ...window.__taskProxyRemote }) : null;
-    let remoteStartPage = remote ? `${location.pathname}${location.search}` : null;
     let firstLoad = true;
     let isLoading = {};
     const defaultErrHandler = msg => webui.alert(msg);
@@ -257,11 +248,9 @@
     class Tauri {
         /**
          * Opens an address in the computer's browser. Rust opens it, since the opener plugin hands the browser an
-         * AppImage's environment, which stops it opening at all. A device opens links itself.
+         * AppImage's environment, which stops it opening at all.
          */
-        openUrl = remote ? tauri.opener.openUrl : (url => tauri.core.invoke('open_url', { url }).catch(defaultErrHandler));
-        /** This device, when the app runs on a paired device: `{level, deviceName, desktopName}`. Null on the desktop. */
-        remote = remote;
+        openUrl = url => tauri.core.invoke('open_url', { url }).catch(defaultErrHandler);
         constructor() {
             const t = this;
             worker.onmessage = (event) => {
@@ -308,13 +297,12 @@
         };
         /**
          * Copies text to the system clipboard through Rust, as images are, since the webview's own clipboard is
-         * unreliable on Wayland. A device copies it itself. Resolves to true once copied.
+         * unreliable on Wayland. Resolves to true once copied.
          */
         async copyText(text, errHandler) {
             errHandler ??= defaultErrHandler;
             try {
-                if (remote) await navigator.clipboard.writeText(`${text}`);
-                else await tauri.core.invoke('copy_text', { text: `${text}` });
+                await tauri.core.invoke('copy_text', { text: `${text}` });
                 return true;
             } catch (error) {
                 errHandler(error?.message || error);
@@ -490,30 +478,6 @@
             signInCancel: () => tauri.core.invoke('myfi_sign_in_cancel').catch(() => { }),
             signOut: (err) => tauri.core.invoke('myfi_sign_out').then(() => true).catch(err ?? defaultErrHandler),
         }
-        /**
-         * Remote Access: pairing phones and laptops, signed in to the same account, to use this desktop's Task Proxy.
-         * Each resolves with the panel's status: { enabled, signedIn, desktopName, desktopId, fingerprint,
-         * reachability: { reachable, error }, invite: { link, svg, name, level, days, expiresAt } or null,
-         * devices: [{ id, name, level, days, pairedAt, expiresAt, lastSeen, connected }], pairingDays, keepAwake,
-         * awake, awakeError, offAfterHours, offAfterChoices }.
-         */
-        remoteAccess = {
-            status: (err) => tauri.core.invoke('remote_status').catch(err ?? defaultErrHandler),
-            setEnabled: (enabled, err) => tauri.core.invoke('remote_set_enabled', { enabled: !!enabled }).catch(err ?? defaultErrHandler),
-            /** Opens a QR code that pairs one device within 10 minutes. level is view, work or commit; days 7, 30, 90 or 0 for good. */
-            invite: (name, level, days, err) => tauri.core.invoke('remote_invite', { invite: { name, level, days } }).catch(err ?? defaultErrHandler),
-            cancelInvite: (err) => tauri.core.invoke('remote_invite_cancel').catch(err ?? defaultErrHandler),
-            /** Renames a device or changes its level: change is { name } and/or { level }. */
-            updateDevice: (id, change, err) => tauri.core.invoke('remote_device_update', { id, change }).catch(err ?? defaultErrHandler),
-            removeDevice: (id, err) => tauri.core.invoke('remote_device_remove', { id }).catch(err ?? defaultErrHandler),
-            disconnectDevice: (id, err) => tauri.core.invoke('remote_device_disconnect', { id }).catch(err ?? defaultErrHandler),
-            /** The latest commands devices sent, newest first: [{ at, deviceId, deviceName, cmd, ok, error }]. */
-            log: (err) => tauri.core.invoke('remote_log').catch(err ?? defaultErrHandler),
-            /** Whether the computer is kept awake while on, and the hours without a connection before it turns off (0 never). */
-            settings: (keepAwake, offAfterHours, err) => tauri.core.invoke('remote_settings', { settings: { keepAwake: !!keepAwake, offAfterHours } }).catch(err ?? defaultErrHandler),
-            /** Calls back with { notice: { text, severity } or null } whenever what the panel shows changes. */
-            onChanged: (callback) => tauri.event.listen('remote-changed', event => callback(event.payload ?? {})),
-        }
         /** The Task Manager: the user's own processes, read only while it is open. */
         taskManager = {
             /** Lists processes, with the ports each listens on when `ports` is set, which takes longer to read. */
@@ -615,10 +579,37 @@
          * loads a piece at a time instead of being sent whole (see services/file_server.rs).
          */
         async projectFileUrl(filePath, errHandler) {
+            const base = await this.fileServerBase(errHandler);
+            if (!base) return undefined;
+            return `${base}/${encodeURIComponent((filePath || '').replace(/\\/g, '/'))}`;
+        }
+        /** The start of every project file's address on the file server, which pages use to show the project's images. */
+        async fileServerBase(errHandler) {
             errHandler ??= defaultErrHandler;
             cache.fileServerBase ??= await tauri.core.invoke('get_file_server_base').catch(err => { errHandler(err); return undefined; });
-            if (!cache.fileServerBase) return undefined;
-            return `${cache.fileServerBase}/${encodeURIComponent((filePath || '').replace(/\\/g, '/'))}`;
+            return cache.fileServerBase;
+        }
+        /**
+         * Imports a folder of the open project's markdown files as pages, under a new folder named `parent` or at the top
+         * of the navigation (services/page_import.rs), then saves the navigation with them. Resolves to
+         * `{navigation, pages, skipped}`.
+         */
+        async importPageFolder(folder, parent, errHandler) {
+            errHandler ??= defaultErrHandler;
+            if (!webui.projectData?.id) return;
+            const projectId = webui.projectData.id;
+            const result = await tauri.core.invoke('import_page_folder', {
+                folder: folder || '', parent: parent || null, navigation: webui.projectData.navigation || [],
+            }).catch(errHandler);
+            if (!result || webui.projectData?.id !== projectId) return;
+            webui.projectData.navigation = result.navigation;
+            await this.saveProjectData(errHandler);
+            return result;
+        }
+        /** One of the open project's markdown files as page segments, with its links rewritten for a page. */
+        importPageFile(file, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('import_page_file', { file: (file || '').replace(/\\/g, '/') }).catch(errHandler);
         }
         searchProjectFiles(filter, display, errHandler) {
             errHandler ??= defaultErrHandler;
@@ -665,8 +656,6 @@
         }
         saveAppData(errHandler) {
             errHandler ??= defaultErrHandler;
-            // A device sends its change, and the desktop saves it with the rest.
-            if (remote) return this.syncAppData(errHandler);
             syncedCopy.app = copyOf(webui.taskProxyData);
             return tauri.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(errHandler);
         }
@@ -679,12 +668,6 @@
         /** Saves the open project, or data, a project that is no longer open, without making it the open one. */
         saveProjectData(errHandler, data) {
             errHandler ??= defaultErrHandler;
-            // A device sends changes to the open project, and the desktop saves them with the rest.
-            if (remote) {
-                if (data && data !== webui.projectData) return Promise.resolve();
-                if (webui.projectData?.navigation) webui.setData('app-nav-routes', webui.projectData.navigation);
-                return this.syncProjectData(errHandler);
-            }
             if (data && data !== webui.projectData) {
                 if (!data.id) return;
                 return tauri.core.invoke('save_project_data', { data }).catch(errHandler);
@@ -1227,17 +1210,14 @@
         webui.watchAppDataChanges(queueAppDataChanges);
         // The theme and its adjusted colors (webui-theme-selector) are session data, which the loader keeps in the
         // browser only while it may store data, so they are saved with the app's data too, and restored from it above.
-        // A device's theme is its own, so it never replaces the desktop's.
-        if (!remote) {
-            webui.watchSessionDataChanges((changes, sessionData) => {
-                if (!savedSessionKeys.includes(changes.property)) return;
-                const value = sessionData[changes.property];
-                if (same(value, webui.taskProxyData.data[changes.property])) return;
-                if (value === undefined) delete webui.taskProxyData.data[changes.property];
-                else webui.taskProxyData.data[changes.property] = copyOf(value);
-                webui.proxy.syncAppData();
-            });
-        }
+        webui.watchSessionDataChanges((changes, sessionData) => {
+            if (!savedSessionKeys.includes(changes.property)) return;
+            const value = sessionData[changes.property];
+            if (same(value, webui.taskProxyData.data[changes.property])) return;
+            if (value === undefined) delete webui.taskProxyData.data[changes.property];
+            else webui.taskProxyData.data[changes.property] = copyOf(value);
+            webui.proxy.syncAppData();
+        });
         let currentProject = webui.getData('app-current-project');
         if (currentProject) {
             await queueProjectChange(() => loadProject({
@@ -1268,8 +1248,6 @@
             case 'page-path':
                 // A project reload passes through this page on its way back, and it is never a page to reopen on.
                 if (changes.newValue === '/_reloading') break;
-                // A device's page is its own, and it must not move the desktop's.
-                if (remote) break;
                 let project = webui.getData('app-current-project');
                 webui.projectData.currentPage = changes.newValue == '/root' ? '/' : changes.newValue;
                 webui.proxy.syncProjectData();
@@ -1328,8 +1306,7 @@
             refreshPluginNav();
             webui.setData('app-nav-routes', webui.projectData.navigation);
             // A device opens the route the frame restored the first time, and a project's home after that.
-            let startPage = remote ? (remoteStartPage || '/') : (webui.projectData.currentPage || '/');
-            remoteStartPage = null;
+            let startPage = webui.projectData.currentPage || '/';
             setTimeout(() => {
                 handlePagePath(startPage, true);
             }, 300);
@@ -1641,14 +1618,38 @@ function whenProxyReady() {
     });
 }
 /**
+ * A project file's address on the file server, for a relative `src` written in the project file at `from` (a folder
+ * relative to the project's root), or null when it isn't relative or leaves the project.
+ */
+function projectMediaUrl(src, from, base) {
+    if (!src || /^([a-zA-Z][a-zA-Z0-9+.-]*:|[\/\\#{])/.test(src)) return null;
+    const path = src.split(/[?#]/)[0];
+    const parts = `${from || ''}`.split('/').filter(Boolean);
+    for (const part of path.replace(/\\/g, '/').split('/')) {
+        if (part === '' || part === '.') continue;
+        if (part === '..') {
+            if (!parts.length) return null;
+            parts.pop();
+        } else {
+            try { parts.push(decodeURIComponent(part)); } catch { parts.push(part); }
+        }
+    }
+    return parts.length ? `${base}/${encodeURIComponent(parts.join('/'))}` : null;
+}
+
+/**
  * Clean HTML built from project files before it reaches the DOM. Those files come from
  * repositories, and scripts running in this window could reach every app command.
+ *
+ * With `mediaBase` (the file server's address) and `mediaFrom` (the folder of the file the HTML came from), images,
+ * video and audio given a relative address load that project file, as they would beside the file in the repo.
  */
-function sanitizeProjectHtml(dirty) {
+function sanitizeProjectHtml(dirty, { mediaBase, mediaFrom } = {}) {
     if (typeof dirty !== 'string') return '';
     const blockedTags = new Set(['script', 'iframe', 'object', 'embed', 'base', 'head', 'link', 'meta', 'applet', 'frame', 'frameset', 'style', 'animate', 'animatetransform', 'animatemotion', 'set']);
     const urlAttributes = new Set(['href', 'xlink:href', 'src', 'action', 'formaction', 'data', 'poster', 'background']);
     const unsafeUrl = /^(javascript|vbscript|data:text\/html)/;
+    const mediaTags = new Set(['img', 'video', 'audio', 'source']);
     const doc = new DOMParser().parseFromString(dirty.replace(/\0/g, ''), 'text/html');
     const clean = (node) => {
         Array.from(node.childNodes).forEach(child => {
@@ -1668,6 +1669,12 @@ function sanitizeProjectHtml(dirty) {
                     child.removeAttribute(attr.name);
                 }
             });
+            if (mediaBase && mediaTags.has(child.localName.toLowerCase())) {
+                ['src', 'poster'].forEach(name => {
+                    const url = projectMediaUrl(child.getAttribute(name), mediaFrom, mediaBase);
+                    if (url) child.setAttribute(name, url);
+                });
+            }
             // Template content is not part of childNodes, and components stamp it out later.
             if (child.content) clean(child.content);
             clean(child);

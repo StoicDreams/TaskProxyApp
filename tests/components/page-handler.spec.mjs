@@ -1,4 +1,5 @@
 import { test, expect, openPage, openApp, calls, onCommand, dialogButton, openDialog } from '../support/app.mjs';
+import { alertPopup } from '../support/wait.mjs';
 
 const save = page => page.locator('app-page-handler webui-button[title="Save Page"]').first().click();
 const saved = async page => {
@@ -413,3 +414,70 @@ test.describe('segment layout', () => {
     });
 });
 
+
+test.describe('importing a markdown file', () => {
+    // What import_page_file gives for each file: its markdown as page segments (services/page_import.rs).
+    const imported = '## Imported\n\n<webui-page-segment>\n\nFrom the file\n\n</webui-page-segment>';
+    const state = { docs: ['docs/guide.md', 'notes/todo.md'], fileImports: { 'docs/guide.md': imported, 'notes/todo.md': '<webui-page-segment>\n\nTodo\n\n</webui-page-segment>' } };
+    const data = '<webui-data data-page-title="T" data-page-subtitle=""></webui-data>';
+    const importButton = page => page.locator('app-page-handler webui-button.page-import');
+    const fileField = page => openDialog(page).locator('webui-select.import-file');
+    const position = page => openDialog(page).locator('webui-switch.import-position');
+    async function openImport(page) {
+        await importButton(page).click();
+        await expect(fileField(page).locator('.pick-name')).toHaveText('docs/guide.md');
+    }
+
+    test('adds the file after the page\'s content by default, saves, and shows it', async ({ page }) => {
+        await openPage(page, `${data}\n\n# Existing\n\nBody`, state);
+        await openImport(page);
+        await expect(position(page).getByRole('radio', { name: 'After this page\'s content' })).toHaveAttribute('aria-checked', 'true');
+        await dialogButton(page, 'Import').click();
+        await expect.poll(() => calls(page, 'import_page_file')).toEqual([{ file: 'docs/guide.md' }]);
+        await expect.poll(async () => (await calls(page, 'save_project_file')).at(-1)?.contents).toBe([
+            data, '# Existing', '<webui-page-segment>\n\nBody\n\n</webui-page-segment>', imported,
+        ].join('\n\n'));
+        await expect(page.locator('app-page-handler > app-markdown-segment')).toHaveText([/Existing/, /Body/, /Imported/, /From the file/]);
+        await expect(openDialog(page)).toHaveCount(0);
+    });
+
+    test('can add the file before the page\'s content, choosing which file', async ({ page }) => {
+        await openPage(page, `${data}\n\n# Existing`, state);
+        await openImport(page);
+        await fileField(page).getByRole('button').first().click();
+        await fileField(page).getByRole('option', { name: 'notes/todo.md' }).click();
+        await position(page).getByRole('radio', { name: 'Before this page\'s content' }).click();
+        await dialogButton(page, 'Import').click();
+        await expect.poll(async () => (await calls(page, 'save_project_file')).at(-1)?.contents).toBe([
+            data, '<webui-page-segment>\n\nTodo\n\n</webui-page-segment>', '# Existing',
+        ].join('\n\n'));
+        await expect(page.locator('app-page-handler > app-markdown-segment')).toHaveText([/Todo/, /Existing/]);
+    });
+
+    test('on an empty page, before or after can\'t be chosen, and the file becomes the page', async ({ page }) => {
+        await openApp(page, { currentPage: '/new-page', ...state }, '/new-page');
+        await openImport(page);
+        await expect(position(page)).toHaveAttribute('inert', '');
+        await expect(openDialog(page).getByText('This page is empty, so the file becomes its content.')).toBeVisible();
+        await dialogButton(page, 'Import').click();
+        await expect.poll(async () => (await calls(page, 'save_project_file')).at(-1)).toEqual({
+            filePath: '.taskproxy/pages/new-page.md',
+            contents: ['<webui-data data-page-title="" data-page-subtitle=""></webui-data>', imported].join('\n\n'),
+        });
+    });
+
+    test('a file the backend refuses says why, keeps the dialog open, and saves nothing', async ({ page }) => {
+        await openPage(page, `${data}\n\n# Existing`, { ...state, fileImports: {} });
+        await openImport(page);
+        await dialogButton(page, 'Import').click();
+        await expect(openDialog(page)).toContainText("Import Failed: The project has no file 'docs/guide.md'.");
+        await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
+    });
+
+    test('a project with no markdown files says so', async ({ page }) => {
+        await openPage(page, '# Existing', { docs: [] });
+        await importButton(page).click();
+        await expect(alertPopup(page, 'This project has no markdown files to import.')).toHaveCount(1);
+        await expect(openDialog(page)).toHaveCount(0);
+    });
+});

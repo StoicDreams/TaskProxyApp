@@ -7,6 +7,20 @@
     const SEGMENT_OPEN = '<webui-page-segment>';
     const SEGMENT_CLOSE = '</webui-page-segment>';
     const LINE_BREAK_MARKDOWN = '<webui-line></webui-line>';
+    // Pages are files in .taskproxy/pages, so their relative images and videos load from there in the project.
+    const PAGES_FOLDER = '.taskproxy/pages';
+    let mediaBase;
+    let mediaBaseLoad;
+    function loadMediaBase() {
+        mediaBaseLoad ??= (async () => {
+            await whenProxyReady();
+            mediaBase = await webui.proxy.fileServerBase(() => undefined);
+        })();
+        return mediaBaseLoad;
+    }
+    function pageHtml(markdown) {
+        return sanitizeProjectHtml(webui.applyAppDataToContent(markdown), { mediaBase, mediaFrom: PAGES_FOLDER });
+    }
     /**
      * Works out a segment's type and text from its markdown. `exact` is true when the markdown is
      * already in that type's form, so it can be kept as written until the text or type changes.
@@ -83,7 +97,7 @@
             t.setMarkdown(t.dataset.markdown || '');
             const liveUpdate = () => {
                 if (!t._isEditing) return;
-                t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(t.buildFinalMarkdown())));
+                t._content.setHtml(pageHtml(t.buildFinalMarkdown()));
             };
             t._inputMessage.addEventListener('input', liveUpdate);
             t._inputText.addEventListener('input', liveUpdate);
@@ -158,8 +172,8 @@
         },
         async render() {
             const t = this;
-            await customElements.whenDefined('webui-content');
-            t._content.setHtml(sanitizeProjectHtml(webui.applyAppDataToContent(t._markdown)));
+            await Promise.all([customElements.whenDefined('webui-content'), loadMediaBase()]);
+            t._content.setHtml(pageHtml(t._markdown));
         },
         shadowTemplate: `
 <style type="text/css">
