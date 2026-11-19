@@ -115,7 +115,7 @@ test.describe('saving', () => {
     test('segments can be added', async ({ page }) => {
         await openPage(page, '# Heading');
         await page.locator('app-page-handler webui-button[title="Add Segment"]').first().click();
-        await expect(page.locator('app-page-handler > app-markdown-segment')).toHaveCount(2);
+        await expect(page.locator('app-page-handler > webui-reorder > app-markdown-segment')).toHaveCount(2);
     });
 });
 
@@ -301,7 +301,7 @@ test.describe('page scripts', () => {
                 currentPage: '/abc', projectFiles: found, holdSearch: true,
                 ...state, files: { '.taskproxy/pages/abc.md': filesPage() },
             }, '/abc');
-            await page.waitForSelector('app-page-handler > app-markdown-segment');
+            await page.waitForSelector('app-page-handler > webui-reorder > app-markdown-segment');
             await expect(page.locator('app-page-handler webui-dropdown select')).toBeAttached();
             await expect.poll(async () => (await calls(page, 'search_project_files')).length).toBeGreaterThan(0);
             await page.evaluate(() => window.__backend.releaseSearch());
@@ -374,7 +374,7 @@ test.describe('help', () => {
 
 test.describe('segment layout', () => {
     /** The markdown of each segment, as the page splits it. */
-    const segmentsOf = page => page.locator('app-page-handler > app-markdown-segment').evaluateAll(list => list.map(el => el.getMarkdown()));
+    const segmentsOf = page => page.locator('app-page-handler > webui-reorder > app-markdown-segment').evaluateAll(list => list.map(el => el.getMarkdown()));
     // Opening a project reloads its page once more, so wait for the segments to settle.
     const layout = async page => {
         await expect.poll(async () => (await segmentsOf(page)).length).toBeGreaterThan(0);
@@ -405,10 +405,10 @@ test.describe('segment layout', () => {
     });
     test('deleting a segment leaves it out of the saved page', async ({ page }) => {
         await openPage(page, '# Keep\n\n# Remove');
-        const doomed = page.locator('app-page-handler > app-markdown-segment').nth(1);
+        const doomed = page.locator('app-page-handler > webui-reorder > app-markdown-segment').nth(1);
         await doomed.locator('#btn-edit').click();
         await doomed.locator('#btn-delete').click();
-        await expect(page.locator('app-page-handler > app-markdown-segment')).toHaveCount(1);
+        await expect(page.locator('app-page-handler > webui-reorder > app-markdown-segment')).toHaveCount(1);
         await save(page);
         expect((await saved(page)).contents).toBe('<webui-data data-page-title="" data-page-subtitle=""></webui-data>\n\n# Keep');
     });
@@ -437,7 +437,7 @@ test.describe('importing a markdown file', () => {
         await expect.poll(async () => (await calls(page, 'save_project_file')).at(-1)?.contents).toBe([
             data, '# Existing', '<webui-page-segment>\n\nBody\n\n</webui-page-segment>', imported,
         ].join('\n\n'));
-        await expect(page.locator('app-page-handler > app-markdown-segment')).toHaveText([/Existing/, /Body/, /Imported/, /From the file/]);
+        await expect(page.locator('app-page-handler > webui-reorder > app-markdown-segment')).toHaveText([/Existing/, /Body/, /Imported/, /From the file/]);
         await expect(openDialog(page)).toHaveCount(0);
     });
 
@@ -451,7 +451,7 @@ test.describe('importing a markdown file', () => {
         await expect.poll(async () => (await calls(page, 'save_project_file')).at(-1)?.contents).toBe([
             data, '<webui-page-segment>\n\nTodo\n\n</webui-page-segment>', '# Existing',
         ].join('\n\n'));
-        await expect(page.locator('app-page-handler > app-markdown-segment')).toHaveText([/Todo/, /Existing/]);
+        await expect(page.locator('app-page-handler > webui-reorder > app-markdown-segment')).toHaveText([/Todo/, /Existing/]);
     });
 
     test('on an empty page, before or after can\'t be chosen, and the file becomes the page', async ({ page }) => {
@@ -489,7 +489,7 @@ test.describe('copying the page', () => {
     test("copies the page's markdown file as it is saved, not what is being edited", async ({ page }) => {
         const md = '<webui-data data-page-title="T" data-page-subtitle=""></webui-data>\n\n# Saved\n\nBody';
         await openPage(page, md);
-        const segment = page.locator('app-page-handler > app-markdown-segment').nth(1);
+        const segment = page.locator('app-page-handler > webui-reorder > app-markdown-segment').nth(1);
         await segment.locator('#btn-edit').click();
         await segment.locator('webui-input-message textarea').fill('Not saved yet');
         await copyButton(page).click();

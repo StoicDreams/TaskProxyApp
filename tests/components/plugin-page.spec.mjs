@@ -47,7 +47,7 @@ test('each kind of node is drawn, and plugin text is never markup', async ({ pag
     await expect(view.locator('.plugin-markdown strong')).toHaveText('Strong');
     await expect(view.locator('.plugin-markdown script')).toHaveCount(0);
     await expect(view.locator('.plugin-markdown a')).not.toHaveAttribute('href', /javascript/);
-    await expect(view.locator('.plugin-badge[data-theme="info"]')).toHaveText('In Progress');
+    await expect(view.locator('webui-badge.plugin-badge[theme="info"]')).toHaveText('In Progress');
     await expect(view.locator('dl.plugin-properties dt')).toHaveText('Assignee');
     await expect(view.locator('dl.plugin-properties dd')).toHaveText('Sam Lee');
     await expect(view.locator('webui-alert')).toContainText('Heads up');
@@ -767,19 +767,17 @@ test.describe('spec 0.1.2', () => {
     const orders = async page => (await calls(page, 'plugin_action')).filter(call => call.request.action === 'order').map(call => call.request.form.order);
 
     test('a reorder list is put in order by dragging an item, and sends the new order once', async ({ page }) => {
-        // The drag starts after the mouse is held a moment, and the order is sent a moment after it settles, so the
-        // test moves the page's clock past each.
+        // The order is sent a moment after it settles, so the test moves the page's clock past that.
         await page.clock.install();
         await openPlugin(page, list, { pluginActions: { 'test/order': { refresh: true }, 'test/remove': {} } });
         const rows = page.locator('app-plugin-page .plugin-reorder-item');
         await expect(rows).toHaveCount(3);
         await expect(rows.first()).toContainText('Key');
-        // The app's drag starts once the mouse is held, as on user pages and in the navigation manager.
+        // The drag starts once the mouse moves, as on user pages and in the navigation manager.
         const from = await rows.nth(2).boundingBox();
         const to = await rows.nth(0).boundingBox();
         await page.mouse.move(from.x + 10, from.y + from.height / 2);
         await page.mouse.down();
-        await page.clock.runFor(300);
         await page.mouse.move(from.x + 10, to.y + 2, { steps: 8 });
         await page.mouse.up();
         await expect(rows.first()).toContainText('Parent story points');

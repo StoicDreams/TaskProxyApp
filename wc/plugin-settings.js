@@ -135,12 +135,10 @@
         fields(box, id, settings, saveLabel) {
             const t = this;
             const inputs = settings.map(setting => {
-                const input = webui.create('webui-input-text', {
-                    label: escape(setting.label),
-                    name: setting.key,
-                    type: setting.secret ? 'password' : null,
-                    placeholder: setting.secret && setting.isSet ? 'Saved. Type a new value to replace it.' : null,
-                });
+                // webui.create writes every attribute it is given, so one left empty would read "null" in the field.
+                const input = webui.create('webui-input-text', { label: escape(setting.label), name: setting.key });
+                if (setting.secret) input.setAttribute('type', 'password');
+                if (setting.secret && setting.isSet) input.setAttribute('placeholder', 'Saved. Type a new value to replace it.');
                 if (!setting.secret && setting.value) input.setAttribute('value', setting.value);
                 box.appendChild(input);
                 if (setting.help) box.appendChild(el('small', { class: 'plugin-muted' }, setting.help));

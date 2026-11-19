@@ -1,7 +1,7 @@
 import { test, expect, openApp, mount, calls } from '../support/app.mjs';
 
-// Settings' project list (wc/projects-report.js): every saved project as icon | name | git status, with the icon and
-// name edited in place.
+// Settings' project list (wc/projects-report.js): every saved project as a tile of its icon, name, folder, and git
+// status, with the icon and name edited in place, and a field to find one.
 const PROJECTS = [{ name: 'Repo', path: '/repo' }, { name: 'Docs', path: '/docs' }, { name: 'Site', path: '/site' }];
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
@@ -17,12 +17,16 @@ async function report(page, state = {}) {
     const root = await mount(page, '<app-projects-report id="r"></app-projects-report>');
     return root.locator('#r');
 }
-const row = (el, path) => el.locator(`tr[data-project="${path}"]`);
+const row = (el, path) => el.locator(`.project-tile[data-project="${path}"]`);
+const tiles = el => el.locator('.project-tile');
+const find = el => el.locator('webui-tiles .find input');
 
-test('lists every project with its icon, name, and git status', async ({ page }) => {
+test('lists every project with its icon, name, folder, and git status', async ({ page }) => {
     const el = await report(page);
-    await expect(el.locator('th')).toHaveText(['Icon', 'Name', 'Git status']);
-    await expect(el.locator('tbody tr app-project-name .project-name')).toHaveText(['Repo', 'Docs', 'Site']);
+    await expect(el.getByRole('listitem')).toHaveCount(3);
+    await expect(tiles(el).locator('app-project-name .edit-text')).toHaveText(['Repo', 'Docs', 'Site']);
+    await expect(tiles(el).locator('.project-tile-path')).toHaveText(['/repo', '/docs', '/site']);
+    await expect(el.locator('webui-tiles .count')).toHaveText('3 projects');
     await expect(row(el, '/repo').locator('.project-status-cell [title="3 changed files"]')).toHaveCount(1);
     await expect(row(el, '/docs').locator('.project-status-cell [title="2 commits ahead of the remote"]')).toHaveCount(1);
     await expect(row(el, '/docs').locator('.project-status-cell [title="1 commit behind the remote"]')).toHaveCount(1);
@@ -33,11 +37,11 @@ test('lists every project with its icon, name, and git status', async ({ page })
 
 test("clicking a project's name renames that project", async ({ page }) => {
     const el = await report(page);
-    await row(el, '/site').locator('.project-name').click();
-    await row(el, '/site').locator('.project-rename webui-input-text input').fill('Website');
-    await row(el, '/site').locator('.project-rename webui-button', { hasText: 'Save' }).click();
+    await row(el, '/site').locator('.edit-text').click();
+    await row(el, '/site').locator('webui-input-text.edit-field input').fill('Website');
+    await row(el, '/site').locator('.edit-form webui-button', { hasText: 'Save' }).click();
     await expect.poll(() => calls(page, 'rename_project')).toEqual([{ path: '/site', newName: 'Website' }]);
-    await expect(row(el, '/site').locator('.project-name')).toHaveText('Website');
+    await expect(row(el, '/site').locator('.edit-text')).toHaveText('Website');
 });
 
 test("choosing a project's icon saves it to that project, from its own images", async ({ page }) => {
@@ -53,26 +57,65 @@ test("choosing a project's icon saves it to that project, from its own images", 
 
 test('a project added or removed shows in the list, and a rename in progress elsewhere is kept', async ({ page }) => {
     const el = await report(page);
-    await row(el, '/repo').locator('.project-name').click();
-    await row(el, '/repo').locator('.project-rename webui-input-text input').fill('Typing');
+    await row(el, '/repo').locator('.edit-text').click();
+    await row(el, '/repo').locator('webui-input-text.edit-field input').fill('Typing');
     await page.evaluate(() => webui.setData('app-projects', [
         { name: 'Repo', path: '/repo' }, { name: 'Docs', path: '/docs' }, { name: 'New', path: '/new' },
     ]));
-    await expect(el.locator('tbody tr')).toHaveCount(3);
+    await expect(tiles(el)).toHaveCount(3);
     await expect(row(el, '/site')).toHaveCount(0);
-    await expect(row(el, '/new').locator('.project-name')).toHaveText('New');
-    await expect(row(el, '/repo').locator('.project-rename webui-input-text input')).toHaveValue('Typing');
+    await expect(row(el, '/new').locator('.edit-text')).toHaveText('New');
+    await expect(row(el, '/repo').locator('webui-input-text.edit-field input')).toHaveValue('Typing');
 });
 
 test('with no projects, it says so', async ({ page }) => {
     await openApp(page, { project: null, projects: [] });
     const root = await mount(page, '<app-projects-report id="r"></app-projects-report>');
     await expect(root.locator('#r').getByText('No projects yet. Add one below.')).toBeVisible();
-    await expect(root.locator('#r table')).toBeHidden();
+    await expect(root.locator('#r webui-tiles')).toBeHidden();
+    await expect(root.locator('#r .project-tile')).toHaveCount(0);
 });
 
 test('Settings shows it in the Projects tab', async ({ page }) => {
     await openApp(page, { projects: PROJECTS });
     await page.locator('webui-button.settings-tab-projects').click();
-    await expect(page.locator('.settings-projects app-projects-report tbody tr')).toHaveCount(3);
+    await expect(page.locator('.settings-projects app-projects-report .project-tile')).toHaveCount(3);
+});
+
+test('typing finds projects by any part of their name or folder, ignoring case, and says how many match', async ({ page }) => {
+    const el = await report(page, { projects: [...PROJECTS, { name: 'Api', path: '/work/apis/api' }, { name: 'Databases', path: '/work/apis/databases' }] });
+    await find(el).fill('APIS');
+    await expect(tiles(el).filter({ visible: true }).locator('.edit-text')).toHaveText(['Api', 'Databases']);
+    await expect(el.locator('webui-tiles .count')).toHaveText('2 of 5 projects');
+    await find(el).fill('do');
+    await expect(tiles(el).filter({ visible: true }).locator('.edit-text')).toHaveText(['Docs']);
+    await find(el).fill('nothing like it');
+    await expect(tiles(el).filter({ visible: true })).toHaveCount(0);
+    await expect(el.getByText('No project matches that.')).toBeVisible();
+    await find(el).fill('');
+    await expect(tiles(el).filter({ visible: true })).toHaveCount(5);
+    await expect(el.getByText('No project matches that.')).toBeHidden();
+    await expect(el.locator('webui-tiles .count')).toHaveText('5 projects');
+});
+
+test('a renamed project is found by its new name', async ({ page }) => {
+    const el = await report(page);
+    await row(el, '/site').locator('.edit-text').click();
+    await row(el, '/site').locator('webui-input-text.edit-field input').fill('Website');
+    await row(el, '/site').locator('.edit-form webui-button', { hasText: 'Save' }).click();
+    await expect.poll(() => calls(page, 'rename_project')).toHaveLength(1);
+    await page.evaluate(() => webui.setData('app-projects', [
+        { name: 'Repo', path: '/repo' }, { name: 'Docs', path: '/docs' }, { name: 'Website', path: '/site' },
+    ]));
+    await find(el).fill('website');
+    await expect(tiles(el).filter({ visible: true }).locator('.edit-text')).toHaveText(['Website']);
+});
+
+test('the open project is marked, and the mark moves when another opens', async ({ page }) => {
+    const el = await report(page);
+    await expect(row(el, '/repo')).toHaveAttribute('aria-current', 'true');
+    await expect(el.locator('[aria-current]')).toHaveCount(1);
+    await page.evaluate(() => webui.setData('app-current-project', { value: '/docs', display: 'Docs' }));
+    await expect(row(el, '/docs')).toHaveAttribute('aria-current', 'true');
+    await expect(row(el, '/repo')).not.toHaveAttribute('aria-current');
 });

@@ -134,7 +134,7 @@
                 });
                 return nav;
             }
-            t.nav = getChildNav(t._navPreview);
+            t.nav = getChildNav(t._navPreview.navRoot());
         },
         async saveNavigation() {
             let t = this;

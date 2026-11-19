@@ -345,6 +345,8 @@
     }
 
     webui.define("app-plugin-page", {
+        // A reorder list or badge is drawn only once its component is ready, so a drag at once is never lost.
+        preload: 'reorder badge',
         constructor() {
             const t = this;
             t._load = 0;
@@ -593,7 +595,7 @@
                 case 'markdown':
                     return t.buildMarkdown(node);
                 case 'badge':
-                    return el('span', { class: 'plugin-badge', 'data-theme': theme(node.theme) || null }, node.text);
+                    return el('webui-badge', { class: 'plugin-badge', theme: theme(node.theme) || null }, node.text);
                 case 'link': {
                     // No href, since the app's router would take a click on one as a page change.
                     const link = makeButton(el('a', { class: 'plugin-link' }, node.text), node.action?.label);
@@ -1060,13 +1062,12 @@
             return form;
         },
         /**
-         * Items put in order by dragging, or with Alt+Up and Alt+Down, using the app's drag and drop, as user pages
-         * and the navigation manager do. Once the order settles it runs the node's action with the ids as `order`.
+         * Items put in order by dragging, or with Alt+Up and Alt+Down, with webui-reorder, as user pages and the
+         * navigation manager do. Once the order settles it runs the node's action with the ids as `order`.
          */
         buildReorder(node, ctx) {
             const t = this;
-            const list = el('div', { class: 'plugin-reorder', role: 'list' });
-            const rows = [];
+            const list = el('webui-reorder', { class: 'plugin-reorder', role: 'list', items: ':scope > .plugin-reorder-item', handle: '.drag-handle' });
             const order = () => [...list.children].filter(row => row.classList.contains('plugin-reorder-item')).map(row => row.dataset.id);
             let saved = null;
             let timer = null;
@@ -1082,7 +1083,6 @@
                     t.run(node.action, { order: now }, ctx);
                 }, 400);
             };
-            const dragNDrop = getDragNDropSetup(() => rows.filter(row => row.isConnected));
             (node.items || []).forEach(item => {
                 const row = el('div', { class: 'plugin-reorder-item drag-handle', role: 'listitem', 'data-id': `${item.id ?? ''}` });
                 const label = (item.children || []).find(child => child?.type === 'text')?.text ?? `${item.id ?? ''}`;
@@ -1095,9 +1095,8 @@
                 (item.children || []).forEach(child => body.appendChild(t.build(child)));
                 row.appendChild(body);
                 list.appendChild(row);
-                rows.push(row);
-                dragNDrop(row, () => changed(row));
             });
+            list.addEventListener('reorder', ev => changed(ev.detail.item));
             saved = order();
             return list;
         },

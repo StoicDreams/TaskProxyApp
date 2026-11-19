@@ -24,7 +24,7 @@ test('a page script runs from the keyboard, and its button is named for its step
 
 test('Alt+Up and Alt+Down move a segment, and the page saves in the new order', async ({ page }) => {
     await openPage(page, '# One\n\n# Two\n\n# Three');
-    const segments = page.locator('app-page-handler > app-markdown-segment');
+    const segments = page.locator('app-page-handler > webui-reorder > app-markdown-segment');
     const order = () => segments.evaluateAll(list => list.map(el => el.getMarkdown()));
     await segments.first().locator('#btn-edit').focus();
     await page.keyboard.press('Alt+ArrowDown');

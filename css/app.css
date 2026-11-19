@@ -17,19 +17,6 @@
     z-index: 100;
 }
 
-.moving {
-    z-index: 1;
-    position: fixed !important;
-    opacity: 0.5;
-    transform: scale(0.8);
-    pointer-events: none;
-    cursor: move;
-}
-
-body.dragging * {
-    pointer-events: none;
-}
-
 .placeholder {
     display: flex;
     border: 5px dashed var(--color-info);
@@ -44,7 +31,8 @@ body.dragging * {
     content: "Placeholder";
 }
 
-app-nav-preview {
+app-nav-preview,
+app-nav-preview > .nav-preview-list {
     display: flex;
     flex-direction: column;
 }
@@ -169,40 +157,6 @@ app-plugin-page.plugin-split-page:has(> .plugin-loading) {
 
 .plugin-heading {
     margin: 0;
-}
-
-.plugin-badge {
-    display: inline-block;
-    padding: 0.1em 0.6em;
-    border-radius: 1em;
-    font-size: 0.85em;
-    font-weight: bold;
-    background-color: color-mix(in srgb, currentColor 15%, transparent);
-}
-
-.plugin-badge[data-theme="info"] {
-    background-color: var(--color-info);
-    color: var(--color-info-offset);
-}
-
-.plugin-badge[data-theme="success"] {
-    background-color: var(--color-success);
-    color: var(--color-success-offset);
-}
-
-.plugin-badge[data-theme="warning"] {
-    background-color: var(--color-warning);
-    color: var(--color-warning-offset);
-}
-
-.plugin-badge[data-theme="danger"] {
-    background-color: var(--color-danger);
-    color: var(--color-danger-offset);
-}
-
-.plugin-badge[data-theme="primary"] {
-    background-color: var(--color-primary);
-    color: var(--color-primary-offset);
 }
 
 .plugin-link {
@@ -631,7 +585,7 @@ app-plugin-page.plugin-split-on {
     flex: 0 0 auto;
 }
 
-/* Items a plugin lets the user put in order, dragged by the app's drag and drop. */
+/* Items a plugin lets the user put in order, with webui-reorder. */
 .plugin-reorder {
     display: flex;
     flex-direction: column;
@@ -654,14 +608,6 @@ app-plugin-page.plugin-split-on {
     cursor: grab;
     opacity: 0.7;
     user-select: none;
-}
-
-.plugin-reorder > .placeholder {
-    height: 1.75em;
-}
-
-.plugin-reorder > .placeholder::before {
-    content: '';
 }
 
 .plugin-checkbox {
@@ -692,6 +638,89 @@ app-plugin-page.plugin-split-on {
 
 .plugin-permissions {
     margin: 0.25em 0 0.75em;
+}
+
+/* The Plugins drawer's lists, each beside the plugin chosen from it. */
+.plugin-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+    padding: 0.25em 0.5em 0.25em 0;
+}
+
+.plugin-pick {
+    display: flex;
+    align-items: center;
+    gap: 0.75em;
+    width: 100%;
+    padding: 0.5em 0.75em;
+    border: 1px solid transparent;
+    border-radius: 0.5em;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.plugin-pick > webui-icon {
+    flex: 0 0 auto;
+    font-size: 1.5em;
+}
+
+.plugin-pick:hover,
+.plugin-pick:focus-visible {
+    background-color: color-mix(in srgb, currentColor 8%, transparent);
+    outline: none;
+}
+
+.plugin-pick[aria-selected="true"] {
+    border-color: var(--color-info);
+    background-color: color-mix(in srgb, var(--color-info) 15%, transparent);
+}
+
+.plugin-pick-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+    min-width: 0;
+}
+
+.plugin-pick-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plugin-pick-states {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25em;
+}
+
+.plugin-detail {
+    padding: 0 0.25em 0 0.75em;
+}
+
+.plugin-detail > .plugin-card {
+    border: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75em;
+}
+
+.plugin-detail h4 {
+    margin: 0.5em 0 0;
+}
+
+.plugin-project {
+    border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    padding-top: 0.5em;
+}
+
+.plugin-tab-content {
+    padding-top: var(--padding);
 }
 
 .plugin-branch-card {
@@ -859,9 +888,7 @@ app-project-manager .current-project {
     gap: var(--padding);
 }
 
-app-project-manager .current-project[hidden],
-app-project-name .project-name[hidden],
-app-project-name .project-rename[hidden] {
+app-project-manager .current-project[hidden] {
     display: none;
 }
 
@@ -870,52 +897,27 @@ app-projects-report app-project-icon {
     display: inline-flex;
 }
 
-app-project-name .project-name {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4em;
-    padding: 0.1em 0.35em;
-    font: inherit;
-    font-weight: bold;
-    color: inherit;
-    background: none;
-    border: 1px solid transparent;
-    border-radius: var(--corners-small, 4px);
-    cursor: pointer;
-}
-
-app-project-name .project-name:hover {
-    border-color: color-mix(in srgb, currentColor 35%, transparent);
-    background-color: color-mix(in srgb, currentColor 8%, transparent);
-}
-
-app-project-name .project-name:focus-visible {
-    outline: var(--focus-outline, 2px solid currentColor);
-    outline-offset: var(--focus-offset, 2px);
-}
-
-app-project-name .project-name webui-icon {
-    font-size: 0.75em;
-    opacity: 0.75;
-}
-
-/* A project's name, which renames it when clicked (wc/project-name.js). Its field and buttons read as a form. */
+/* A project's name, which renames it when clicked (wc/project-name.js, with webui-edit-in-place). */
 app-project-name {
     display: inline-flex;
     flex: 1 1 auto;
-    flex-wrap: wrap;
     align-items: center;
+    min-width: 0;
 }
 
-app-project-name .project-rename {
-    display: inline-flex;
-    flex: 1 1 24em;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--padding);
+app-project-name .project-name {
+    flex: 1 1 auto;
+}
+
+app-project-name .project-name::part(text) {
+    font-weight: bold;
+}
+
+app-project-name .project-name[editing]::part(editor) {
     font-size: 1rem;
     font-weight: normal;
 }
+
 
 /* The field takes the room left beside the buttons, and they wrap below it only when there is too little. */
 app-project-name .project-rename webui-input-text {
@@ -933,26 +935,55 @@ app-projects-report [hidden] {
     display: none !important;
 }
 
-app-projects-report .projects-report {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-app-projects-report .projects-report th {
-    text-align: start;
-    font-weight: normal;
-    opacity: 0.75;
-}
-
-app-projects-report .projects-report th,
-app-projects-report .projects-report td {
+/* The tiles themselves are laid out by webui-tiles. */
+app-projects-report .project-tile {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    min-width: 0;
     padding: 0.35em 0.5em;
-    vertical-align: middle;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    border-radius: 0.5em;
 }
 
-app-projects-report .project-icon-cell {
-    width: 1%;
+app-projects-report .project-tile[aria-current="true"] {
+    border-color: var(--color-info);
+    background-color: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+/* A tile being renamed takes the whole row, so its field and buttons fit. */
+app-projects-report .project-tile:has(.project-rename:not([hidden])) {
+    grid-column: 1 / -1;
+}
+
+app-projects-report .project-tile-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+app-projects-report .project-tile-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    min-width: 0;
+    font-size: 0.85em;
+}
+
+app-projects-report .project-tile-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.7;
+    padding-inline-start: 0.35em;
+}
+
+app-projects-report .project-status-cell {
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 app-projects-report .git-clean {

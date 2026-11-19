@@ -253,7 +253,7 @@ export async function openPage(page, markdown, state = {}) {
         ...state,
         files: { [`.taskproxy/pages/${id}.md`]: markdown, ...(state.files || {}) },
     }, `/${id}`);
-    await page.waitForSelector('app-page-handler > app-markdown-segment');
+    await page.waitForSelector('app-page-handler > webui-reorder > app-markdown-segment');
     return page;
 }
 

@@ -1,11 +1,25 @@
 /* Display navigation links from a list */
 "use strict"
 webui.define('app-nav-preview', {
-    preload: 'fa paper nav-group nav-link',
+    preload: 'fa paper nav-group nav-link reorder',
     watched: {},
     constructor() {
         const t = this;
-        t.dragNDrop = getDragNDropSetup(t.getSegments);
+        // Links and folders move by dragging, or Alt+Up and Alt+Down. The markers around and inside each folder say
+        // which side of them an item goes, so an item can be put into a folder, or out of it.
+        t._list = webui.create('webui-reorder', {
+            class: 'nav-preview-list', items: 'webui-nav-link, webui-nav-group', targets: 'webui-nav-link', handle: '.drag-handle',
+        });
+        t._list.addEventListener('reorder', ev => {
+            // A folder keeps the markers before and after it.
+            const folder = ev.detail.item;
+            if (folder._before) folder.before(folder._before);
+            if (folder._after) folder.after(folder._after);
+        });
+    },
+    /** The element whose children are the top of the navigation, in order. */
+    navRoot() {
+        return this._list;
     },
     connected() {
         const t = this;
@@ -20,7 +34,6 @@ webui.define('app-nav-preview', {
             el = webui.create('webui-nav-link');
             // Pages here have no address to follow, so keyboard users select them as buttons.
             makeButton(el);
-            t.dragNDrop(el);
         } else {
             if (!link.children) {
                 link.children = [];
@@ -32,12 +45,9 @@ webui.define('app-nav-preview', {
             link.children.forEach(child => {
                 t.buildLink(el, child);
             });
-            let afterFolder = webui.create('webui-nav-link', { class: 'placeholder', message: 'Folder End', place: 'above' });
-            el.appendChild(afterFolder);
-            t.dragNDrop(el, () => {
-                el.before(beforeFolder);
-                el.after(afterFolder);
-            });
+            el.appendChild(webui.create('webui-nav-link', { class: 'placeholder', message: 'Folder End', place: 'above' }));
+            el._before = beforeFolder;
+            el._after = webui.create('webui-nav-link', { class: 'placeholder', message: 'After Folder', place: 'below' });
         }
         if (!link.id) {
             link.id = webui.uuid();
@@ -68,15 +78,7 @@ webui.define('app-nav-preview', {
         el._linkData = link;
         el.classList.add('drag-handle');
         parent.appendChild(el);
-        if (!link.url) {
-            parent.appendChild(webui.create('webui-nav-link', { class: 'placeholder', message: 'After Folder', place: 'below' }));
-        }
-    },
-    getSegments(el) {
-        const t = el.closest('app-nav-preview');
-        let segments = [];
-        segments = Array.from(t.querySelectorAll('webui-nav-link'));
-        return segments;
+        if (el._after) parent.appendChild(el._after);
     },
     buildNav(navJson, openLast) {
         if (!navJson) return;
@@ -89,9 +91,10 @@ webui.define('app-nav-preview', {
         const t = this;
         let nav = t._navData;
         if (!nav) return;
-        t.innerHTML = '';
+        t._list.replaceChildren();
+        if (t._list.parentNode !== t) t.replaceChildren(t._list);
         nav.forEach(link => {
-            this.buildLink(t, link);
+            this.buildLink(t._list, link);
         });
         if (nav.length) {
             let openNav = openLast ? nav[nav.length - 1] : nav[0];

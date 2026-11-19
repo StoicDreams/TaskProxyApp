@@ -111,7 +111,7 @@ test.describe('plugins set up per project', () => {
         // It is set up from the Plugins drawer, which opens its settings, offering those of the other projects.
         await page.evaluate(() => document.querySelector('app-plugins-drawer').open('jira'));
         const card = page.locator('webui-drawer.shared [data-plugin="jira"]');
-        await expect(card.locator('[data-role="project-state"]')).toHaveText(/not set up/);
+        await expect(card.locator('[data-role="project-state"]')).toHaveText('Not set up');
         await expect(card.locator('[data-role="sign-in-choice"]')).toBeVisible();
         await page.evaluate(() => {
             const list = window.__backend.handlers.plugin_list;

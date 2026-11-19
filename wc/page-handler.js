@@ -9,8 +9,16 @@
     let markdown = '';
     let myId = '';
     let myFile = '';
-    let dragNDrop = getDragNDropSetup((_) => segments);
     let segments = [];
+    /**
+     * The page's segments, between the top and bottom bars, put in order by dragging a segment's edit button, or with
+     * Alt+Up and Alt+Down on it. Saving reads them in the order they are in.
+     */
+    let segmentList = null;
+    function segmentsElement() {
+        segmentList ??= webui.create('webui-reorder', { class: 'page-segments', items: ':scope > app-markdown-segment', handle: '.drag-handle' });
+        return segmentList;
+    }
     let pageScripts = [];
     let pageDataComponent = '';
     let lastScannedMarkdown = null;
@@ -57,7 +65,7 @@
                 if (myFile) {
                     let md = [pageDataComponent];
                     comp.querySelectorAll('app-markdown-segment').forEach(segment => {
-                        if (segment.parentNode !== comp) return;
+                        if (segment.parentNode !== segmentList) return;
                         let markdown = segment.getMarkdown();
                         if (markdown) {
                             md.push(markdown);
@@ -92,7 +100,7 @@
     function currentSegmentsMarkdown() {
         let md = [];
         comp.querySelectorAll('app-markdown-segment').forEach(segment => {
-            if (segment.parentNode !== comp) return;
+            if (segment.parentNode !== segmentList) return;
             let markdown = segment.getMarkdown();
             if (markdown) md.push(markdown);
         });
@@ -178,7 +186,7 @@
                 md.push(pageDataComponent);
             }
             comp.querySelectorAll('app-markdown-segment').forEach(segment => {
-                if (segment.parentNode !== comp) return;
+                if (segment.parentNode !== segmentList) return;
                 let markdown = segment.getMarkdown();
                 if (markdown) {
                     md.push(markdown);
@@ -195,11 +203,10 @@
         btnAdd.addEventListener('click', async _ => {
             let segment = webui.create('app-markdown-segment', {});
             if (isEnd) {
-                wrap.before(segment);
+                segmentsElement().append(segment);
             } else {
-                wrap.after(segment);
+                segmentsElement().prepend(segment);
             }
-            dragNDrop(segment);
             segments = Array.from(comp.querySelectorAll('app-markdown-segment'));
         });
         bar.appendChild(btnAdd);
@@ -298,10 +305,8 @@
         announcePageVariables();
         convertMarkdownToSegments(markdown);
         comp.appendChild(topBar);
-        segments.forEach(segment => {
-            dragNDrop(segment);
-            comp.appendChild(segment);
-        });
+        segmentsElement().replaceChildren(...segments);
+        comp.appendChild(segmentsElement());
         comp.appendChild(bottomBar);
         refreshScripts();
     }
@@ -699,7 +704,7 @@
         webui.setData('page-subtitle', webui.escapeForHTML(page?.name || ''));
     }
     webui.define("app-page-handler", {
-        preload: 'app:markdown-segment app:files dropdown select switch input-text input-message code page-help',
+        preload: 'app:markdown-segment app:files dropdown select switch input-text input-message code page-help reorder',
         constructor() {
             const t = this;
             comp = t;

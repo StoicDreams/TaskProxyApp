@@ -159,7 +159,7 @@ test.describe('tutorials', () => {
 
     test('editing a page segment', async ({ page }) => {
         await open(page, `/${PAGE_IDS.release}`);
-        const segment = page.locator('app-page-handler > app-markdown-segment').nth(1);
+        const segment = page.locator('app-page-handler > webui-reorder > app-markdown-segment').nth(1);
         await segment.waitFor();
         await settle(page);
         await loop(page, 'page-edit-segment', async () => {
@@ -204,7 +204,7 @@ test.describe('tutorials', () => {
 
     test('project variables and environments', async ({ page }) => {
         await open(page, `/${PAGE_IDS.onboarding}`);
-        await page.locator('app-page-handler > app-markdown-segment').first().waitFor();
+        await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
         await settle(page);
         await loop(page, 'variables-project', async () => {
             await clickOn(page, page.locator('app-var-manager'), { after: 1400 });
@@ -227,7 +227,7 @@ test.describe('tutorials', () => {
 
     test('global secrets', async ({ page }) => {
         await open(page, `/${PAGE_IDS.onboarding}`);
-        await page.locator('app-page-handler > app-markdown-segment').first().waitFor();
+        await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
         await settle(page);
         await loop(page, 'variables-global', async () => {
             await clickOn(page, page.locator('app-var-manager'), { after: 1400 });
@@ -572,11 +572,16 @@ test.describe('plugins', () => {
         });
         await loop(page, 'plugins-drawer', async () => {
             await clickOn(page, page.locator('app-plugins-drawer'), { after: 1400 });
-            const card = page.locator('webui-drawer.shared [data-plugin="jira"]');
+            const manager = page.locator('webui-drawer.shared app-plugin-manager');
+            const card = manager.locator('.plugin-detail [data-plugin="jira"]');
             await card.waitFor();
-            await clickOn(page, card.locator('details summary'), { after: 1200 });
             await expect(card.locator('webui-input-text[name="jira_site"]')).toBeVisible();
             await moveTo(page, card.locator('webui-button', { hasText: 'Save settings' }));
+            await page.waitForTimeout(1200);
+            // The catalog, with what each plugin would reach, is the next tab.
+            await clickOn(page, manager.locator('webui-button.plugin-tab-available'), { after: 1200 });
+            await expect(manager.locator('.plugin-available .plugin-detail [data-catalog="jira"]')).toBeVisible();
+            await clickOn(page, manager.locator('webui-button.plugin-tab-installed'), { after: 800 });
         }, { dir: 'video/loops' });
     });
 });

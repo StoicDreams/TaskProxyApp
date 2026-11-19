@@ -163,7 +163,7 @@ test('build a team page', async ({ page }) => {
         // The bottom Add appends. Found by text, since Web UI moves a hovered element's title into aria-label.
         const add = page.locator('app-page-handler webui-button').filter({ hasText: 'Add' }).last();
         await clickOn(page, add, { after: 900 });
-        const segments = page.locator('app-page-handler > app-markdown-segment');
+        const segments = page.locator('app-page-handler > webui-reorder > app-markdown-segment');
         await expect(segments).toHaveCount(1);
         await editSegment(page, segments.nth(0), 'h3', 'Reset your local database');
         await clickOn(page, add, { after: 900 });

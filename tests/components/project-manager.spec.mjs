@@ -7,12 +7,12 @@ async function manager(page, project = { name: 'Repo', path: '/repo' }) {
     await openApp(page, { project });
     const root = await mount(page, '<app-project-manager id="m"></app-project-manager>');
     const el = root.locator('#m');
-    await expect(el.locator('.project-name')).toBeVisible();
+    await expect(el.locator('.edit-text')).toBeVisible();
     return el;
 }
-const nameButton = el => el.locator('.project-name');
-const input = el => el.locator('.project-rename webui-input-text input');
-const button = (el, label) => el.locator('.project-rename webui-button', { hasText: label });
+const nameButton = el => el.locator('.edit-text');
+const input = el => el.locator('webui-input-text.edit-field input');
+const button = (el, label) => el.locator('.edit-form webui-button', { hasText: label });
 // Clicking the name puts a field with the name in its place.
 async function openRename(el, name = 'Repo') {
     await nameButton(el).click();
@@ -30,7 +30,7 @@ test('the heading shows the project name, with an edit icon, after its label and
     // No Edit Name button: the name itself starts renaming.
     await expect(el.locator('webui-button', { hasText: 'Edit Name' })).toHaveCount(0);
     await expect(el.locator('#btn-remove')).toHaveCount(0);
-    await expect(el.locator('.project-rename')).toBeHidden();
+    await expect(el.locator('.edit-form')).toBeHidden();
 });
 test('clicking the edit icon starts renaming too', async ({ page }) => {
     const el = await manager(page);
@@ -46,7 +46,7 @@ test('Save sends the new name and shows it in the heading', async ({ page }) => 
     await expect.poll(() => calls(page, 'rename_project')).toEqual([{ path: '/repo', newName: 'New Name' }]);
     await expect.poll(() => page.evaluate(() => webui.getData('app-current-project').display)).toBe('New Name');
     await expect(nameButton(el)).toHaveText('New Name');
-    await expect(el.locator('.project-rename')).toBeHidden();
+    await expect(el.locator('.edit-form')).toBeHidden();
     await expect(nameButton(el)).toBeFocused();
 });
 test('Enter saves, and Escape cancels', async ({ page }) => {
@@ -55,7 +55,7 @@ test('Enter saves, and Escape cancels', async ({ page }) => {
     await input(el).fill('Typed');
     await input(el).press('Escape');
     await expect(nameButton(el)).toHaveText('Repo');
-    await expect(el.locator('.project-rename')).toBeHidden();
+    await expect(el.locator('.edit-form')).toBeHidden();
     await openRename(el);
     await input(el).fill('Entered');
     await input(el).press('Enter');
@@ -95,7 +95,7 @@ test('saving the same name closes the field without renaming', async ({ page }) 
     const el = await manager(page);
     await openRename(el);
     await button(el, 'Save').click();
-    await expect(el.locator('.project-rename')).toBeHidden();
+    await expect(el.locator('.edit-form')).toBeHidden();
     await expect.poll(() => calls(page, 'rename_project')).toEqual([]);
 });
 test('a name with special characters shows as written', async ({ page }) => {

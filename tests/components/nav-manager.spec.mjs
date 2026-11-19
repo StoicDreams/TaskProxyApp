@@ -65,7 +65,7 @@ test('cancel discards changes', async ({ page }) => {
     await open(page);
     await button(page, 'Add Page').click();
     await button(page, 'Cancel').click();
-    await expect(page.locator('app-nav-preview > webui-nav-link[name=""]')).toHaveCount(0);
+    await expect(page.locator('app-nav-preview > webui-reorder > webui-nav-link[name=""]')).toHaveCount(0);
 });
 test('saving updates the app navigation', async ({ page }) => {
     await open(page);
@@ -76,11 +76,11 @@ test('saving updates the app navigation', async ({ page }) => {
 test('saving from the header does not discard unsaved navigation edits', async ({ page }) => {
     await open(page);
     await button(page, 'Add Page').click();
-    await expect(page.locator('app-nav-preview > webui-nav-link[name=""]')).toHaveCount(1);
+    await expect(page.locator('app-nav-preview > webui-reorder > webui-nav-link[name=""]')).toHaveCount(1);
     // The header's save has been answered, and the app has dealt with it, before the next step runs in the page.
     await page.evaluate(() => webui.proxy.saveProjectData());
     await expect.poll(async () => (await calls(page, 'save_project_data')).map(call => call.data.navigation.length)).toEqual([2]);
-    await expect(page.locator('app-nav-preview > webui-nav-link[name=""]')).toHaveCount(1);
+    await expect(page.locator('app-nav-preview > webui-reorder > webui-nav-link[name=""]')).toHaveCount(1);
     await button(page, 'Save').click();
     await expect.poll(async () => (await calls(page, 'save_project_data')).map(call => call.data.navigation.length)).toEqual([2, 3]);
 });

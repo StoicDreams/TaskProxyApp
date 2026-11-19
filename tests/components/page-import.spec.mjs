@@ -105,7 +105,7 @@ test("Settings has an Import tab with the page import, and the current project s
     await openApp(page, { docs: DOCS });
     await page.locator('webui-button.settings-tab-key').click();
     // The current project stays in view whichever tab is open.
-    await expect(page.locator('app-project-manager .project-name')).toBeVisible();
+    await expect(page.locator('app-project-manager .edit-text')).toBeVisible();
     await expect(page.locator('app-page-import')).toBeHidden();
     await page.locator('webui-button.settings-tab-import').click();
     await expect(page.locator('app-page-import').getByText(/Turn a folder of markdown files/)).toBeVisible();

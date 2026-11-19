@@ -27,7 +27,7 @@ test('it opens from the keyboard', async ({ page }) => {
 test("it can open on one plugin's settings", async ({ page }) => {
     await openApp(page, { plugins, pluginSettings: { jira: [{ key: 'jira_site', label: 'Jira site', help: '', secret: false, isSet: false, value: null }] } });
     await page.evaluate(() => document.querySelector('app-plugins-drawer').open('jira'));
-    const card = page.locator('webui-drawer.shared [data-plugin="jira"]');
+    const card = page.locator('webui-drawer.shared .plugin-detail [data-plugin="jira"]');
     await expect(card).toHaveClass(/plugin-highlight/);
     await expect(card.locator('webui-input-text[name="jira_site"]')).toBeVisible();
 });
