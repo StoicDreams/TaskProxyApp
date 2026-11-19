@@ -10,6 +10,7 @@ pub mod common;
 pub mod datatypes;
 pub mod plugins;
 pub mod prelude;
+pub mod remote;
 pub mod services;
 
 const MAIN_WINDOW_LABEL: &str = "taskproxy";
@@ -49,7 +50,8 @@ pub fn run() {
         .manage(crate::services::runs::Runs::default())
         .manage(crate::services::commit_queue::CommitQueue::default())
         .manage(crate::services::shared_data::DataRevs::default())
-        .manage(crate::services::task_manager::TaskManagerState::default());
+        .manage(crate::services::task_manager::TaskManagerState::default())
+        .manage(crate::remote::Remote::default());
 
     // Save data on close
     builder = builder.on_window_event(|window, event| {
@@ -103,8 +105,9 @@ pub fn run() {
                         println!("{:?}", result);
                     }
                 };
-                let (_save_app_result, _save_project_result) =
-                    join!(save_app_data, save_project_data);
+                let save_remote_log = crate::remote::save_log(&app_handle);
+                let (_save_app_result, _save_project_result, _save_log_result) =
+                    join!(save_app_data, save_project_data, save_remote_log);
                 println!("Saves complete - Closing window.");
                 let _ = window.close();
             });
@@ -130,6 +133,8 @@ pub fn run() {
             window.open_devtools();
         }
         services::terminal_controller::remove_stale_temp_scripts(app.handle());
+        // The approved browsers and the log of what they did, for Remote Connections.
+        tauri::async_runtime::spawn(crate::remote::load(app.handle().clone()));
         // Spawn background task
         let app_handle = app.handle().clone();
         tauri::async_runtime::spawn(background_tasks(app_handle));
@@ -193,6 +198,16 @@ pub fn run() {
             services::myfi::myfi_sign_in_wait,
             services::myfi::myfi_sign_in_cancel,
             services::myfi::myfi_sign_out,
+            remote::service::remote_status,
+            remote::service::remote_set_enabled,
+            remote::service::remote_browsers,
+            remote::service::remote_browser_approve,
+            remote::service::remote_browser_remove,
+            remote::service::remote_browser_allow,
+            remote::service::remote_browser_level,
+            remote::service::remote_browser_disconnect,
+            remote::service::remote_log,
+            remote::service::remote_settings,
             services::projects::greet,
             services::projects::add_project,
             services::projects::add_projects_multi,

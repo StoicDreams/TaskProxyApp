@@ -63,6 +63,8 @@
             .catch(err => {
                 // Sent again with the next sync.
                 if (syncedCopy[scope] === sent) syncedCopy[scope] = base;
+                // A browser that may only look keeps its changes to itself, and the computer says so for each one.
+                if (remote && `${err}`.includes('This browser can\'t do that')) return isProject ? 'Project data synced' : 'App Data Synced';
                 return errHandler(err);
             });
     }
@@ -94,6 +96,14 @@
     const worker = new Worker("worker.min.js");
     const tauri = window.__TAURI__;
     delete window.__TAURI__;
+    /**
+     * Set when the app runs in a browser on www.taskproxy.com, connected to this computer by Remote Connections:
+     * `{deviceName, desktopName}`. The page shown is each screen's own, so a browser starts on the route the
+     * website's frame restored, not the computer's, and never changes the computer's. The computer decides what a
+     * browser may do, command by command.
+     */
+    const remote = window.__taskProxyRemote ? Object.freeze({ ...window.__taskProxyRemote }) : null;
+    let remoteStartPage = remote ? `${location.pathname}${location.search}` : null;
     let firstLoad = true;
     let isLoading = {};
     const defaultErrHandler = msg => webui.alert(msg);
@@ -248,9 +258,11 @@
     class Tauri {
         /**
          * Opens an address in the computer's browser. Rust opens it, since the opener plugin hands the browser an
-         * AppImage's environment, which stops it opening at all.
+         * AppImage's environment, which stops it opening at all. A remote browser opens links itself.
          */
-        openUrl = url => tauri.core.invoke('open_url', { url }).catch(defaultErrHandler);
+        openUrl = remote ? tauri.opener.openUrl : (url => tauri.core.invoke('open_url', { url }).catch(defaultErrHandler));
+        /** This browser, when the app runs over Remote Connections: `{deviceName, desktopName}`. Null on the computer. */
+        remote = remote;
         constructor() {
             const t = this;
             worker.onmessage = (event) => {
@@ -273,21 +285,23 @@
             return tauri.core.invoke('get_version', {}).catch(errHandler);
         }
         /**
-         * Copies an image, a Blob or an <img>, to the system clipboard through Rust (services/clipboard.rs), since
-         * WebKitGTK's own copy leaves nothing to paste on Wayland. Resolves to true once copied.
-         */
-        /**
          * A project's icon: an image in its repo, chosen in Settings and saved in its .taskproxy/Project.json
          * (services/project_icons.rs). Icons come back as data URIs.
          */
         projectIcons = {
             /** Every saved project's icon, as `[{path, icon}]`. Quiet, since the dropdown shows names without them. */
             all: () => tauri.core.invoke('get_project_icons').catch(() => []),
-            /** The open project's images that could be its icon, and the one it uses: `{images, icon}`. */
-            images: (err) => tauri.core.invoke('get_project_images').catch(err ?? defaultErrHandler),
-            /** Sets the open project's icon, or clears it with an empty one. Resolves to its data URI, null, or false when refused. */
-            set: async (icon, err) => {
-                const result = await tauri.core.invoke('set_project_icon', { icon: icon || null }).catch(error => {
+            /**
+             * A project's images that could be its icon, and the one it uses: `{images, icon}`. `project` is a saved
+             * project's path, or leave it out for the open project.
+             */
+            images: (err, project) => tauri.core.invoke('get_project_images', { project: project || null }).catch(err ?? defaultErrHandler),
+            /**
+             * Sets a project's icon, the saved project at `project` or the open one, or clears it with an empty one.
+             * Resolves to its data URI, null, or false when refused.
+             */
+            set: async (icon, err, project) => {
+                const result = await tauri.core.invoke('set_project_icon', { icon: icon || null, project: project || null }).catch(error => {
                     (err ?? defaultErrHandler)(error);
                     return false;
                 });
@@ -297,18 +311,23 @@
         };
         /**
          * Copies text to the system clipboard through Rust, as images are, since the webview's own clipboard is
-         * unreliable on Wayland. Resolves to true once copied.
+         * unreliable on Wayland. A remote browser copies it itself. Resolves to true once copied.
          */
         async copyText(text, errHandler) {
             errHandler ??= defaultErrHandler;
             try {
-                await tauri.core.invoke('copy_text', { text: `${text}` });
+                if (remote) await navigator.clipboard.writeText(`${text}`);
+                else await tauri.core.invoke('copy_text', { text: `${text}` });
                 return true;
             } catch (error) {
                 errHandler(error?.message || error);
                 return undefined;
             }
         }
+        /**
+         * Copies an image, a Blob or an <img>, to the system clipboard through Rust (services/clipboard.rs), since
+         * WebKitGTK's own copy leaves nothing to paste on Wayland. Resolves to true once copied.
+         */
         async copyImage(image, errHandler) {
             errHandler ??= defaultErrHandler;
             try {
@@ -478,6 +497,35 @@
             signInCancel: () => tauri.core.invoke('myfi_sign_in_cancel').catch(() => { }),
             signOut: (err) => tauri.core.invoke('myfi_sign_out').then(() => true).catch(err ?? defaultErrHandler),
         }
+        /**
+         * Remote Connections: using this computer's Task Proxy from a browser on www.taskproxy.com, signed in to the same
+         * account. Each of the first group resolves with the panel's status: { enabled, name, desktopId,
+         * reachability: { reachable, error }, approved: [{ key, name, code, added, level, connected, route }],
+         * waiting: [{ key, name, code, asked }], refused: [{ key, name, code, refused }], keepAwake, awake, awakeError }.
+         */
+        remoteConnections = {
+            status: (err) => tauri.core.invoke('remote_status').catch(err ?? defaultErrHandler),
+            /** Turns it on under a name for this computer, renames the computer when it is on, or turns it off. */
+            setEnabled: (enabled, name, err) => tauri.core.invoke('remote_set_enabled', { enabled: !!enabled, name: name ?? null }).catch(err ?? defaultErrHandler),
+            /** What an approved browser may do: view, work or commit. */
+            setLevel: (key, level, err) => tauri.core.invoke('remote_browser_level', { key, level }).catch(err ?? defaultErrHandler),
+            disconnect: (key, err) => tauri.core.invoke('remote_browser_disconnect', { key }).catch(err ?? defaultErrHandler),
+            /** Lets a browser that was refused ask to connect again. */
+            allow: (key, err) => tauri.core.invoke('remote_browser_allow', { key }).catch(err ?? defaultErrHandler),
+            /** Whether the computer is kept awake while Remote Connections is on. */
+            settings: (keepAwake, err) => tauri.core.invoke('remote_settings', { settings: { keepAwake: !!keepAwake } }).catch(err ?? defaultErrHandler),
+            /** The latest things browsers did, newest first: [{ at, browser, browserName, cmd, ok, error }]. */
+            log: (err) => tauri.core.invoke('remote_log').catch(err ?? defaultErrHandler),
+            /**
+             * These three also work from a connected browser, and resolve with { approved: [{ key, name, code, added,
+             * current }], waiting: [{ key, name, code, asked }] }. current marks the browser asking.
+             */
+            browsers: (err) => tauri.core.invoke('remote_browsers').catch(err ?? defaultErrHandler),
+            approve: (key, err) => tauri.core.invoke('remote_browser_approve', { key }).catch(err ?? defaultErrHandler),
+            remove: (key, err) => tauri.core.invoke('remote_browser_remove', { key }).catch(err ?? defaultErrHandler),
+            /** Calls back with { notice: { text, severity } or null } whenever what the panel shows changes. */
+            onChanged: (callback) => tauri.event.listen('remote-changed', event => callback(event.payload ?? {})),
+        }
         /** The Task Manager: the user's own processes, read only while it is open. */
         taskManager = {
             /** Lists processes, with the ports each listens on when `ports` is set, which takes longer to read. */
@@ -583,6 +631,16 @@
             if (!base) return undefined;
             return `${base}/${encodeURIComponent((filePath || '').replace(/\\/g, '/'))}`;
         }
+        /**
+         * An address for one of a saved project's images, from its path in that project, when the project isn't the
+         * open one. The file server serves only images that could be the project's icon from other projects.
+         */
+        async projectImageUrl(project, filePath, errHandler) {
+            const base = await this.fileServerBase(errHandler);
+            if (!base) return undefined;
+            const encode = path => encodeURIComponent((path || '').replace(/\\/g, '/'));
+            return `${base}/~project/${encode(project)}/${encode(filePath)}`;
+        }
         /** The start of every project file's address on the file server, which pages use to show the project's images. */
         async fileServerBase(errHandler) {
             errHandler ??= defaultErrHandler;
@@ -656,6 +714,8 @@
         }
         saveAppData(errHandler) {
             errHandler ??= defaultErrHandler;
+            // A remote browser sends its change, and the computer saves it with the rest.
+            if (remote) return this.syncAppData(errHandler);
             syncedCopy.app = copyOf(webui.taskProxyData);
             return tauri.core.invoke('save_app_data', { data: webui.taskProxyData }).catch(errHandler);
         }
@@ -668,6 +728,12 @@
         /** Saves the open project, or data, a project that is no longer open, without making it the open one. */
         saveProjectData(errHandler, data) {
             errHandler ??= defaultErrHandler;
+            // A remote browser sends changes to the open project, and the computer saves them with the rest.
+            if (remote) {
+                if (data && data !== webui.projectData) return Promise.resolve();
+                if (webui.projectData?.navigation) webui.setData('app-nav-routes', webui.projectData.navigation);
+                return this.syncProjectData(errHandler);
+            }
             if (data && data !== webui.projectData) {
                 if (!data.id) return;
                 return tauri.core.invoke('save_project_data', { data }).catch(errHandler);
@@ -1210,8 +1276,9 @@
         webui.watchAppDataChanges(queueAppDataChanges);
         // The theme and its adjusted colors (webui-theme-selector) are session data, which the loader keeps in the
         // browser only while it may store data, so they are saved with the app's data too, and restored from it above.
+        // A remote browser's theme is its own, so it never replaces the computer's.
         webui.watchSessionDataChanges((changes, sessionData) => {
-            if (!savedSessionKeys.includes(changes.property)) return;
+            if (remote || !savedSessionKeys.includes(changes.property)) return;
             const value = sessionData[changes.property];
             if (same(value, webui.taskProxyData.data[changes.property])) return;
             if (value === undefined) delete webui.taskProxyData.data[changes.property];
@@ -1241,13 +1308,15 @@
     }
     async function queueAppDataChanges(changes, appData) {
         handleChanges(changes);
-        handleUpdatedAppData(appData);
+        handleUpdatedAppData(appData, changes);
     }
     async function handleChanges(changes) {
         switch (changes.property) {
             case 'page-path':
                 // A project reload passes through this page on its way back, and it is never a page to reopen on.
                 if (changes.newValue === '/_reloading') break;
+                // A remote browser's page is its own, and it must not move the computer's.
+                if (remote) break;
                 let project = webui.getData('app-current-project');
                 webui.projectData.currentPage = changes.newValue == '/root' ? '/' : changes.newValue;
                 webui.proxy.syncProjectData();
@@ -1305,8 +1374,9 @@
             // Plugins' settings belong to projects, so their pages and notifications change with the project.
             refreshPluginNav();
             webui.setData('app-nav-routes', webui.projectData.navigation);
-            // A device opens the route the frame restored the first time, and a project's home after that.
-            let startPage = webui.projectData.currentPage || '/';
+            // A remote browser opens the route the frame restored the first time, and a project's home after that.
+            let startPage = remote ? (remoteStartPage || '/') : (webui.projectData.currentPage || '/');
+            remoteStartPage = null;
             setTimeout(() => {
                 handlePagePath(startPage, true);
             }, 300);
@@ -1318,10 +1388,16 @@
             hideLoading();
         }
     }
-    async function handleUpdatedAppData(appData) {
+    async function handleUpdatedAppData(appData, changes) {
         let myId = webui.uuid();
         let oldId = queueId;
         queueId = myId;
+        // A cleared value, such as the current project after it is removed, is gone from appData, so copying what is
+        // there would keep the old one, and the app would reopen it on its next start.
+        const cleared = changes?.property;
+        if (cleared && (cleared.startsWith('app-') || cleared.startsWith('session-')) && (appData[cleared] === undefined || appData[cleared] === null)) {
+            delete webui.taskProxyData.data[cleared];
+        }
         Object.keys(appData).forEach((key) => {
             if (
                 key.startsWith("app-") ||

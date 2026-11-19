@@ -30,6 +30,10 @@ pub(crate) async fn background_tasks(app_handle: AppHandle) {
         // --- Perform the save ---
         println!("Periodic save: Checking for data changes...");
 
+        if let Err(err) = crate::remote::save_log(&app_handle).await {
+            eprintln!("{}", err);
+        }
+
         if let Ok(data) = get_state_data::<TaskProxyData>(&app_handle)
             && let Ok(current_json) = crate::common::to_json(&data)
             && current_json != last_app_data_json

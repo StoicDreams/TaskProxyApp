@@ -162,6 +162,18 @@ Wrappers usually take an optional `errHandler` (default: `webui.alert`) and reso
 
 Commits run in Rust as jobs (`services/commit_queue.rs`): the Run Before Commit script through `runs.rs`, then the commit, then a sync when asked, so a commit finishes whatever happens to the window. `git_commit` is called from there, not from the window. The Git Controller sends `commit_enqueue` and shows each job from `commit-jobs-changed`. In the mock backend, jobs record their git steps as `get_git_changes`, `git_commit` and `git_sync` calls.
 
+### Remote Connections
+
+`src-tauri/src/remote/` lets a browser on www.taskproxy.com, signed in to the same MyFi account, use this computer's Task Proxy over WebRTC (`str0m`). The contract with the website is the Remote Connections Protocol page in the Api repository (`Apis/Api/.taskproxy/pages/b7d24e90-5c3a-4f16-8a2b-e1d09c6f3a75.md`): change it first, then both sides. This repo's "Remote Connections in Task Proxy" page (`.taskproxy/pages/`) says how the app does it.
+
+- **api.myfi.ws only passes one signed offer and one signed answer** (`signal.rs`, `keys.rs`: ECDSA P-256, raw 65-byte keys and 64-byte signatures in unpadded base64url). The computer's key and its approved browsers are kept only here, in `remote-connections.enc` (`browsers.rs`). Never send either list or the private key anywhere.
+- **`webrtc.rs` reaches the app only through its `Hooks` trait,** so its tests need no window. Each socket asks the STUN server once (`stun.rs`). Frames are 1 flag byte and up to 16,383 bytes, and a frame the data channel has no room for is kept and tried again, never dropped.
+- **Every command in `generate_handler!` must be in `remote_commands!` in `dispatch.rs`, with its level, or in `DESKTOP_ONLY`,** and the test that reads `lib.rs` fails otherwise. A remote command must also be placed in `REDACTED` or `NO_VALUES` in that file's tests, after checking whether it returns variable values.
+- **Send events with `remote::hub::broadcast`, not `app.emit`,** so browsers get them. An event carrying variable values uses `broadcast_redacted`, as `data-changed` does.
+- **Secrets stay on the computer** (`services/secrets.rs`): a browser gets `{"$secret": true}` in place of each secret value, and a patch carrying that marker keeps the real value.
+- **A browser runs this app in the website's frame,** whose files come from the computer through `remote_app_file`. There `window.__taskProxyRemote` is `{deviceName, desktopName}` and `webui.proxy.remote` gives it. Code that saves, starts on a page, opens links, or asks to stay on the page checks it. A command the app calls as it starts must work at View level.
+- **The Settings panel's commands (`remote_*` in `service.rs`) are desktop-only,** except `remote_browsers`, `remote_browser_approve` and `remote_browser_remove`, which every approved browser may run.
+
 ### Plugins
 
 Plugins such as Jira are WebAssembly in the separate TaskProxyPlugins repo (`../TaskProxyPlugins`), run by `src-tauri/src/plugins/` with Extism, and drawn by `wc/plugin-page.js`. `Docs/Plugins.md` covers the permission model, the catalog, and signing.

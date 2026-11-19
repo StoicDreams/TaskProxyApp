@@ -7,7 +7,7 @@ const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAY
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
 // The images, served by the mock's file server, so the tiles can show them.
 const imageFiles = { files: { 'assets/logo.svg': SVG, 'docs/logo.svg': SVG }, binaryFiles: { 'img/banner.png': PNG } };
-const picker = page => page.locator('app-project-icon webui-select');
+const picker = page => page.locator('app-project-manager app-project-icon webui-select');
 // The field shows only the chosen icon, whose name is its label.
 const chosen = page => picker(page).locator('.pick-picture');
 const tile = (page, name) => picker(page).getByRole('option', { name, exact: true });
@@ -18,7 +18,7 @@ const dropdownIcon = (page, path) => page.locator('app-project-dropdown webui-se
 test("Settings lists the project's images to choose its icon from, with the one it uses chosen", async ({ page }) => {
     await openApp(page, { ...imageFiles, projectImages: IMAGES, projectIcons: { '/repo': 'img/banner.png' } });
     // In the Current project heading, between its label and the project's name, showing only the icon.
-    await expect(page.locator('app-project-manager h3.current-project > app-project-icon + .project-name')).toHaveCount(1);
+    await expect(page.locator('app-project-manager h3.current-project > app-project-icon + app-project-name')).toHaveCount(1);
     await expect(picker(page).locator('.pick-name')).toHaveCount(0);
     await expect(picker(page)).toHaveAttribute('title', /\.taskproxy\/Project\.json/);
     await expect(chosen(page)).toHaveAttribute('aria-label', 'banner.png');
@@ -36,7 +36,7 @@ test("choosing an image saves it as the project's icon, and the project dropdown
     await expect(dropdownIcon(page, 'assets/logo.svg')).toHaveCount(0);
     await picker(page).getByRole('button').click();
     await tile(page, 'assets/logo.svg').click();
-    await expect.poll(() => calls(page, 'set_project_icon')).toEqual([{ icon: 'assets/logo.svg' }]);
+    await expect.poll(() => calls(page, 'set_project_icon')).toEqual([{ icon: 'assets/logo.svg', project: null }]);
     await expect(chosen(page)).toHaveAttribute('aria-label', 'assets/logo.svg');
     await expect(dropdownIcon(page, 'assets/logo.svg')).toHaveCount(1);
 });
@@ -46,7 +46,7 @@ test('No icon clears it', async ({ page }) => {
     await expect(dropdownIcon(page, 'img/banner.png')).toHaveCount(1);
     await picker(page).getByRole('button').click();
     await tile(page, 'No icon').click();
-    await expect.poll(() => calls(page, 'set_project_icon')).toEqual([{ icon: null }]);
+    await expect.poll(() => calls(page, 'set_project_icon')).toEqual([{ icon: null, project: null }]);
     await expect(dropdownIcon(page, 'img/banner.png')).toHaveCount(0);
 });
 

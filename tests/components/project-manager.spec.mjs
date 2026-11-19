@@ -1,8 +1,8 @@
-import { test, expect, openApp, mount, calls, dialogButton, openDialog } from '../support/app.mjs';
+import { test, expect, openApp, mount, calls } from '../support/app.mjs';
 import { alertPopup } from '../support/wait.mjs';
 
 // The current project in Settings (wc/project-manager.js): its icon and name in the heading, renamed in place by
-// clicking the name, and removed from Task Proxy.
+// clicking the name. Removing it is in project-remove.spec.mjs.
 async function manager(page, project = { name: 'Repo', path: '/repo' }) {
     await openApp(page, { project });
     const root = await mount(page, '<app-project-manager id="m"></app-project-manager>');
@@ -26,9 +26,10 @@ test('the heading shows the project name, with an edit icon, after its label and
     await expect(nameButton(el)).toHaveText('Repo');
     await expect(nameButton(el).locator('webui-icon')).toHaveAttribute('icon', 'pencil');
     await expect(nameButton(el)).toHaveAttribute('title', 'Rename the project');
-    await expect(el.locator('h3.current-project > app-project-icon + .project-name')).toHaveCount(1);
+    await expect(el.locator('h3.current-project > app-project-icon + app-project-name')).toHaveCount(1);
     // No Edit Name button: the name itself starts renaming.
     await expect(el.locator('webui-button', { hasText: 'Edit Name' })).toHaveCount(0);
+    await expect(el.locator('#btn-remove')).toHaveCount(0);
     await expect(el.locator('.project-rename')).toBeHidden();
 });
 test('clicking the edit icon starts renaming too', async ({ page }) => {
@@ -97,15 +98,6 @@ test('saving the same name closes the field without renaming', async ({ page }) 
     await expect(el.locator('.project-rename')).toBeHidden();
     await expect.poll(() => calls(page, 'rename_project')).toEqual([]);
 });
-test('removing asks first, then clears the current project', async ({ page }) => {
-    const el = await manager(page);
-    await el.locator('#btn-remove').click();
-    await expect(dialogButton(page, 'Remove')).toBeVisible();
-    await expect.poll(() => calls(page, 'remove_project')).toEqual([]);
-    await dialogButton(page, 'Remove').click();
-    await expect.poll(async () => (await calls(page, 'remove_project')).length).toBe(1);
-    await expect.poll(async () => (await calls(page, 'clear_current_project')).length).toBe(1);
-});
 test('a name with special characters shows as written', async ({ page }) => {
     const el = await manager(page, { name: 'Tom & "Co"', path: '/repo' });
     await expect(nameButton(el)).toHaveText('Tom & "Co"');
@@ -116,17 +108,10 @@ test('markup in a project name does not run', async ({ page }) => {
     const el = await manager(page, { name, path: '/repo' });
     await expect(nameButton(el)).toHaveText(name);
     await expect(nameButton(el).locator('img')).toHaveCount(0);
-    await el.locator('#btn-remove').click();
-    // The name is shown as it was written, so it was not read as markup.
-    await expect(openDialog(page).locator('strong')).toHaveText(name);
-    await expect(openDialog(page).locator('img')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
-test('with no project, there is no name to edit, and removing says so', async ({ page }) => {
+test('with no project, there is no name to edit', async ({ page }) => {
     await openApp(page, { project: null });
     const root = await mount(page, '<app-project-manager id="m"></app-project-manager>');
     await expect(root.locator('#m .current-project')).toBeHidden();
-    await root.locator('#btn-remove').click();
-    await expect(alertPopup(page, 'No project is currently selected.')).toHaveCount(1);
-    await expect(openDialog(page)).toHaveCount(0);
 });

@@ -1,7 +1,7 @@
 import { test, expect, openApp } from '../support/app.mjs';
 
 test('links show only with a project open', async ({ page }) => {
-    await openApp(page, { projects: [] });
+    await openApp(page);
     await expect(page.locator('app-project-links')).toBeVisible();
     await page.evaluate(() => webui.setData('app-current-project', null));
     await expect(page.locator('app-project-links')).toBeHidden();

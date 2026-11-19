@@ -260,6 +260,9 @@ pub(crate) struct MyFiApi {
     base: String,
     client: reqwest::Client,
     cookies: Arc<ApiCookies>,
+    /// The cookies as they were last saved, so a client that lives on, as Remote Connections' does, saves them
+    /// again only when the API changed them.
+    kept: Mutex<Vec<String>>,
 }
 
 impl MyFiApi {
@@ -279,6 +282,7 @@ impl MyFiApi {
             let _ = rustls::crypto::ring::default_provider().install_default();
         }
         let cookies = Arc::new(cookies);
+        let kept = Mutex::new(cookies.saved());
         let client = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(15))
@@ -289,7 +293,20 @@ impl MyFiApi {
             base: base.trim_end_matches('/').to_string(),
             client,
             cookies,
+            kept,
         })
+    }
+
+    /// The cookies to save, when the API changed them since they were last saved. Cookies the API ended are not
+    /// saved over a sign-in: signing out forgets them.
+    pub(crate) fn changed_cookies(&self) -> Option<Vec<String>> {
+        let now = self.cookies.saved();
+        let mut kept = self.kept.lock().ok()?;
+        if now.is_empty() || *kept == now {
+            return None;
+        }
+        *kept = now.clone();
+        Some(now)
     }
 
     /// The cookies to save, so the next start is still signed in.
@@ -458,6 +475,27 @@ pub(crate) fn api() -> Result<MyFiApi, String> {
     MyFiApi::new(API)
 }
 
+/// api.myfi.ws with the cookies saved at sign-in, or None when the app is signed out.
+pub(crate) async fn signed_in_api() -> Option<MyFiApi> {
+    let stored = read_stored().await?;
+    if stored.cookies.is_empty() {
+        return None;
+    }
+    MyFiApi::signed_in(API, &stored.cookies).ok()
+}
+
+/// Saves the cookies `api` holds when the API renewed them, so the next start is still signed in. Nothing is
+/// saved once the app has signed out.
+pub(crate) async fn keep_cookies(api: &MyFiApi) {
+    let Some(cookies) = api.changed_cookies() else {
+        return;
+    };
+    if let Some(mut stored) = read_stored().await {
+        stored.cookies = cookies;
+        let _ = write_stored(stored).await;
+    }
+}
+
 /// The signed-in account, or None when signed out. A session the API no longer accepts is forgotten.
 #[tauri::command]
 pub(crate) async fn myfi_account() -> Result<Option<MyFiStatus>, String> {
@@ -539,9 +577,11 @@ pub(crate) async fn myfi_sign_in_cancel() -> Result<(), String> {
     SIGN_INS.cancel()
 }
 
-/// Ends the session with the API, when it can be reached, and forgets the cookies here either way.
+/// Ends the session with the API, when it can be reached, and forgets the cookies here either way. Signing out
+/// removes this computer from the account's Remote Connections, so that turns off first.
 #[tauri::command]
-pub(crate) async fn myfi_sign_out() -> Result<(), String> {
+pub(crate) async fn myfi_sign_out(app: AppHandle) -> Result<(), String> {
+    crate::remote::service::signed_out(&app).await;
     if let Some(stored) = read_stored().await
         && let Ok(api) = MyFiApi::signed_in(API, &stored.cookies)
     {
@@ -807,6 +847,31 @@ pub(crate) mod tests {
         assert_eq!(request.line, "POST /user/signout HTTP/1.1");
         assert_eq!(request.headers["cookie"], "__Host-myfi-session=token-1");
         assert!(api.saved_cookies().is_empty());
+    }
+
+    #[tokio::test]
+    async fn renewed_cookies_are_given_to_save_once_and_ended_ones_never() {
+        let (base, _received) = fake_api(vec![
+            Answer::from((200, "{}")),
+            Answer::from((
+                200,
+                "{}",
+                "__Host-myfi-session=token-2; Path=/; Secure; HttpOnly; Max-Age=1800",
+            )),
+            Answer::from((200, "", "__Host-myfi-session=gone; Max-Age=0")),
+        ]);
+        let api =
+            MyFiApi::signed_in(&base, &[String::from("__Host-myfi-session=token-1")]).unwrap();
+        api.send(reqwest::Method::GET, "x", None).await.unwrap();
+        assert_eq!(api.changed_cookies(), None, "nothing changed");
+        api.send(reqwest::Method::GET, "x", None).await.unwrap();
+        assert_eq!(
+            api.changed_cookies(),
+            Some(vec![String::from("__Host-myfi-session=token-2")])
+        );
+        assert_eq!(api.changed_cookies(), None, "saved once");
+        api.send(reqwest::Method::GET, "x", None).await.unwrap();
+        assert_eq!(api.changed_cookies(), None, "ended cookies are not saved");
     }
 
     #[tokio::test]

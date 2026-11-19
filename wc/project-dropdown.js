@@ -1,9 +1,14 @@
 "use strict"
 {
+    /** Paths as Rust compares them: either slash, and any case. */
+    const samePath = (a, b) => `${a}`.replace(/\\/g, '/').toLowerCase() === `${b}`.replace(/\\/g, '/').toLowerCase();
     async function loadProjects() {
         await whenProxyReady();
         let projects = await webui.proxy.getProjects() || [];
         webui.setData('app-projects', projects);
+        // A current project saved before the last project was removed is never kept open. Only the backend's own
+        // list says there are none, so this is checked here rather than whenever the list changes.
+        if (projects.length === 0 && webui.getData('app-current-project')) webui.setData('app-current-project', null);
     }
     // Other projects' files change outside the app, so their counts are checked on a timer as well.
     const changeCheckInterval = 30000;
@@ -162,10 +167,12 @@
                 }
                 setTimeout(() => {
                     let value = webui.getData('app-current-project');
-                    if (!value) {
+                    const listed = value?.value && t._projects.find(item => samePath(item.path, value.value));
+                    // A saved project that was removed, or one whose saved choice outlived it, is never kept open.
+                    if (!listed) {
                         webui.setData('app-current-project', { value: dp[0].value, display: dp[0].display });
-                    } else if (value.value && t._dropdown.value !== value.value) {
-                        t._dropdown.value = value.value;
+                    } else if (t._dropdown.value !== listed.path) {
+                        t._dropdown.value = listed.path;
                     }
                 }, 100);
             }

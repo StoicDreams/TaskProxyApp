@@ -18,10 +18,12 @@
  * - git.ciStatus: { repo: { state, service, url } } for the open project, which get_git_repo_ci_status returns.
  * - folderImport: the pages import_page_folder makes, as [{ name, content }] (default one page), and importSkipped
  *   the files it reports leaving out. fileImports: { path: segments } for what import_page_file returns.
+ * - projectImagesByPath: { path: [images] } for saved projects that aren't open, as get_project_images lists them.
  * - projectFiles: what search_project_files returns. With holdSearch set, each search waits until the test calls
  *   window.__backend.releaseSearch(), so a test decides when a slow search arrives.
  * - git: { repos, changes, lineStats, branches, currentBranch, status, diffs }.
  * - hasKey: whether a security key exists. Defaults to true.
+ * - pickedFolder, pickedFolders: what the folder dialog picks when adding projects. Default '/picked' and ['/one'].
  * - newInstall: leave out the saved settings an existing install has.
  * - interactive: whether scripts start in a terminal that takes input. Defaults to true.
  *   Script runs are kept as services/runs.rs keeps them, with the queue and output. Each script that starts is
@@ -51,6 +53,11 @@
  * - myfi: { account } for the MyFi account the app is signed in to, as { id, displayName, offline }, or leave
  *   it out for signed out. myfi_sign_in_wait waits until a test calls window.__backend.myfi.approve(account) or
  *   .end(reason), or the app cancels. myfiStartError: why myfi_sign_in_start fails, when it should.
+ * - remote: Remote Connections as remote/service.rs keeps it: { enabled, name, approved: [{ key, name, code, added,
+ *   level, connected, route }], waiting: [{ key, name, code, asked }], refused, log, reachability, enableError,
+ *   keepAwake, awakeError, current }. Turning it on needs a MyFi account. current is the key of the browser asking,
+ *   for a test that runs the app as a remote browser. window.__backend.remote.ask(browser) adds a waiting browser, as
+ *   one asking to connect would, and .changed(notice) sends remote-changed.
  *
  * Page scripts are filled as services/page_scripts.rs fills them, from the page values the window sends, then the
  * backend's copies of the project's and global values. run_page_script refuses a project that appData does not trust.
@@ -331,6 +338,51 @@ function setup(state) {
         entry.info.interactive = true;
         if ('code' in run) Object.assign(entry.info, { status: 'Finished', exitCode: run.code, endedAt: Date.now() });
     }
+    const remote = {
+        enabled: !!state.remote?.enabled,
+        name: state.remote?.name ?? 'Desk PC',
+        approved: (state.remote?.approved || []).map(browser => ({ added: 1, level: 'view', connected: false, route: null, ...browser })),
+        waiting: (state.remote?.waiting || []).map(browser => ({ asked: 1, ...browser })),
+        refused: state.remote?.refused || [],
+        log: state.remote?.log || [],
+        keepAwake: state.remote?.keepAwake ?? true,
+        awakeError: state.remote?.awakeError ?? null,
+        reachability: state.remote?.reachability || { reachable: !!state.remote?.enabled, error: null },
+        status() {
+            return {
+                enabled: this.enabled,
+                name: this.name,
+                desktopId: this.enabled ? 'b1c2d3e4-0000-4000-8000-000000000001' : null,
+                reachability: this.reachability,
+                approved: this.approved.map(browser => ({ ...browser })),
+                waiting: this.waiting.map(browser => ({ ...browser })),
+                refused: this.refused.map(browser => ({ ...browser })),
+                keepAwake: this.keepAwake,
+                awake: this.enabled && this.keepAwake && !this.awakeError,
+                awakeError: this.enabled && this.keepAwake ? this.awakeError : null,
+            };
+        },
+        /** The lists as remote_browsers gives them. */
+        lists() {
+            return {
+                approved: this.approved.map(({ key, name, code, added }) => ({ key, name, code, added, current: key === state.remote?.current })),
+                waiting: this.waiting.map(({ key, name, code, asked }) => ({ key, name, code, asked })),
+            };
+        },
+        changed(notice) {
+            emitEvent('remote-changed', { notice: notice || null });
+        },
+        /** A browser asks to connect, as one would through api.myfi.ws. */
+        ask(browser) {
+            this.waiting.push({ asked: Date.now(), ...browser });
+            this.changed({ text: `${browser.name} is asking to connect to this computer. Check its code in Settings, under Remote Connections.`, severity: 'info' });
+        },
+        approved_one(key) {
+            const browser = this.approved.find(browser => browser.key === key);
+            if (!browser) throw 'No such browser.';
+            return browser;
+        },
+    };
     const myfi = {
         account: state.myfi?.account ? { offline: false, ...state.myfi.account } : null,
         waiting: null,
@@ -416,6 +468,7 @@ function setup(state) {
             emitEvent('data-changed', { scope, id: scope === 'app' ? '' : openProject.id, rev: ++dataRev, screen: 'other-screen', set: {}, remove: [], fields: {}, ...patch });
         },
         myfi,
+        remote,
         runs,
         commits,
         /** Lets searches held by the state's holdSearch answer, now and from now on. */
@@ -448,17 +501,24 @@ function setup(state) {
             },
             get_version: () => '1.2.3',
             has_securitykey: () => state.hasKey !== false,
-            set_securitykey: () => 'Security Key Saved!',
-            delete_securitykey: () => 'Security Key Deleted!',
+            set_securitykey: () => { state.hasKey = true; return 'Security Key Saved!'; },
+            delete_securitykey: () => { state.hasKey = false; return 'Security Key Deleted!'; },
             save_app_data: ({ data } = {}) => { if (data) appData = copy(data); return 'app data saved'; },
             // Project icons (services/project_icons.rs). projectIcons: { [path]: icon path }, projectImages: the open
             // project's images. An icon is sent back as a data URI made from its path.
             get_project_icons: () => (state.projects || (project ? [project] : [])).map(item => ({ path: item.path, icon: iconUri(projectIcons[item.path]) })),
-            get_project_images: () => ({ images: state.projectImages || [], icon: projectIcons[openProject?.path] ?? null }),
-            set_project_icon: ({ icon }) => {
-                if (icon && !(state.projectImages || []).includes(icon)) throw `The project has no file '${icon}'.`;
-                if (icon) projectIcons[openProject.path] = icon;
-                else delete projectIcons[openProject.path];
+            // A saved project named by `project` has its images in projectImagesByPath; the open project's are projectImages.
+            get_project_images: ({ project: path } = {}) => {
+                const target = path ?? openProject?.path;
+                const images = path ? (state.projectImagesByPath?.[path] || []) : (state.projectImages || []);
+                return { images, icon: projectIcons[target] ?? null };
+            },
+            set_project_icon: ({ icon, project: path }) => {
+                const target = path ?? openProject.path;
+                const images = path ? (state.projectImagesByPath?.[path] || []) : (state.projectImages || []);
+                if (icon && !images.includes(icon)) throw `The project has no file '${icon}'.`;
+                if (icon) projectIcons[target] = icon;
+                else delete projectIcons[target];
                 return iconUri(icon);
             },
             load_projects: () => state.projects || (project ? [project] : []),
@@ -474,9 +534,35 @@ function setup(state) {
             clear_current_project: () => { openProject = null; return 'Project closed'; },
             reload_project_files: () => projectData,
             rename_project: () => 'Project Successfully Renamed',
-            remove_project: () => 'Project Successfully Removed',
-            add_project: () => 'Project Successfully Added',
-            add_projects_multi: () => ['Added \'one\''],
+            remove_project: ({ path }) => {
+                const known = state.projects || (project ? [project] : []);
+                const kept = known.filter(item => item.path.toLowerCase() !== `${path}`.replace(/\\/g, '/').toLowerCase());
+                if (kept.length === known.length) throw 'Project not found.';
+                state.projects = kept;
+                return 'Project Successfully Removed';
+            },
+            // The folder dialog picks pickedFolder ('/picked' unless set), or pickedFolders for several.
+            add_project: ({ name }) => {
+                const path = state.pickedFolder || '/picked';
+                const known = state.projects || (project ? [project] : []);
+                const named = `${name || ''}`.trim() || path.split('/').filter(Boolean).pop();
+                if (!named) throw 'Could not determine project name from folder.';
+                if (known.some(item => item.path.toLowerCase() === path.toLowerCase())) throw 'The selected folder is already used by an existing project.';
+                if (known.some(item => item.name.toLowerCase() === named.toLowerCase())) throw 'A project with this name already exists. Please choose a different name or folder.';
+                state.projects = [...known, { name: named, path }].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+                return 'Project Successfully Added';
+            },
+            add_projects_multi: () => {
+                const known = state.projects || (project ? [project] : []);
+                const results = [];
+                (state.pickedFolders || ['/one']).forEach(path => {
+                    const named = path.split('/').filter(Boolean).pop();
+                    if (known.some(item => item.path.toLowerCase() === path.toLowerCase())) results.push(`Skipped '${named}': Folder already used.`);
+                    else { known.push({ name: named, path }); results.push(`Added '${named}'`); }
+                });
+                state.projects = [...known].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+                return results;
+            },
             get_project_file: ({ filePath }) => {
                 if (filePath in binaryFiles) throw 'Failed to load file: stream did not contain valid UTF-8';
                 if (filePath in files) return files[filePath];
@@ -769,7 +855,60 @@ function setup(state) {
             },
             myfi_sign_out: () => {
                 myfi.account = null;
+                Object.assign(remote, { enabled: false, waiting: [] });
+                remote.approved.forEach(browser => browser.connected = false);
                 return null;
+            },
+            remote_status: () => remote.status(),
+            remote_set_enabled: ({ enabled, name }) => {
+                if (enabled && !myfi.account) throw 'Sign in to your Stoic Dreams account first, from the account button at the top.';
+                if (enabled && !`${name ?? ''}`.trim()) throw 'Name this computer in 1 to 100 characters.';
+                if (enabled && state.remote?.enableError) throw state.remote.enableError;
+                remote.enabled = enabled;
+                if (enabled) remote.name = name.trim();
+                remote.reachability = { reachable: enabled, error: null };
+                if (!enabled) {
+                    remote.waiting = [];
+                    remote.approved.forEach(browser => browser.connected = false);
+                }
+                return remote.status();
+            },
+            remote_browsers: () => remote.lists(),
+            remote_browser_approve: ({ key }) => {
+                const browser = remote.waiting.find(browser => browser.key === key);
+                if (!browser) throw 'That browser is no longer waiting. Ask it to connect again.';
+                remote.waiting = remote.waiting.filter(browser => browser.key !== key);
+                remote.approved.push({ key, name: browser.name, code: browser.code, added: Date.now(), level: 'view', connected: false, route: null });
+                return remote.lists();
+            },
+            remote_browser_remove: ({ key }) => {
+                const waiting = remote.waiting.find(browser => browser.key === key);
+                if (waiting) {
+                    remote.waiting = remote.waiting.filter(browser => browser.key !== key);
+                    remote.refused.push({ key, name: waiting.name, code: waiting.code, refused: Date.now() });
+                } else {
+                    remote.approved_one(key);
+                    remote.approved = remote.approved.filter(browser => browser.key !== key);
+                }
+                return remote.lists();
+            },
+            remote_browser_allow: ({ key }) => {
+                if (!remote.refused.some(browser => browser.key === key)) throw 'No such browser.';
+                remote.refused = remote.refused.filter(browser => browser.key !== key);
+                return remote.status();
+            },
+            remote_browser_level: ({ key, level }) => {
+                remote.approved_one(key).level = level;
+                return remote.status();
+            },
+            remote_browser_disconnect: ({ key }) => {
+                remote.approved_one(key).connected = false;
+                return remote.status();
+            },
+            remote_log: () => remote.log,
+            remote_settings: ({ settings }) => {
+                remote.keepAwake = settings.keepAwake;
+                return remote.status();
             },
             plugin_host_action: ({ action }) => action.type === 'git.createBranch' ? `Branch '${action.name}' created.` : '',
         },

@@ -860,16 +860,17 @@ app-project-manager .current-project {
 }
 
 app-project-manager .current-project[hidden],
-app-project-manager .project-name[hidden],
-app-project-manager .project-rename[hidden] {
+app-project-name .project-name[hidden],
+app-project-name .project-rename[hidden] {
     display: none;
 }
 
-app-project-manager app-project-icon {
+app-project-manager app-project-icon,
+app-projects-report app-project-icon {
     display: inline-flex;
 }
 
-app-project-manager .project-name {
+app-project-name .project-name {
     display: inline-flex;
     align-items: center;
     gap: 0.4em;
@@ -883,23 +884,30 @@ app-project-manager .project-name {
     cursor: pointer;
 }
 
-app-project-manager .project-name:hover {
+app-project-name .project-name:hover {
     border-color: color-mix(in srgb, currentColor 35%, transparent);
     background-color: color-mix(in srgb, currentColor 8%, transparent);
 }
 
-app-project-manager .project-name:focus-visible {
+app-project-name .project-name:focus-visible {
     outline: var(--focus-outline, 2px solid currentColor);
     outline-offset: var(--focus-offset, 2px);
 }
 
-app-project-manager .project-name webui-icon {
+app-project-name .project-name webui-icon {
     font-size: 0.75em;
     opacity: 0.75;
 }
 
-/* The rename field and its buttons read as a form, not as the heading. */
-app-project-manager .project-rename {
+/* A project's name, which renames it when clicked (wc/project-name.js). Its field and buttons read as a form. */
+app-project-name {
+    display: inline-flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+app-project-name .project-rename {
     display: inline-flex;
     flex: 1 1 24em;
     flex-wrap: wrap;
@@ -910,16 +918,45 @@ app-project-manager .project-rename {
 }
 
 /* The field takes the room left beside the buttons, and they wrap below it only when there is too little. */
-app-project-manager .project-rename webui-input-text {
+app-project-name .project-rename webui-input-text {
     flex: 1 1 10em;
     width: auto;
     min-width: 8em;
 }
 
-app-project-manager .project-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--padding);
+/* Settings' project list (wc/projects-report.js): each project's icon, name, and git status. */
+app-projects-report {
+    display: block;
+}
+
+app-projects-report [hidden] {
+    display: none !important;
+}
+
+app-projects-report .projects-report {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+app-projects-report .projects-report th {
+    text-align: start;
+    font-weight: normal;
+    opacity: 0.75;
+}
+
+app-projects-report .projects-report th,
+app-projects-report .projects-report td {
+    padding: 0.35em 0.5em;
+    vertical-align: middle;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+app-projects-report .project-icon-cell {
+    width: 1%;
+}
+
+app-projects-report .git-clean {
+    opacity: 0.7;
 }
 
 /* Settings' page import (wc/page-import.js). Web UI components set their own display, which would override hidden. */

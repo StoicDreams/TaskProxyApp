@@ -283,7 +283,11 @@ function serveProjectFiles(page, state) {
     page.__fileRequests = [];
     return page.route('http://files.localhost/token/**', route => {
         const request = route.request();
-        const path = decodeURIComponent(new URL(request.url()).pathname.replace('/token/', ''));
+        // A saved project that isn't open has its images at ~project/<project>/<file>, as file_server.rs serves them.
+        // The mock's files stand for every project's.
+        const raw = new URL(request.url()).pathname.replace('/token/', '');
+        const other = raw.match(/^~project\/[^/]+\/(.+)$/);
+        const path = decodeURIComponent(other ? other[1] : raw);
         const range = request.headers().range;
         page.__fileRequests.push({ path, range });
         const binary = state.binaryFiles?.[path];

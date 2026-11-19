@@ -147,6 +147,18 @@
         webui.alert('Imported the file into this page.', 'success');
         return true;
     }
+    /** Copies the page's markdown file as it is saved, not the segments being edited. */
+    async function copyPageFile() {
+        const file = myFile;
+        if (!file) return;
+        let error = null;
+        const md = await webui.proxy.getProjectFile(file, err => { error = `${err}`; });
+        if (error && !error.includes('File not found')) {
+            webui.alert(`This page's file could not be read. ${error}`, 'danger');
+            return;
+        }
+        if (await webui.proxy.copyText(md || '')) webui.alert("Copied this page's markdown.", 'success');
+    }
     function setupBar(isEnd) {
         let wrap = webui.create('webui-flex', { column: true, gap: 0 });
         let bar = webui.create('webui-flex', { justify: 'right' });
@@ -197,6 +209,11 @@
             });
             btnImport.addEventListener('click', () => openImport());
             bar.appendChild(btnImport);
+            let btnCopy = webui.create('webui-button', {
+                html: 'Copy', title: "Copy this page's markdown file", 'start-icon': 'copy', theme: 'secondary', class: 'page-copy'
+            });
+            btnCopy.addEventListener('click', () => copyPageFile());
+            bar.appendChild(btnCopy);
         }
         bar.appendChild(webui.create('webui-flex', { 'grow': true }));
         bar.appendChild(btnSave);

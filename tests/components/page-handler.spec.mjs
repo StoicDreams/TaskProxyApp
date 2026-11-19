@@ -481,3 +481,28 @@ test.describe('importing a markdown file', () => {
         await expect(openDialog(page)).toHaveCount(0);
     });
 });
+
+test.describe('copying the page', () => {
+    const copyButton = page => page.locator('app-page-handler webui-button.page-copy');
+    const clipboard = page => page.evaluate(() => window.__backend.clipboard);
+
+    test("copies the page's markdown file as it is saved, not what is being edited", async ({ page }) => {
+        const md = '<webui-data data-page-title="T" data-page-subtitle=""></webui-data>\n\n# Saved\n\nBody';
+        await openPage(page, md);
+        const segment = page.locator('app-page-handler > app-markdown-segment').nth(1);
+        await segment.locator('#btn-edit').click();
+        await segment.locator('webui-input-message textarea').fill('Not saved yet');
+        await copyButton(page).click();
+        await expect(alertPopup(page, "Copied this page's markdown.")).toHaveCount(1);
+        await expect.poll(() => clipboard(page)).toEqual({ text: md });
+        await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
+    });
+
+    test('a file that cannot be read says why, and copies nothing', async ({ page }) => {
+        await openPage(page, '# Existing');
+        await page.evaluate(() => { window.__backend.handlers.get_project_file = () => { throw 'Failed to load file: denied'; }; });
+        await copyButton(page).click();
+        await expect(alertPopup(page, "This page's file could not be read. Failed to load file: denied")).toHaveCount(1);
+        await expect.poll(() => clipboard(page)).toBeUndefined();
+    });
+});

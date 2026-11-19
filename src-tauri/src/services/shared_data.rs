@@ -6,6 +6,7 @@
 //! it ignores its own. Which keys each screen keeps for itself, such as the page it shows, is decided in `app.js`.
 
 use crate::prelude::*;
+use crate::services::secrets;
 use serde_json::Map;
 use std::sync::atomic::AtomicU64;
 
@@ -83,9 +84,14 @@ pub(crate) fn apply_patch<T: Serialize + DeserializeOwned>(
     let object = value
         .as_object_mut()
         .ok_or_else(|| String::from("Data is not an object."))?;
+    // A device sends back the marker for a secret it was shown, which keeps the real value.
     for (key, field) in &patch.fields {
-        if key != "data" && !fixed.contains(&key.as_str()) && object.contains_key(key) {
-            object.insert(key.clone(), field.clone());
+        if key != "data"
+            && !fixed.contains(&key.as_str())
+            && object.contains_key(key)
+            && let Some(field) = secrets::restore_markers(field, object.get(key))
+        {
+            object.insert(key.clone(), field);
         }
     }
     let data = object
@@ -96,16 +102,27 @@ pub(crate) fn apply_patch<T: Serialize + DeserializeOwned>(
         data.remove(key);
     }
     for (key, item) in &patch.set {
-        data.insert(key.clone(), item.clone());
+        if let Some(item) = secrets::restore_markers(item, data.get(key)) {
+            data.insert(key.clone(), item);
+        }
     }
     *target = serde_json::from_value(value)
         .map_err(|err| format!("The change could not be applied: {}", err))?;
     Ok(())
 }
 
-/// Sends a change to every screen.
+/// Sends a change to every screen. Devices get it with its secrets replaced by the marker, judged by the variable
+/// definitions in force after it.
 fn send_changed(app: &AppHandle, changed: DataChanged) {
-    let _ = app.emit("data-changed", changed);
+    let for_devices = || {
+        let globals = app.state::<SharedAppData>().lock().ok()?.variables.clone();
+        let project = app.state::<CurrentProject>().lock().ok()?.variables.clone();
+        let mut redacted = changed.clone();
+        redacted.patch =
+            secrets::redact_patch(&changed.patch, changed.scope == "app", &project, &globals);
+        serde_json::to_value(redacted).ok()
+    };
+    crate::remote::hub::broadcast_redacted(app, "data-changed", changed.clone(), for_devices);
 }
 
 /// Applies a screen's change to app data, and sends it to every other screen. Returns the new revision.
@@ -251,6 +268,22 @@ mod tests {
         assert!(apply_patch(&mut data, &change, &[]).is_err());
         assert_eq!(data.data.get("one"), Some(&json!("1")));
         assert_eq!(data.variables, ["one|text|"]);
+    }
+
+    #[test]
+    fn a_secret_sent_back_as_the_marker_keeps_its_real_value() {
+        let mut data = project();
+        data.data.insert("token".into(), json!("REAL"));
+        let change = patch(
+            json!({ "set": { "token": secrets::marker(), "one": "changed", "unset": secrets::marker() } }),
+        );
+        apply_patch(&mut data, &change, &[]).unwrap();
+        assert_eq!(data.data.get("token"), Some(&json!("REAL")));
+        assert_eq!(data.data.get("one"), Some(&json!("changed")));
+        assert!(
+            !data.data.contains_key("unset"),
+            "a marker with nothing behind it is not saved"
+        );
     }
 
     #[test]

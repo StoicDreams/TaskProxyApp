@@ -20,7 +20,6 @@ const navigation = page => page.evaluate(() => webui.projectData.navigation);
 
 test("lists the project's folders that hold markdown files, with how many each holds", async ({ page }) => {
     const el = await importer(page);
-    await expect(el.locator('h3')).toHaveText('Import pages');
     await folderField(el).click();
     await expect(folders(el)).toHaveText([
         'The whole project (4 pages)',
@@ -100,4 +99,15 @@ test('with no project open, there is nothing to import', async ({ page }) => {
     await openApp(page, { project: null });
     const root = await mount(page, '<app-page-import id="i"></app-page-import>');
     await expect(root.locator('#i')).toBeHidden();
+});
+
+test("Settings has an Import tab with the page import, and the current project shows above the tabs", async ({ page }) => {
+    await openApp(page, { docs: DOCS });
+    await page.locator('webui-button.settings-tab-key').click();
+    // The current project stays in view whichever tab is open.
+    await expect(page.locator('app-project-manager .project-name')).toBeVisible();
+    await expect(page.locator('app-page-import')).toBeHidden();
+    await page.locator('webui-button.settings-tab-import').click();
+    await expect(page.locator('app-page-import').getByText(/Turn a folder of markdown files/)).toBeVisible();
+    await expect(page.locator('app-page-import webui-button', { hasText: 'Import Pages' })).toBeVisible();
 });

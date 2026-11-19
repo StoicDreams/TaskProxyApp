@@ -1,7 +1,8 @@
 /*
- * The open project's icon, in Settings' Current project heading: an image from the project's files, chosen from a grid
- * with webui-select and saved in its .taskproxy/Project.json, so it is shared with the project
- * (services/project_icons.rs). The field shows only the icon; the grid names each image.
+ * A project's icon: an image from the project's files, chosen from a grid with webui-select and saved in its
+ * .taskproxy/Project.json, so it is shared with the project (services/project_icons.rs). The field shows only the
+ * icon; the grid names each image. The open project's, in Settings' Current project heading, or a saved project's,
+ * named by its path in `project`, in Settings' project list.
  */
 "use strict"
 {
@@ -15,6 +16,10 @@
 
     webui.define("app-project-icon", {
         preload: 'select',
+        attr: ['project'],
+        attrChanged(property) {
+            if (property === 'project' && this._select) this.load();
+        },
         constructor() {
             const t = this;
             t._load = 0;
@@ -26,10 +31,14 @@
                 t.append(t._select);
                 t._select.addEventListener('change', () => t.choose(t._select.value));
             }
+            // An icon chosen elsewhere, such as the project's row in Settings' project list, shows here too.
+            t._iconsChanged ??= () => t.load();
+            document.addEventListener('app-project-icons-changed', t._iconsChanged);
             t.load();
         },
         disconnected() {
             this._load++;
+            document.removeEventListener('app-project-icons-changed', this._iconsChanged);
         },
         /** Lists the project's images, with the one it uses chosen. */
         async load() {
@@ -37,7 +46,8 @@
             const load = ++t._load;
             const proxy = await whenProxyReady();
             // With no project open there is nothing to choose from, and nothing to say.
-            const found = await proxy.projectIcons.images(() => undefined);
+            const project = t.getAttribute('project') || null;
+            const found = await proxy.projectIcons.images(() => undefined, project);
             if (load !== t._load) return;
             if (!found) {
                 t.hidden = true;
@@ -46,7 +56,8 @@
             t.hidden = false;
             const images = found.images || [];
             const names = namesFor(images);
-            const urls = await Promise.all(images.map(path => proxy.projectFileUrl(path, () => undefined)));
+            const url = path => project ? proxy.projectImageUrl(project, path, () => undefined) : proxy.projectFileUrl(path, () => undefined);
+            const urls = await Promise.all(images.map(url));
             if (load !== t._load) return;
             t._icon = found.icon || '';
             await customElements.whenDefined('webui-select');
@@ -64,7 +75,7 @@
         async choose(icon) {
             const t = this;
             if (icon === t._icon) return;
-            const saved = await webui.proxy.projectIcons.set(icon);
+            const saved = await webui.proxy.projectIcons.set(icon, undefined, this.getAttribute('project') || null);
             if (saved === false) {
                 t._select.value = t._icon;
                 return;

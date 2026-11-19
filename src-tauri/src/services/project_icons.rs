@@ -161,6 +161,37 @@ fn open_project_root(state: &State<'_, CurrentProject>) -> Result<PathBuf, Strin
     Ok(PathBuf::from(&project.path))
 }
 
+/// The root of `path` when it is one of the saved projects, never any other folder.
+pub(crate) fn saved_project_root(projects: &[Project], path: &str) -> Option<PathBuf> {
+    let path = path.replace('\\', "/");
+    projects
+        .iter()
+        .find(|project| project.path.replace('\\', "/") == path)
+        .map(|project| PathBuf::from(&project.path))
+}
+
+/// The saved project at `project`, or the open project when none is named.
+fn project_root(
+    open: &State<'_, CurrentProject>,
+    saved: &State<'_, SharedProjects>,
+    project: Option<String>,
+) -> Result<PathBuf, String> {
+    let Some(path) = project else {
+        return open_project_root(open);
+    };
+    let projects = saved
+        .lock()
+        .map_err(|err| format!("Projects state failure: {}", err))?;
+    saved_project_root(&projects, &path)
+        .ok_or_else(|| String::from("That project isn't one of your projects."))
+}
+
+/// Whether `file`, relative to `root`, is an image that could be the project's icon. Only these are served from
+/// projects that aren't open (see file_server.rs).
+pub(crate) fn is_icon_image(root: &Path, file: &str) -> bool {
+    checked_image(root, file).is_ok()
+}
+
 /// Every saved project's icon, for the project dropdown.
 #[tauri::command]
 pub(crate) async fn get_project_icons(
@@ -183,10 +214,15 @@ pub(crate) async fn get_project_icons(
     .map_err(|err| err.to_string())
 }
 
-/// The open project's images that could be its icon, and the one it uses now.
+/// A project's images that could be its icon, and the one it uses now: the saved project at `project`, or the open
+/// project.
 #[tauri::command]
-pub(crate) async fn get_project_images(state: State<'_, CurrentProject>) -> Result<Value, String> {
-    let root = open_project_root(&state)?;
+pub(crate) async fn get_project_images(
+    state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
+    project: Option<String>,
+) -> Result<Value, String> {
+    let root = project_root(&state, &projects, project)?;
     task::spawn_blocking(
         move || serde_json::json!({ "images": image_files(&root), "icon": icon_path(&root) }),
     )
@@ -194,13 +230,15 @@ pub(crate) async fn get_project_images(state: State<'_, CurrentProject>) -> Resu
     .map_err(|err| err.to_string())
 }
 
-/// Sets or clears the open project's icon, and returns it as a data URI.
+/// Sets or clears a project's icon, the saved project at `project` or the open project, and returns it as a data URI.
 #[tauri::command]
 pub(crate) async fn set_project_icon(
     state: State<'_, CurrentProject>,
+    projects: State<'_, SharedProjects>,
+    project: Option<String>,
     icon: Option<String>,
 ) -> Result<Option<String>, String> {
-    let root = open_project_root(&state)?;
+    let root = project_root(&state, &projects, project)?;
     task::spawn_blocking(move || {
         set_icon(&root, icon.as_deref())?;
         Ok(icon_data_uri(&root))

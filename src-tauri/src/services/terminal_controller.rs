@@ -39,6 +39,15 @@ struct PtyControl {
 }
 
 impl PtyControl {
+    /// Answers a question the terminal was asked, as typed input would reach the script.
+    fn answer(&self, reply: &[u8]) {
+        if let Ok(mut writer) = self.writer.lock()
+            && let Some(writer) = writer.as_mut()
+        {
+            let _ = writer.write_all(reply).and_then(|_| writer.flush());
+        }
+    }
+
     fn close(&self) {
         if let Ok(mut writer) = self.writer.lock() {
             writer.take();
@@ -323,21 +332,92 @@ async fn pump_piped<R: AsyncRead + Unpin>(
 }
 
 /// Reads a pseudo-terminal on its own thread, since its reader blocks.
-fn pump_pty(mut reader: Box<dyn Read + Send>, output: mpsc::UnboundedSender<Vec<u8>>) {
+fn pump_pty(
+    mut reader: Box<dyn Read + Send>,
+    output: mpsc::UnboundedSender<Vec<u8>>,
+    control: Arc<PtyControl>,
+) {
     std::thread::spawn(move || {
         let mut buffer = vec![0u8; OUTPUT_READ_SIZE];
+        let mut startup = StartupCursorQuery::new(cfg!(windows));
         loop {
             match reader.read(&mut buffer) {
                 // Linux reports an error rather than end of file once the script and its children exit.
                 Ok(0) | Err(_) => break,
                 Ok(count) => {
-                    if output.send(buffer[..count].to_vec()).is_err() {
+                    let (bytes, answer) = startup.filter(&buffer[..count]);
+                    if answer {
+                        control.answer(CURSOR_AT_START);
+                    }
+                    if !bytes.is_empty() && output.send(bytes).is_err() {
                         break;
                     }
                 }
             }
         }
+        let rest = startup.finish();
+        if !rest.is_empty() {
+            let _ = output.send(rest);
+        }
     });
+}
+
+/// Where the cursor is when a script starts, as a terminal answers `ESC[6n`.
+const CURSOR_AT_START: &[u8] = b"\x1b[1;1R";
+const CURSOR_QUERY: &[u8] = b"\x1b[6n";
+/// ConPTY asks before anything else, so a query found later is the script's own.
+const STARTUP_QUERY_WINDOW: usize = 256;
+
+/// Windows' ConPTY asks the terminal where the cursor is (`ESC[6n`) as a script starts, and lets the
+/// script write nothing until it is answered. The terminal view only answers while it shows that
+/// terminal live, and never for replayed output, so a script started from a page waited forever. This
+/// answers that first question itself and removes it from the output, so the view cannot answer it
+/// again into the script's input. Questions the script asks later reach the view as before.
+struct StartupCursorQuery {
+    watching: bool,
+    seen: usize,
+    held: Vec<u8>,
+}
+
+impl StartupCursorQuery {
+    fn new(watching: bool) -> Self {
+        Self {
+            watching,
+            seen: 0,
+            held: Vec::new(),
+        }
+    }
+
+    /// The output to pass on, and whether the startup question was just found and must be answered.
+    fn filter(&mut self, bytes: &[u8]) -> (Vec<u8>, bool) {
+        if !self.watching {
+            return (bytes.to_vec(), false);
+        }
+        let mut data = std::mem::take(&mut self.held);
+        data.extend_from_slice(bytes);
+        if let Some(at) = data.windows(CURSOR_QUERY.len()).position(|w| w == CURSOR_QUERY) {
+            self.watching = false;
+            data.drain(at..at + CURSOR_QUERY.len());
+            return (data, true);
+        }
+        self.seen += bytes.len();
+        if self.seen > STARTUP_QUERY_WINDOW {
+            self.watching = false;
+            return (data, false);
+        }
+        // Keep an unfinished query, split between reads, until the next read completes it.
+        let keep = (1..CURSOR_QUERY.len())
+            .rev()
+            .find(|&n| data.len() >= n && data.ends_with(&CURSOR_QUERY[..n]))
+            .unwrap_or(0);
+        self.held = data.split_off(data.len() - keep);
+        (data, false)
+    }
+
+    /// Output held back when the script ends.
+    fn finish(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.held)
+    }
 }
 
 /// Decodes output that can stop partway through a character. The unfinished end is kept for the next
@@ -749,7 +829,7 @@ pub(crate) async fn spawn_script(
         control,
     }) = pty
     {
-        pump_pty(reader, chunk_tx);
+        pump_pty(reader, chunk_tx, control.clone());
         let child_id = child.process_id();
         let mut killer = child.clone_killer();
         let control_wait = control.clone();
@@ -992,6 +1072,45 @@ pub(crate) async fn shutdown(processes: ProcessMap) {
 mod tests {
     use super::*;
 
+    /// Runs reads through the startup filter, giving what was passed on and how many answers were sent.
+    fn startup_filtered(watching: bool, reads: &[&[u8]]) -> (Vec<u8>, usize) {
+        let mut startup = StartupCursorQuery::new(watching);
+        let (mut passed, mut answers) = (Vec::new(), 0);
+        for read in reads {
+            let (bytes, answer) = startup.filter(read);
+            passed.extend(bytes);
+            answers += answer as usize;
+        }
+        passed.extend(startup.finish());
+        (passed, answers)
+    }
+
+    #[test]
+    fn conpty_startup_question_is_answered_once_and_left_out_of_the_output() {
+        let (passed, answers) = startup_filtered(true, &[b"\x1b[?9001h\x1b[6n", b"Hello\x1b[6n"]);
+        assert_eq!(answers, 1);
+        // A later question is the script's own, so the terminal view answers it.
+        assert_eq!(passed, b"\x1b[?9001hHello\x1b[6n");
+    }
+
+    #[test]
+    fn conpty_startup_question_split_between_reads_is_still_answered() {
+        let (passed, answers) = startup_filtered(true, &[b"\x1b[", b"6", b"nok"]);
+        assert_eq!((passed.as_slice(), answers), (b"ok".as_slice(), 1));
+        let (passed, answers) = startup_filtered(true, &[b"a\x1b"]);
+        assert_eq!((passed.as_slice(), answers), (b"a\x1b".as_slice(), 0));
+    }
+
+    #[test]
+    fn a_question_after_startup_output_or_off_windows_is_left_for_the_view() {
+        let long = vec![b'x'; STARTUP_QUERY_WINDOW + 1];
+        let (passed, answers) = startup_filtered(true, &[&long, b"\x1b[6n"]);
+        assert_eq!(answers, 0);
+        assert!(passed.ends_with(b"\x1b[6n"));
+        let (passed, answers) = startup_filtered(false, &[b"\x1b[6n"]);
+        assert_eq!((passed.as_slice(), answers), (b"\x1b[6n".as_slice(), 0));
+    }
+
     #[test]
     fn a_script_runs_in_the_open_project_or_another_saved_one() {
         let known = vec![
@@ -1107,7 +1226,7 @@ mod tests {
             control,
         } = process;
         let (tx, rx) = mpsc::unbounded_channel();
-        pump_pty(reader, tx);
+        pump_pty(reader, tx, control.clone());
         if let Some(input) = input {
             let mut writer = control.writer.lock().unwrap();
             writer
@@ -1176,7 +1295,7 @@ mod tests {
             control,
         } = process;
         let (tx, rx) = mpsc::unbounded_channel();
-        pump_pty(reader, tx);
+        pump_pty(reader, tx, control.clone());
         sleep(Duration::from_millis(200)).await;
         control
             .master
@@ -1257,7 +1376,7 @@ mod tests {
             control,
         } = process;
         let (tx, mut rx) = mpsc::unbounded_channel();
-        pump_pty(reader, tx);
+        pump_pty(reader, tx, control.clone());
         let mut seen = String::new();
         let grandchild: i32 = loop {
             let chunk = tokio::time::timeout(Duration::from_secs(5), rx.recv())

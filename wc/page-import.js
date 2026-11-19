@@ -34,8 +34,6 @@
         },
         build() {
             const t = this;
-            const heading = webui.create('h3');
-            heading.textContent = 'Import pages';
             const intro = webui.create('p', { class: 'page-import-intro' });
             intro.textContent = 'Turn a folder of markdown files in this project into pages, nested in the navigation as they are in its subfolders. The files themselves are left as they are.';
             t._folder = webui.create('webui-select', { label: 'Folder', 'item-size': '10em' });
@@ -48,7 +46,7 @@
             const actions = webui.create('webui-flex', { justify: 'right' });
             actions.append(t._import);
             t._form.append(t._folder, t._place, t._name, actions);
-            t.append(heading, intro, t._form, t._empty);
+            t.append(intro, t._form, t._empty);
             t._folder.addEventListener('change', () => t.suggestName());
             t._place.addEventListener('change', () => t.showName());
             t._import.addEventListener('click', () => t.importFolder());

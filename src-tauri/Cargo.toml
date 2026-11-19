@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.160"
+version = "0.1.161"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -71,6 +71,13 @@ extism = { version = "1.41.0", default-features = false, features = ["wasmtime-d
 sysinfo = { version = "0.40", default-features = false, features = ["system", "user", "network"] }
 # The ports each process listens on, for the Task Manager.
 listeners = "0.6"
+# Remote Connections: signs this computer's answers and checks browsers' offers (ECDSA P-256). Already built for rustls.
+ring = "0.17"
+# Remote Connections: keeps the computer from sleeping while it is on. Its system libraries are already built for Tauri.
+keepawake = "0.6"
+# Remote Connections: WebRTC to a browser. Its OpenSSL backend reuses the OpenSSL git2 already vendors, so it adds the
+# least to the app.
+str0m = { version = "0.25", default-features = false, features = ["openssl", "vendored"] }
 # Copies images to the system clipboard, which WebKitGTK's own Copy Image leaves empty on Wayland.
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
 # Reads the images copied, in more formats than arboard's own PNG.

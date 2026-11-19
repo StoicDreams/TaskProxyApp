@@ -19,7 +19,6 @@
                 let result = await webui.proxy.addProject(name);
                 if (!result) return;
                 alert(result, 'success');
-                webui.setData('home-state', 'project-added');
                 webui.setData('new-project-name', '');
             }, alert));
             t._btnMulti.addEventListener('click', webui.eventSoloProcess(async _ => {
@@ -28,9 +27,6 @@
                 if (!results) return;
                 let successCount = results.filter(msg => msg.startsWith('Added')).length;
                 let errorCount = results.length - successCount;
-                if (successCount > 0) {
-                    webui.setData('home-state', 'project-added');
-                }
                 let theme = errorCount === 0 ? 'success' : (successCount === 0 ? 'danger' : 'warning');
                 alert(results.join('<br>'), theme);
             }, alert));

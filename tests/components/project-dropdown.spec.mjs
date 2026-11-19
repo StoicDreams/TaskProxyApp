@@ -14,6 +14,34 @@ test('opens the first project when none is current', async ({ page }) => {
     await openApp(page, { project: null, projects });
     await expect.poll(() => page.evaluate(() => webui.getData('app-current-project')?.value)).toBe('/one');
 });
+test('a saved current project that is no longer listed is replaced with the first listed one', async ({ page }) => {
+    // As left after a project was removed and another added for the same repo, whose .git moved to the drive's root.
+    const listed = [{ name: 'Backup', path: 'C:/' }, { name: 'Two', path: '/two' }];
+    await openApp(page, { project: null, projects: listed, appData: { 'app-current-project': { value: 'C:/Backup', display: 'Backup' } } });
+    await expect.poll(() => page.evaluate(() => webui.getData('app-current-project'))).toEqual({ value: 'C:/', display: 'Backup' });
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-current-project'])).toEqual({ value: 'C:/', display: 'Backup' });
+    await expect.poll(async () => (await calls(page, 'get_project_data')).at(-1)?.project.path).toBe('C:/');
+});
+test('a saved current project is kept when its path is listed with other slashes or case', async ({ page }) => {
+    await openApp(page, { project: null, projects, appData: { 'app-current-project': { value: '\\TWO', display: 'Two' } } });
+    await expect.poll(() => page.locator('app-project-dropdown webui-select').evaluate(el => el.value)).toBe('/two');
+    await expect.poll(() => page.evaluate(() => webui.getData('app-current-project'))).toEqual({ value: '\\TWO', display: 'Two' });
+});
+test('a saved current project with no projects listed at all is closed', async ({ page }) => {
+    await openApp(page, { project: null, projects: [], appData: { 'app-current-project': { value: 'C:/Backup', display: 'Backup' } } });
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data)).not.toHaveProperty('app-current-project');
+    await expect.poll(async () => (await calls(page, 'clear_current_project')).length).toBeGreaterThan(0);
+});
+test('removing the last project clears the current project, so the app does not reopen it', async ({ page }) => {
+    await openApp(page, { project: projects[0], projects: [projects[0]] });
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-current-project']?.value)).toBe('/one');
+    await page.evaluate(async () => {
+        await webui.proxy.removeProject('/one');
+        webui.setData('app-current-project', null);
+    });
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data)).not.toHaveProperty('app-current-project');
+    await expect(page.locator('app-project-dropdown')).toBeHidden();
+});
 
 test.describe('changed files and commits', () => {
     const dropdown = page => page.locator('app-project-dropdown webui-select');

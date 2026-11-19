@@ -221,11 +221,42 @@ fn write_response(stream: &mut TcpStream, response: Response<Body>) -> io::Resul
     stream.flush()
 }
 
+/// The prefix of an address for a project that isn't open: `~project/<percent-encoded project path>/<file>`.
+const OTHER_PROJECT: &str = "~project/";
+
+/// Answers `file`, the address after the token. Files come from the open project, except that Settings shows other
+/// saved projects' images to choose their icons from, so an image that could be an icon is also served from any saved
+/// project. `saved` gives a saved project's root, and nothing for any other folder.
+fn route(
+    method: &str,
+    file: &str,
+    range: Option<&str>,
+    open: impl Fn() -> Option<PathBuf>,
+    saved: impl Fn(&str) -> Option<PathBuf>,
+) -> Response<Body> {
+    let Some(rest) = file.strip_prefix(OTHER_PROJECT) else {
+        return respond(open().as_deref(), method, file, range);
+    };
+    let Some((project, path)) = rest.split_once('/') else {
+        return error(StatusCode::NOT_FOUND, "Not found");
+    };
+    let (Ok(project), Ok(relative)) = (percent_decode(project), percent_decode(path)) else {
+        return error(StatusCode::BAD_REQUEST, "Invalid address.");
+    };
+    match saved(&project) {
+        Some(root) if crate::services::project_icons::is_icon_image(&root, &relative) => {
+            respond(Some(&root), method, path, range)
+        }
+        _ => error(StatusCode::NOT_FOUND, "Not found"),
+    }
+}
+
 /// Reads one request and answers it. Requests without the token are refused before anything is read from disk.
 fn serve_connection(
     mut stream: TcpStream,
     token: &str,
-    root: impl Fn() -> Option<PathBuf>,
+    open: impl Fn() -> Option<PathBuf>,
+    saved: impl Fn(&str) -> Option<PathBuf>,
 ) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -249,7 +280,7 @@ fn serve_connection(
     let path = target.split(['?', '#']).next().unwrap_or("");
     let prefix = format!("/{}/", token);
     let response = match path.strip_prefix(&prefix) {
-        Some(file) => respond(root().as_deref(), &method, file, range.as_deref()),
+        Some(file) => route(&method, file, range.as_deref(), open, saved),
         None => error(StatusCode::NOT_FOUND, "Not found"),
     };
     write_response(&mut stream, response)
@@ -263,6 +294,12 @@ fn open_project_root(app: &AppHandle) -> Option<PathBuf> {
         .map(|project| PathBuf::from(project.path.replace('\\', "/")))
 }
 
+/// A saved project's root folder.
+fn saved_project_root(app: &AppHandle, path: &str) -> Option<PathBuf> {
+    let projects = app.state::<SharedProjects>().lock().ok()?.clone();
+    crate::services::project_icons::saved_project_root(&projects, path)
+}
+
 /// Starts the server on a free port. Each connection gets its own thread, since a video player opens several.
 pub(crate) fn start(app: AppHandle) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|err| err.to_string())?;
@@ -274,7 +311,12 @@ pub(crate) fn start(app: AppHandle) -> Result<(), String> {
             let app = app.clone();
             let token = token.clone();
             std::thread::spawn(move || {
-                let _ = serve_connection(stream, &token, || open_project_root(&app));
+                let _ = serve_connection(
+                    stream,
+                    &token,
+                    || open_project_root(&app),
+                    |path| saved_project_root(&app, path),
+                );
             });
         }
     });
@@ -404,6 +446,52 @@ mod tests {
     }
 
     #[test]
+    fn another_saved_projects_icon_images_are_served_and_nothing_else_of_it() {
+        let open = setup();
+        let other = tempfile::tempdir().unwrap();
+        fs::create_dir_all(other.path().join("img")).unwrap();
+        fs::write(other.path().join("img/logo.svg"), "<svg/>").unwrap();
+        fs::write(other.path().join("notes.md"), "# private").unwrap();
+        fs::write(other.path().join("big.png"), vec![0u8; 600 * 1024]).unwrap();
+        let other_path = other.path().to_string_lossy().replace('\\', "/");
+        let saved = |path: &str| (path == other_path).then(|| other.path().to_path_buf());
+        let encoded = other_path.replace('/', "%2F");
+        let get = |file: &str| {
+            route(
+                "GET",
+                &format!("{}{}/{}", OTHER_PROJECT, encoded, file),
+                None,
+                || Some(open.path().to_path_buf()),
+                saved,
+            )
+            .status()
+        };
+        assert_eq!(get("img%2Flogo.svg"), StatusCode::OK);
+        // Only images that could be its icon: not its other files, nor an image too large to be one.
+        assert_eq!(get("notes.md"), StatusCode::NOT_FOUND);
+        assert_eq!(get("big.png"), StatusCode::NOT_FOUND);
+        assert_eq!(get("..%2F..%2Fetc%2Fpasswd"), StatusCode::NOT_FOUND);
+        // A folder that isn't a saved project serves nothing.
+        let elsewhere = route(
+            "GET",
+            &format!("{}%2Ftmp/img%2Flogo.svg", OTHER_PROJECT),
+            None,
+            || Some(open.path().to_path_buf()),
+            saved,
+        );
+        assert_eq!(elsewhere.status(), StatusCode::NOT_FOUND);
+        // Anything else is the open project's, as before.
+        let open_file = route(
+            "GET",
+            "media/clip%20one.mp4",
+            None,
+            || Some(open.path().to_path_buf()),
+            saved,
+        );
+        assert_eq!(open_file.status(), StatusCode::OK);
+    }
+
+    #[test]
     fn only_files_in_the_open_project_are_served() {
         let dir = setup();
         fs::write(dir.path().parent().unwrap().join("secret.txt"), "no").ok();
@@ -437,7 +525,9 @@ mod tests {
             for stream in listener.incoming().flatten() {
                 let root = root.clone();
                 let token = server_token.clone();
-                std::thread::spawn(move || serve_connection(stream, &token, || Some(root.clone())));
+                std::thread::spawn(move || {
+                    serve_connection(stream, &token, || Some(root.clone()), |_| None)
+                });
             }
         });
         (port, token)
@@ -524,7 +614,7 @@ mod manual {
                     stream.set_nonblocking(false).unwrap();
                     let (root, token) = (root.clone(), token.clone());
                     std::thread::spawn(move || {
-                        serve_connection(stream, &token, || Some(root.clone()))
+                        serve_connection(stream, &token, || Some(root.clone()), |_| None)
                     });
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(20)),
