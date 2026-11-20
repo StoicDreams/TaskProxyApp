@@ -531,7 +531,8 @@
                 return false;
             }
             const drawer = t.body.closest('webui-drawer');
-            if (drawer && !drawer.classList.contains('open')) {
+            // A closed drawer, or another tab of Tools, lets go the same way.
+            if ((drawer && !drawer.classList.contains('open')) || t.body.closest('[tab-hidden], [inert]')) {
                 // A closing drawer stays in the page, so give it a moment before letting go.
                 if (++t.closedTicks > 1) {
                     t.close();
@@ -783,29 +784,21 @@
         container.textContent = 'Task Manager';
         return container;
     }
-    function openDrawer(drawer) {
-        const el = document.querySelector(drawer);
+    /** Shows the Task Manager in `target`, a Tools tab or a drawer, and starts reading processes once it shows. */
+    function openDrawer(target) {
+        const el = typeof target === 'string' ? document.querySelector(target) : target;
         if (!el) {
             webui.log.warn('Drawer not found!');
             return;
         }
-        if (el.classList.contains('open')) {
-            el.classList.remove('open');
-            setTimeout(() => openDrawer(drawer), 500);
-            return;
-        }
-        el.innerHTML = '';
-        el.appendChild(getHeaderContent());
         const body = webui.create('section');
         body.className = 'task-manager-body';
         body.style.padding = 'var(--padding)';
-        body.style.height = 'calc(100% - var(--header-height, 60px))';
         body.style.boxSizing = 'border-box';
-        el.appendChild(body);
-        setTimeout(() => {
-            el.classList.add('open');
+        if (el.localName === 'webui-drawer') body.style.height = 'calc(100% - var(--header-height, 60px))';
+        showTool(el, getHeaderContent(), body, () => {
             body._view = new TaskManagerView(body);
-        }, 100);
+        });
     }
     webui.define("app-task-manager", {
         linkCss: false,
@@ -821,8 +814,15 @@
             makeButton(t, t.getAttribute('title') || 'Task Manager');
             t.addEventListener('click', () => t.open());
         },
-        open() {
-            openDrawer(this.drawer || '.shared');
+        /** Opens the Task Manager, as the Task Manager tab of Tools when it is one. `target` is where Tools has it draw. */
+        open({ target = null } = {}) {
+            const t = this;
+            const tools = toolsPanelOf(t);
+            if (tools && !target) {
+                tools.show('tasks');
+                return;
+            }
+            openDrawer(target || t.drawer || '.shared');
         },
         shadowTemplate: `
 <webui-icon icon="circle_gauge|theme:info|fill|backing|bordered"></webui-icon>

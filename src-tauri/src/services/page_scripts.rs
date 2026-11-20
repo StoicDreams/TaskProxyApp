@@ -150,6 +150,8 @@ fn scope_enabled(app: &HashMap<String, Value>, key: &str) -> bool {
 
 /// Where a script's values come from.
 pub(crate) struct Values<'a> {
+    /// Values set for this run alone, such as a favorite script's fixed parameters, which come before every scope.
+    pub overrides: Option<&'a Map<String, Value>>,
     /// Values typed or set on the page, as the window has them.
     pub page: &'a Map<String, Value>,
     pub project: &'a HashMap<String, Value>,
@@ -160,9 +162,12 @@ pub(crate) struct Values<'a> {
 impl Values<'_> {
     /// A variable's value, from the first scope that has it: the page, then the project, then global, as each is
     /// switched on. A scope that has it, even as empty, hides the scopes after it.
-    fn lookup(&self, name: &str) -> Option<&Value> {
+    pub(crate) fn lookup(&self, name: &str) -> Option<&Value> {
         if never_filled(name) {
             return None;
+        }
+        if let Some(value) = self.overrides.and_then(|overrides| overrides.get(name)) {
+            return Some(value);
         }
         // A page value that is a secret's marker stands for the project or global value it was copied from.
         if scope_enabled(self.global, PAGE_ENABLED)
@@ -320,6 +325,7 @@ pub(crate) fn page_script_preview(
     Ok(fill_script(
         &script,
         &Values {
+            overrides: None,
             page: &page,
             project: &project,
             global: &global,
@@ -361,6 +367,7 @@ pub(crate) async fn run_page_script(
     }
     let page = page_values.unwrap_or_default();
     let values = Values {
+        overrides: None,
         page: &page,
         project: &project,
         global: &global,
@@ -400,6 +407,7 @@ mod tests {
         fill_script(
             script,
             &Values {
+                overrides: None,
                 page: &page,
                 project: &project,
                 global: &global,

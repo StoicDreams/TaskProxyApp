@@ -123,9 +123,10 @@ test('the right panel can be resized and closed, and its width is remembered', a
     await page.evaluate(() => document.querySelector('webui-drawer.shared').setAttribute('docked', 'true'));
     const handle = panel.locator('.resize');
     await expect(handle).toBeVisible();
-    // Docking slides the panel into place, so wait until nothing in it is still animating, two frames after the last check.
+    // Docking slides the panel into place, so wait until nothing in it is still moving, two frames after the last check.
+    // Endless animations, such as a loading spinner in the tool it shows, never finish and don't move the panel.
     await expect.poll(() => panel.evaluate(el => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
-        resolve(el.getAnimations({ subtree: true }).filter(animation => animation.playState !== 'finished').length);
+        resolve(el.getAnimations({ subtree: true }).filter(animation => animation.playState !== 'finished' && animation.effect?.getComputedTiming().iterations !== Infinity).length);
     }))))).toBe(0);
     const savedWidth = () => panel.evaluate(el => parseInt(el.getAttribute('width') || '0', 10));
     const before = await savedWidth();

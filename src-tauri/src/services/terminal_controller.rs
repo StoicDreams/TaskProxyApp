@@ -395,7 +395,10 @@ impl StartupCursorQuery {
         }
         let mut data = std::mem::take(&mut self.held);
         data.extend_from_slice(bytes);
-        if let Some(at) = data.windows(CURSOR_QUERY.len()).position(|w| w == CURSOR_QUERY) {
+        if let Some(at) = data
+            .windows(CURSOR_QUERY.len())
+            .position(|w| w == CURSOR_QUERY)
+        {
             self.watching = false;
             data.drain(at..at + CURSOR_QUERY.len());
             return (data, true);
@@ -831,6 +834,7 @@ pub(crate) async fn spawn_script(
     {
         pump_pty(reader, chunk_tx, control.clone());
         let child_id = child.process_id();
+        performance::apply_saved(app_handle, child_id);
         let mut killer = child.clone_killer();
         let control_wait = control.clone();
         let handle = tokio::spawn(async move {
@@ -875,6 +879,7 @@ pub(crate) async fn spawn_script(
             .spawn()
             .map_err(|e| format!("Failed to spawn script: {}", e))?;
         let child_id = child.id();
+        performance::apply_saved(app_handle, child_id);
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
         let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
         let stdout_reader = tokio::spawn(pump_piped(stdout, false, chunk_tx.clone()));

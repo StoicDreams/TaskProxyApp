@@ -285,6 +285,25 @@
             return tauri.core.invoke('get_version', {}).catch(errHandler);
         }
         /**
+         * Favorite scripts, the icons in the bottom drawer (wc/favorites.js, services/favorites.rs). The list itself is
+         * app data, `app-favorite-scripts`; Rust reads each script from its project, fills it, and runs it there.
+         */
+        favorites = {
+            /** The open project's scripts to choose from: the page's blocks, when `page` is its id, and its files. */
+            candidates: (page, err) => tauri.core.invoke('favorite_candidates', { page: page || null }).catch(err ?? defaultErrHandler),
+            /** A favorite's script as it is now, from the project it came from. Quiet unless given a handler. */
+            script: (project, source, err) => tauri.core.invoke('favorite_script', { project, source }).catch(err ?? (() => undefined)),
+            /** Runs a favorite in its project. Resolves to its run. */
+            run: (favorite, err) => tauri.core.invoke('run_favorite', { favorite }).catch(err ?? defaultErrHandler),
+        };
+        /**
+         * How much of the computer scripts may use (services/performance.rs). The choices are app data,
+         * app-script-performance; this only says what the computer offers: { threads, canLimitThreads, hasIdlePriority }.
+         */
+        performance = {
+            info: err => tauri.core.invoke('script_performance_info').catch(err ?? defaultErrHandler),
+        };
+        /**
          * A project's icon: an image in its repo, chosen in Settings and saved in its .taskproxy/Project.json
          * (services/project_icons.rs). Icons come back as data URIs.
          */
@@ -1609,6 +1628,123 @@
     }
 }
 
+/** The text between the parentheses of a script's param block, if it has one. */
+function findParamBlock(script) {
+    const start = script.match(/^\s*(?:(?:<#[\s\S]*?#>|#[^\n]*|\[[^\]\n]*\])\s*)*param\s*\(/i);
+    if (!start) return null;
+    let depth = 1;
+    let quote = null;
+    for (let i = start[0].length; i < script.length; ++i) {
+        const c = script[i];
+        if (quote) {
+            if (c === quote) quote = null;
+        } else if (c === '"' || c === "'") {
+            quote = c;
+        } else if (c === '#') {
+            while (i < script.length && script[i] !== '\n') ++i;
+        } else if (c === '(') {
+            ++depth;
+        } else if (c === ')' && --depth === 0) {
+            return script.substring(start[0].length, i);
+        }
+    }
+    return null;
+}
+/**
+ * A script file's parameters, from its param block, as `[{ name, isSwitch }]`. Each parameter's name is the first
+ * variable outside of its attributes and default value.
+ */
+function parseScriptParams(script) {
+    const block = findParamBlock(script);
+    if (block === null) return [];
+    let params = [];
+    let depth = 0;
+    let quote = null;
+    let hasName = false;
+    let attributes = '';
+    for (let i = 0; i < block.length; ++i) {
+        const c = block[i];
+        if (quote) {
+            if (c === quote) quote = null;
+        } else if (c === '"' || c === "'") {
+            quote = c;
+        } else if (c === '#') {
+            while (i < block.length && block[i] !== '\n') ++i;
+        } else if ('([{'.includes(c)) {
+            ++depth;
+            if (!hasName) attributes += c;
+        } else if (')]}'.includes(c)) {
+            --depth;
+            if (!hasName) attributes += c;
+        } else if (depth === 0 && c === ',') {
+            hasName = false;
+            attributes = '';
+        } else if (depth === 0 && c === '$' && !hasName) {
+            const name = block.substring(i + 1).match(/^[a-zA-Z0-9_]+/);
+            if (name) {
+                hasName = true;
+                if (!params.find(p => p.name === name[0])) {
+                    params.push({ name: name[0], isSwitch: /\[\s*switch\s*\]/i.test(attributes) });
+                }
+            }
+        } else if (!hasName) {
+            attributes += c;
+        }
+    }
+    return params;
+}
+/**
+ * A page script's parameters: the variables it sets, as `$name = 'default'`, which Rust fills from the page, project,
+ * and global values (services/page_scripts.rs). App state and tokens are never filled, so they are left out.
+ */
+function pageScriptParams(script) {
+    const names = [];
+    for (const found of `${script || ''}`.matchAll(/\$([a-zA-Z_][a-zA-Z0-9_]*)\s*=(?!=)/g)) {
+        const name = found[1];
+        const snake = webui.toSnake(name, '-');
+        if (['git_pat', 'github_pat'].includes(name) || /^(app|session|page)-/.test(snake)) continue;
+        if (['null', 'true', 'false', '_'].includes(name.toLowerCase())) continue;
+        if (!names.includes(name)) names.push(name);
+    }
+    return names.map(name => ({ name, isSwitch: false }));
+}
+/**
+ * The Tools panel (wc/tools.js) that holds a tool element, such as app-terminals, when it is one of its tabs. A tool
+ * asked to open shows its tab there, and Tools has it draw itself into the tab with `showTool(content, header, ready)`.
+ */
+function toolsPanelOf(tool) {
+    return tool?.closest?.('app-tools') || null;
+}
+/**
+ * Puts a tool's header and body where it is shown: a Tools tab's content, at once, or a drawer, which is closed
+ * first when it shows something else, and opened once filled. `ready` runs once the body is in place.
+ */
+function showTool(target, header, body, ready) {
+    if (!target) return;
+    if (target.localName !== 'webui-drawer') {
+        if (header) header.removeAttribute('slot');
+        // A tool sizes its body to fill a drawer below its header. In a tab, the tab's content has the height and
+        // scrolls, so the body takes its own height and leaves scrolling to it, which also gives a split pane that
+        // fills what scrolls it a height that holds still.
+        if (body?.style) {
+            body.style.removeProperty('height');
+            body.style.removeProperty('overflow-y');
+        }
+        target.replaceChildren(...[header, body].filter(Boolean));
+        ready?.();
+        return;
+    }
+    if (target.classList.contains('open')) {
+        target.classList.remove('open');
+        setTimeout(() => showTool(target, header, body, ready), 500);
+        return;
+    }
+    target.replaceChildren(...[header, body].filter(Boolean));
+    setTimeout(() => {
+        target.classList.add('open');
+        ready?.();
+    }, 100);
+}
 /**
  * Lets keyboard and screen reader users use an element that responds to clicks: it is announced as a button,
  * Tab reaches it, and Enter or Space clicks it. Its title, or the label given here, names it.

@@ -1,6 +1,6 @@
 import { test, expect, openApp } from '../../tests/support/app.mjs';
 import { demoState, PAGE_IDS } from './demo.mjs';
-import { caption, clickOn, moveTo, parkMouse, prepare, record, scriptOutput, typeInto } from './helpers.mjs';
+import { caption, clickOn, openToolTab, moveTo, parkMouse, prepare, record, scriptOutput, typeInto } from './helpers.mjs';
 
 const settle = page => page.waitForTimeout(1200);
 const open = async (page, route, state = {}) => {
@@ -66,7 +66,7 @@ test('run a page script against another environment', async ({ page }) => {
         await moveTo(page, page.locator('webui-icon.run-script-btn').nth(1), { offsetY: 40 });
         await caption(page, 'This script uses the apiBaseUrl variable', 2200);
         await caption(page, 'Open Manage Variables to choose an environment');
-        await clickOn(page, page.locator('app-var-manager'), { after: 1500 });
+        await openToolTab(page, 'variables', { after: 1500 });
         const env = page.locator('#env-selector');
         await env.waitFor({ state: 'attached' });
         await moveTo(page, env);
@@ -117,7 +117,7 @@ test('answer a script\'s prompt in the terminal', async ({ page }) => {
         await clickOn(page, manager.locator('.params-container [data-param="SkipBuild"]'), { after: 1200 });
         await caption(page, 'Run it, then open the Terminal Manager');
         await clickOn(page, manager.locator('webui-button[label="Run"]').first(), { after: 600 });
-        await clickOn(page, page.locator('app-terminals'), { after: 800 });
+        await openToolTab(page, 'terminals', { after: 800 });
         await expect.poll(() => page.evaluate(() => !!webui.proxy.terminalHelpers.getState().terminals['.taskproxy/scripts/deploy.ps1'])).toBe(true);
         await page.evaluate(() => document.querySelector('app-terminals').switchTerminal('.taskproxy/scripts/deploy.ps1'));
         await page.waitForTimeout(1500);

@@ -25,6 +25,10 @@
 <webui-content slot="content" nodetach class="settings-remote">
 <app-remote-connections></app-remote-connections>
 </webui-content>
+<webui-button align="left" slot="tabs" start-icon="gauge" class="settings-tab-performance">Performance</webui-button>
+<webui-content slot="content" nodetach class="settings-performance">
+<app-script-performance></app-script-performance>
+</webui-content>
 <webui-button align="left" slot="tabs" start-icon="exclamation" theme="danger" class="settings-tab-danger">Danger</webui-button>
 <webui-content slot="content" nodetach class="settings-danger">
 <app-project-remove></app-project-remove>
@@ -35,7 +39,7 @@
 <app-update-manager></app-update-manager>
 </webui-card>
 <webui-card name="Plugins" avatar="puzzle-piece|fill" theme="info" class="settings-plugins">
-<p>Plugins add integrations such as Jira. Manage them from the puzzle piece button at the top, beside Icons & Emojis.</p>
+<p>Plugins add integrations such as Jira. Manage them from Tools, the toolbox at the top right, on its Plugins tab.</p>
 </webui-card>
 </webui-flex>
 </webui-pinned-side>
@@ -50,6 +54,8 @@
 </webui-flex>
 
 <webui-stoic-social-links class="mb-2"></webui-stoic-social-links>
+
+<app-settings-footer class="settings-footer" since="2016" company="Stoic Dreams"></app-settings-footer>
 
 <webui-page-help heading="Settings Help">
 <h3>Project Management</h3>

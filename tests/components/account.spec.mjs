@@ -2,7 +2,8 @@ import { test, expect, openApp, calls, openDialog, dialogButton } from '../suppo
 
 const ACCOUNT = { id: 1, displayName: 'Test User' };
 const SIGN_IN_URL = 'https://www.stoicdreams.com/signin?app=taskproxy&request=3160d8e4-e8dd-43c7-a397-43b17ef46cbc';
-const button = page => page.locator('header app-account');
+// The sign-in sits at the bottom of Settings, which the app opens on with a project.
+const button = page => page.locator('.settings-footer app-account');
 
 /** Records the messages shown with webui.alert, which alerts() returns. */
 function spyOnAlerts(page) {

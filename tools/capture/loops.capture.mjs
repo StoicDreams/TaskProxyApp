@@ -1,7 +1,7 @@
 import { test, expect, openApp } from '../../tests/support/app.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { demoState, PAGE_IDS, testRunOutput } from './demo.mjs';
-import { clickOn, loop, moveTo, parkMouse, prepare, scriptOutput, typeInto } from './helpers.mjs';
+import { clickOn, openToolTab, loop, moveTo, parkMouse, prepare, scriptOutput, typeInto } from './helpers.mjs';
 
 // Short looping videos for TaskProxy.com, in place of screenshots: each shows one action from start to finish,
 // and ends on the result, which is also its poster. Saved as video/loops/<name>.mp4 and .webp.
@@ -126,7 +126,7 @@ test.describe('tutorials', () => {
         await settle(page);
         await loop(page, 'terminal-output', async () => {
             await clickOn(page, manager.locator('webui-button[label="Run"]').first(), { after: 500 });
-            await clickOn(page, page.locator('app-terminals'), { after: 900 });
+            await openToolTab(page, 'terminals', { after: 900 });
             await expect.poll(() => page.evaluate(() => !!webui.proxy.terminalHelpers.getState().terminals['.taskproxy/scripts/test.ps1'])).toBe(true);
             await page.evaluate(() => document.querySelector('app-terminals').switchTerminal('.taskproxy/scripts/test.ps1'));
             await expect(page.locator('#term-status')).toContainText('Finished', { timeout: 20000 });
@@ -207,7 +207,7 @@ test.describe('tutorials', () => {
         await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
         await settle(page);
         await loop(page, 'variables-project', async () => {
-            await clickOn(page, page.locator('app-var-manager'), { after: 1400 });
+            await openToolTab(page, 'variables', { after: 1400 });
             const env = page.locator('#env-selector');
             await env.waitFor({ state: 'attached' });
             await moveTo(page, env);
@@ -230,7 +230,7 @@ test.describe('tutorials', () => {
         await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
         await settle(page);
         await loop(page, 'variables-global', async () => {
-            await clickOn(page, page.locator('app-var-manager'), { after: 1400 });
+            await openToolTab(page, 'variables', { after: 1400 });
             const tab = page.locator('webui-drawer.shared webui-button[slot="tabs"]', { hasText: 'Global' });
             await clickOn(page, tab, { after: 300 });
             await expect(async () => {
@@ -244,7 +244,7 @@ test.describe('tutorials', () => {
     test('task manager', async ({ page }) => {
         await open(page, '/');
         await loop(page, 'task-manager', async () => {
-            await clickOn(page, page.locator('app-task-manager'), { after: 1400 });
+            await openToolTab(page, 'tasks', { after: 1400 });
             const view = page.locator('webui-drawer.shared .task-manager');
             await view.locator('tr.tm-row').first().waitFor();
             // The Storybook server outlived its terminal: Orphaned finds it, and its details say what started it.
@@ -259,7 +259,7 @@ test.describe('tutorials', () => {
 
     /** Opens the Task Manager, on the given preset, flat, with its guide closed unless asked for. */
     const openTaskManager = async (page, { filter = 'all', guide = false, tree = false } = {}) => {
-        await clickOn(page, page.locator('app-task-manager'), { after: 1400 });
+        await openToolTab(page, 'tasks', { after: 1400 });
         const view = page.locator('webui-drawer.shared .task-manager');
         await view.locator('tr.tm-row').first().waitFor();
         await view.locator('.tm-filter').selectOption(filter);
@@ -333,7 +333,7 @@ test.describe('tutorials', () => {
         await settle(page);
         await parkMouse(page);
         await loop(page, 'terminal-finished', async () => {
-            await clickOn(page, page.locator('app-terminals'), { after: 1000 });
+            await openToolTab(page, 'terminals', { after: 1000 });
             const filter = page.locator('#term-filter');
             await filter.waitFor();
             const finished = filter.getByText('Finished', { exact: true });
@@ -571,7 +571,7 @@ test.describe('plugins', () => {
             ] },
         });
         await loop(page, 'plugins-drawer', async () => {
-            await clickOn(page, page.locator('app-plugins-drawer'), { after: 1400 });
+            await openToolTab(page, 'plugins', { after: 1400 });
             const manager = page.locator('webui-drawer.shared app-plugin-manager');
             const card = manager.locator('.plugin-detail [data-plugin="jira"]');
             await card.waitFor();

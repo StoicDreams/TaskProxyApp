@@ -1,8 +1,8 @@
-import { test, expect, openApp, calls, onCommand, runOutput, runEnds, emit } from '../support/app.mjs';
+import { test, expect, openApp, openTool, calls, onCommand, runOutput, runEnds, emit } from '../support/app.mjs';
 
 const open = async (page, state = {}) => {
     await openApp(page, state);
-    await page.locator('app-terminals').click();
+    await openTool(page, 'terminals');
 };
 const ready = async page => {
     await page.locator('#term-content-wrapper').waitFor();
@@ -55,7 +55,7 @@ test('with no way to install it automatically, only the instructions show', asyn
 test('when detecting PowerShell fails, the install area shows instead of the terminals', async ({ page }) => {
     await openApp(page);
     await onCommand(page, 'get_powershell_status', () => { throw 'detection failed'; });
-    await page.locator('app-terminals').click();
+    await openTool(page, 'terminals');
     await expect(page.locator('#term-install-wrapper')).toBeVisible();
     await expect(page.locator('#term-content-wrapper')).toBeHidden();
 });
@@ -359,7 +359,7 @@ test.describe('run status', () => {
 });
 
 test.describe('script filter', () => {
-    const filter = page => page.locator('webui-drawer.shared [slot="header"] webui-switch');
+    const filter = page => page.locator('webui-drawer.shared webui-switch#term-filter');
     const choose = (page, name) => filter(page).locator('button', { hasText: new RegExp(`^${name}$`) }).click();
     // The names of the scripts the list offers, as the earlier status test reads them.
     const listed = page => page.locator('#term-dropdown').evaluate(el => el._options.map(option => option.display));
@@ -510,9 +510,9 @@ test.describe('script filter', () => {
         for (const id of ['#btn-kill', '#btn-select-all', '#btn-clear']) await expect(row.locator(id)).toHaveCount(1);
     });
 });
-test('the Terminals button counts the scripts running in every project', async ({ page }) => {
+test('Tools counts the scripts running in every project', async ({ page }) => {
     await openApp(page);
-    const count = page.locator('app-terminals webui-icon');
+    const count = page.locator('header app-tools webui-icon.tools-icon');
     await expect(count).not.toHaveAttribute('count', /\d/);
     await page.evaluate(() => webui.proxy.terminalHelpers.runScript('a.ps1', 'body', [], false, false));
     await expect(count).toHaveAttribute('count', '1');
@@ -528,4 +528,28 @@ test('the Terminals button counts the scripts running in every project', async (
         run: { id: 'deploy.ps1', projectId: 'other-project', projectName: 'Storefront', status: 'Finished', exitCode: 0, run: 900, rev: 2, cleared: 0, startedAt: Date.now(), endedAt: Date.now() },
     });
     await expect(count).not.toHaveAttribute('count', /\d/);
+});
+
+test('a toggle beside the script filter shows the script and terminal one at a time, and is remembered', async ({ page }) => {
+    await page.setViewportSize({ width: 2000, height: 900 });
+    await openApp(page);
+    await page.evaluate(() => { document.querySelector('webui-drawer.shared').style.width = '1400px'; });
+    await openTool(page, 'terminals');
+    const split = page.locator('#term-split');
+    const toggle = page.locator('#term-single');
+    await expect(split).not.toHaveAttribute('single');
+    // It sits just before the filter.
+    await expect.poll(() => toggle.evaluate(el => el.nextElementSibling?.id)).toBe('term-filter');
+    // It says what it does, not only by its icon.
+    await expect(toggle.getByText('View', { exact: true })).toBeVisible();
+    await toggle.click();
+    await expect(split).toHaveAttribute('single');
+    await expect(split).toHaveAttribute('narrow');
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-terminal-single'])).toBe(true);
+    // Shown again, it keeps the choice.
+    await page.evaluate(() => document.querySelector('app-tools').show('terminals'));
+    await expect(page.locator('#term-split')).toHaveAttribute('single');
+    await page.locator('#term-single').click();
+    await expect(page.locator('#term-split')).not.toHaveAttribute('single');
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-terminal-single'])).toBe(false);
 });

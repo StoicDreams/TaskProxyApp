@@ -88,6 +88,15 @@
      * secret, so it can set one but never read it back.
      */
     const isKeptSecret = value => !!value && typeof value === 'object' && value.$secret === true;
+    /**
+     * A value as page scripts show it (services/page_scripts.rs): longer than 6 characters, only its first and last 3,
+     * as `abc***xyz`, so a glance or a screen share doesn't give it away.
+     */
+    function maskValue(value) {
+        const chars = [...`${value ?? ''}`];
+        if (chars.length <= 6) return chars.join('');
+        return `${chars.slice(0, 3).join('')}***${chars.slice(-3).join('')}`;
+    }
     function renderVariableList(container, scope, variables, isReadOnly, refreshCallback) {
         container.innerHTML = '';
         if (!variables || variables.length === 0) {
@@ -99,7 +108,19 @@
             wrap.appendChild(webui.create('span', { text: v.key }));
             // The key beside it is plain text, so the input is named for screen readers.
             const kept = isKeptSecret(v.value);
-            const input = webui.create('webui-input-text', { value: kept ? '' : v.value || '', 'aria-label': `${scope} value of ${v.key}` });
+            // The field shows the value masked, and the value itself while it is being edited.
+            let actual = kept ? '' : `${v.value ?? ''}`;
+            const input = webui.create('webui-input-text', { value: maskValue(actual), 'aria-label': `${scope} value of ${v.key}` });
+            input.dataset.masked = 'true';
+            input.addEventListener('focusin', () => {
+                if (input.dataset.masked !== 'true') return;
+                input.dataset.masked = 'false';
+                input.value = actual;
+            });
+            input.addEventListener('focusout', () => {
+                input.dataset.masked = 'true';
+                input.value = maskValue(actual);
+            });
             if (kept) {
                 // Typing replaces the value. Leaving the field empty keeps it.
                 input.setAttribute('placeholder', 'Set. Type to replace it.');
@@ -110,6 +131,9 @@
             if (isReadOnly) input.setAttribute('disabled', 'true');
             if (!isReadOnly) {
                 input.addEventListener('input', (ev) => {
+                    // Only what is typed is a value. The masked copy is never saved.
+                    if (input.dataset.masked === 'true') return;
+                    actual = `${ev.target.value ?? ''}`;
                     if (scope === 'Global') {
                         webui.setGlobalData(v.key, ev.target.value);
                         webui.setData(v.key, ev.target.value);
@@ -527,23 +551,14 @@
         }, 0);
         return container;
     }
-    function openDrawer(drawer) {
-        let el = document.querySelector(drawer);
+    /** Shows the Variable Manager in `target`, a Tools tab or a drawer. */
+    function openDrawer(target) {
+        const el = typeof target === 'string' ? document.querySelector(target) : target;
         if (!el) {
             webui.alert('Drawer not found!');
             return;
         }
-        if (el.classList.contains('open')) {
-            el.classList.remove('open');
-            setTimeout(() => openDrawer(drawer), 500);
-            return;
-        }
-        el.innerHTML = '';
-        el.appendChild(getHeaderContent());
-        el.appendChild(getBodyContent(drawer));
-        setTimeout(() => {
-            el.classList.add('open');
-        }, 100);
+        showTool(el, getHeaderContent(), getBodyContent(el));
     }
     webui.define("app-var-manager", {
         linkCss: false,
@@ -568,14 +583,27 @@
             const t = this;
             makeButton(t);
             t.addEventListener('click', _ev => {
-                openDrawer(t.drawer);
+                t.open();
                 return true;
             });
             // The number of variables on the page shown, set by the page handler as each page loads.
-            t._onPageVariables = ev => t.icon.setAttribute('count', ev.detail > 0 ? ev.detail : '');
+            const showCount = count => {
+                t.icon.setAttribute('count', count > 0 ? count : '');
+                toolsPanelOf(t)?.setCount('variables', count);
+            };
+            t._onPageVariables = ev => showCount(ev.detail);
             window.addEventListener('app-page-variables', t._onPageVariables);
-            const count = (webui.currentPageVariables || []).length;
-            t.icon.setAttribute('count', count > 0 ? count : '');
+            showCount((webui.currentPageVariables || []).length);
+        },
+        /** Opens the Variable Manager, as the Variables tab of Tools when it is one. `target` is where Tools has it draw. */
+        open({ target = null } = {}) {
+            const t = this;
+            const tools = toolsPanelOf(t);
+            if (tools && !target) {
+                tools.show('variables');
+                return;
+            }
+            openDrawer(target || t.drawer);
         },
         disconnected() {
             window.removeEventListener('app-page-variables', this._onPageVariables);

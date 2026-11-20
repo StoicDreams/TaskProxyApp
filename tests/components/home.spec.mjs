@@ -51,8 +51,6 @@ test('the site links show on settings and not on other pages', async ({ page }) 
     await expect(page.locator('app-git-manager')).toBeAttached();
     await expect(links).toHaveCount(0);
     await expect(page.locator('webui-app > [slot="content-footer"]')).toHaveCount(0);
-    // The copyright stays in the app's bottom bar.
-    await expect(page.locator('webui-app > footer[slot="footer"]')).toContainText('Stoic Dreams');
 });
 test('every update control shows whole in the settings side column', async ({ page }) => {
     // The window size where the buttons once ran out of the card and were cut off.

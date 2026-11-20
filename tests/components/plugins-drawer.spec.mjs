@@ -1,27 +1,18 @@
-import { test, expect, openApp } from '../support/app.mjs';
+import { test, expect, openApp, openTool } from '../support/app.mjs';
+
+// The Plugins tab of Tools (wc/plugins-drawer.js), which shows the plugin manager.
 
 const manifest = { id: 'jira', name: 'Jira', version: '0.1.0', apiVersion: 1, permissions: { variables: [{ key: 'jira_site', label: 'Jira site' }] }, pages: [] };
 const plugins = [{ id: 'jira', version: '0.1.0', enabled: true, signed: true, manifest }];
 
-test('the Plugins button sits beside Icons & Emojis and opens the plugin manager in the right drawer', async ({ page }) => {
+test('the Plugins tab of Tools shows the plugin manager in the right drawer', async ({ page }) => {
     await openApp(page, { plugins });
-    const button = page.getByRole('button', { name: 'Plugins', exact: true });
-    await expect(button).toHaveCount(1);
-    await expect.poll(() => page.evaluate(() => document.querySelector('app-plugins-drawer').nextElementSibling.localName)).toBe('app-icon-drawer');
-    await button.click();
-    const drawer = page.locator('webui-drawer.shared');
-    await expect(drawer).toHaveClass(/open/);
-    await expect(drawer.getByRole('heading', { name: 'Plugins' })).toHaveCount(1);
-    await expect(drawer.locator('app-plugin-manager [data-plugin="jira"]')).toBeVisible();
+    const tab = await openTool(page, 'plugins');
+    await expect(page.locator('webui-drawer.shared')).toHaveClass(/open/);
+    await expect(tab.getByRole('heading', { name: 'Plugins' })).toHaveCount(1);
+    await expect(tab.locator('app-plugin-manager [data-plugin="jira"]')).toBeVisible();
     // The page itself stays where it was.
     await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/);
-});
-
-test('it opens from the keyboard', async ({ page }) => {
-    await openApp(page, { plugins });
-    await page.getByRole('button', { name: 'Plugins', exact: true }).focus();
-    await page.keyboard.press('Enter');
-    await expect(page.locator('webui-drawer.shared app-plugin-manager')).toBeVisible();
 });
 
 test("it can open on one plugin's settings", async ({ page }) => {

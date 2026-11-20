@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls } from '../support/app.mjs';
+import { test, expect, openApp, openTool, calls } from '../support/app.mjs';
 
 const manifest = {
     id: 'test', name: 'Test Plugin', version: '0.1.0', apiVersion: 1, icon: 'flask',
@@ -12,7 +12,8 @@ const mention = {
     time: '2026-11-11 15:30', links: [{ text: 'ATL-142', page: 'issue', params: { key: 'ATL-142' } }],
 };
 const popup = page => page.locator('.webui-alerts-popup webui-alert');
-const bellCount = page => page.locator('webui-alerts webui-icon').getAttribute('count');
+// The hidden webui-alerts in Tools keeps the count, which Tools shows.
+const bellCount = page => page.locator('app-tools > webui-alerts webui-icon').getAttribute('count');
 const setNotifications = (page, items) => page.evaluate(items => {
     window.__backend.handlers.plugin_notifications = () => [{ id: 'test', name: 'Test Plugin', items }];
 }, items);
@@ -22,7 +23,7 @@ test("plugins' notifications join the alerts when the app starts, without poppin
     await openApp(page, { plugins, pluginNotifications: [{ id: 'test', name: 'Test Plugin', items: [mention] }] });
     await expect.poll(() => bellCount(page)).toBe('1');
     await expect(popup(page)).toHaveCount(0);
-    await page.locator('webui-alerts').click();
+    await openTool(page, 'alerts');
     const listed = page.locator('webui-drawer.shared webui-alert');
     await expect(listed).toContainText('Sam Lee mentioned you on ATL-142');
     await expect(listed).toContainText('Test Plugin · 2026-11-11 15:30');
@@ -36,7 +37,7 @@ test("plugins' notifications join the alerts when the app starts, without poppin
 test('closing a notification tells its plugin to mark it read', async ({ page }) => {
     await openApp(page, { plugins, pluginNotifications: [{ id: 'test', name: 'Test Plugin', items: [mention] }] });
     await expect.poll(() => bellCount(page)).toBe('1');
-    await page.locator('webui-alerts').click();
+    await openTool(page, 'alerts');
     await page.locator('webui-drawer.shared webui-alert').locator('#close').click();
     await expect.poll(() => calls(page, 'plugin_notification_read')).toEqual([{ id: 'test', notification: 'bell:n-1' }]);
     await expect.poll(() => bellCount(page)).toBe('');

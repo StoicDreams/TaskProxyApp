@@ -14,8 +14,8 @@ use crate::prelude::*;
 use crate::services::secrets::{keeps_secrets, redact_app_data, redact_project_data, secret_keys};
 use crate::services::shared_data::DataPatch;
 use crate::services::{
-    ci_status, commit_queue, emojis, git_controller, myfi, page_scripts, projects, runs,
-    script_controller, shared_data, task_manager, terminal_controller,
+    ci_status, commit_queue, emojis, favorites, git_controller, myfi, page_scripts, performance,
+    projects, runs, script_controller, shared_data, task_manager, terminal_controller,
 };
 use serde_json::Map;
 
@@ -206,6 +206,10 @@ remote_commands! {
     Work run_page_script => page_scripts::run_page_script(
         app.clone(), app.state(), app.state(), app.state(), a.get("terminalId")?, a.get("script")?, a.get("pageValues")?,
     ).await;
+    View favorite_candidates => favorites::favorite_candidates(app.state(), a.get("page")?).await;
+    View favorite_script => favorites::favorite_script(app.state(), a.get("project")?, a.get("source")?).await;
+    Work run_favorite => favorites::run_favorite(app.clone(), app.state(), app.state(), app.state(), a.get("favorite")?).await;
+    View script_performance_info => Ok::<_, String>(performance::script_performance_info());
     Work stop_run => runs::stop_run(app.clone(), app.state(), app.state(), app.state(), a.get("terminalId")?, a.get("projectId")?);
     Work kill_all_scripts => runs::kill_all_scripts(app.clone(), app.state(), app.state(), app.state()).await;
     Work clear_run_output => runs::clear_run_output(app.clone(), app.state(), app.state(), a.get("terminalId")?, a.get("projectId")?);
@@ -504,6 +508,7 @@ mod tests {
         for name in [
             "patch_project_data",
             "run_page_script",
+            "run_favorite",
             "write_terminal_input",
             "stop_process",
             "plugin_action",
@@ -537,6 +542,12 @@ mod tests {
     /// Commands that never return a variable's value. Page script previews and runs show the masked copy. Plugin
     /// settings never send their secrets. A script's output is what the script printed, as on the desktop.
     const NO_VALUES: &[&str] = &[
+        // A favorite's script is read as its file holds it, and runs as page scripts do, showing the masked copy.
+        "favorite_candidates",
+        "favorite_script",
+        "run_favorite",
+        // How many CPU threads the computer has, and what it can limit.
+        "script_performance_info",
         "remote_app_file",
         "remote_browsers",
         "remote_browser_approve",

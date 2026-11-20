@@ -21,7 +21,7 @@ pub(crate) async fn get_scripts(state: State<'_, CurrentProject>) -> Result<Vec<
     result.map_err(|err| format!("Failed to scan scripts: {}", err))
 }
 
-fn collect_scripts(root: &Path, scripts: &mut Vec<String>) {
+pub(crate) fn collect_scripts(root: &Path, scripts: &mut Vec<String>) {
     walk_project_files(root, COMMON_SKIP_DIRS, |path| {
         let is_script = path
             .extension()

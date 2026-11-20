@@ -4,11 +4,12 @@
     const statusThemes = { Running: 'info', Finished: 'success', Failed: 'danger' };
     // How often a running script's time updates, in milliseconds. Often enough for the milliseconds to move.
     const statusTick = 50;
+    const hiddenStatusTick = 500;
     webui.define("app-terminals", {
         linkCss: false,
         watchVisibility: false,
         isInput: false,
-        preload: 'app:script-runner app:terminal-view select toggle-icon input-message dialogs',
+        preload: 'app:script-runner app:terminal-view select toggle-icon input-message dialogs split-panes',
         constructor() {
             const t = this;
             t.icon = t.template.querySelector('webui-icon');
@@ -28,15 +29,22 @@
                 t.openDrawer();
                 return true;
             });
+            t._tools = toolsPanelOf(t);
         },
         disconnected() { },
         /**
-         * Opens the Terminal Manager. `run` is set when a script was just started, which opens it on a running view
-         * unless one is already chosen, so the script shows.
+         * Opens the Terminal Manager, as the Terminals tab of Tools when it is one. `run` is set when a script was just
+         * started, which opens it on a running view unless one is already chosen, so the script shows. `target` is
+         * where Tools has it draw itself.
          */
-        openDrawer({ run = false } = {}) {
+        openDrawer({ run = false, target = null } = {}) {
             const t = this;
-            let el = document.querySelector(t.drawer);
+            const tools = toolsPanelOf(t);
+            if (tools && !target) {
+                tools.show('terminals', { run });
+                return;
+            }
+            let el = target || document.querySelector(t.drawer);
             if (!el) {
                 webui.alert('Drawer not found!');
                 return;
@@ -44,12 +52,6 @@
             if (run && !webui.proxy.terminalHelpers.runningFilters.includes(t.filter())) {
                 t.setFilter('Running');
             }
-            if (el.classList.contains('open')) {
-                el.classList.remove('open');
-                setTimeout(() => t.openDrawer(), 500);
-                return;
-            }
-            el.innerHTML = '';
             const header = webui.create('div');
             header.style.padding = 'var(--padding)';
             header.setAttribute('slot', 'header');
@@ -58,8 +60,23 @@
             header.setAttribute('aria-level', '2');
             header.style.alignItems = 'center';
             header.innerHTML = `<span>Terminal Manager</span>
-<webui-switch id="term-filter" style="margin-left: auto;" label="Show scripts" title="Live: the live terminal. Saved: the scripts saved in this project. Page: the scripts run from this project's pages. Running: what is running in this project. All Running: what is running in every project. Finished: the runs that have ended, in every project."></webui-switch>`;
+<webui-toggle-icon id="term-single" label="View" style="margin-left: auto;" icon-on="square" icon-off="table-columns" title-on="Showing the script or the terminal, one at a time. Click to show them side by side." title-off="Showing the script and the terminal side by side. Click to show one at a time."></webui-toggle-icon>
+<webui-switch id="term-filter" label="Show scripts" title="Live: the live terminal. Saved: the scripts saved in this project. Page: the scripts run from this project's pages. Running: what is running in this project. All Running: what is running in every project. Finished: the runs that have ended, in every project."></webui-switch>`;
             t._filterSwitch = header.querySelector('#term-filter');
+            // One pane at a time, the script or the terminal, is the user's choice, and kept.
+            t._singleToggle = header.querySelector('#term-single');
+            customElements.whenDefined('webui-toggle-icon').then(() => {
+                if (typeof t._singleToggle.setValue !== 'function') customElements.upgrade(t._singleToggle);
+                t._singleToggle.setValue(webui.getData('app-terminal-single') === true);
+            });
+            t._singleToggle.addEventListener('click', () => {
+                // The toggle flips itself as it is clicked, so its new value is read once it has.
+                setTimeout(() => {
+                    const single = t._singleToggle.value === true;
+                    webui.setData('app-terminal-single', single);
+                    t.applySingle();
+                }, 0);
+            });
             customElements.whenDefined('webui-switch').then(() => {
                 if (typeof t._filterSwitch.setOptions !== 'function') customElements.upgrade(t._filterSwitch);
                 t._filterSwitch.setOptions(webui.proxy.terminalHelpers.filters);
@@ -69,11 +86,13 @@
                 webui.setData('app-terminals-filter', t._filterSwitch.value);
                 t.refreshDropdown();
             });
-            el.appendChild(header);
-            el.appendChild(t.getBodyContent());
-            setTimeout(() => {
-                el.classList.add('open');
-            }, 100);
+            showTool(el, header, t.getBodyContent());
+        },
+        /** Shows the script and the terminal one at a time, when the user chose that, or side by side when there is room. */
+        applySingle() {
+            const t = this;
+            if (!t._split) return;
+            t._split.toggleAttribute('single', webui.getData('app-terminal-single') === true);
         },
         getBodyContent() {
             const t = this;
@@ -94,11 +113,12 @@
         <webui-button id="btn-remove-script" theme="secondary" label="Remove" title="Remove this finished page script from the list"></webui-button>
         <webui-button id="btn-remove-finished" theme="secondary" label="Remove Finished Page Scripts"></webui-button>
     </webui-flex>
-    <!-- The script scrolls when it is long, so the terminal below always keeps its space. -->
-    <webui-flex column style="flex: 0 1 auto; min-height: 120px; overflow: auto;">
+    <!-- The script and the terminal side by side, each scrolling on its own, or one at a time when narrow. -->
+    <webui-split-panes id="term-split" class="term-split" fill min="320" show="end" start-label="Script" end-label="Terminal">
+    <webui-flex slot="start" column class="term-script-pane" style="padding-right: var(--padding);">
         <app-script-runner id="term-runner" label="Script Content:" style="min-height: 120px;"></app-script-runner>
     </webui-flex>
-    <webui-flex column style="flex: 1 0 40vh; min-height: 40vh;">
+    <webui-flex slot="end" column class="term-output-pane" style="height: 100%; padding-left: var(--padding); box-sizing: border-box;">
         <webui-flex gap="0.5rem" align="center" wrap="wrap" style="margin-bottom: 0.25rem;">
             <span style="font-weight: bold;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal: <span id="term-status" class="term-status"></span></span>
             <webui-flex grow></webui-flex>
@@ -106,8 +126,9 @@
             <webui-button id="btn-select-all" theme="secondary" label="Select All" title="Select all of this terminal's output and copy it to the clipboard"></webui-button>
             <webui-button id="btn-clear" theme="secondary" label="Clear Output"></webui-button>
         </webui-flex>
-        <app-terminal-view id="term-console" style="flex-grow: 1;"></app-terminal-view>
+        <app-terminal-view id="term-console" style="flex-grow: 1; min-height: 12em;"></app-terminal-view>
     </webui-flex>
+    </webui-split-panes>
 </div>
 <div id="term-install-wrapper" style="display:none; flex-direction:column; gap:var(--padding); align-items:center; text-align:center; padding: 2rem;">
     <webui-icon icon="triangle_exclamation|fill" style="font-size: 3rem; margin-bottom: 1rem; color: var(--color-warning);"></webui-icon>
@@ -146,6 +167,15 @@
                     return;
                 }
                 contentWrapper.style.display = 'flex';
+                // The split between the script and the terminal is remembered, as the user last left it.
+                const split = container.querySelector('#term-split');
+                t._split = split;
+                t.applySingle();
+                const ratio = Number(webui.getData('app-terminal-split'));
+                if (ratio > 0 && ratio < 1) split.setAttribute('ratio', `${ratio}`);
+                split.addEventListener('change', ev => {
+                    if (ev.target === split && typeof ev.detail?.ratio === 'number') webui.setData('app-terminal-split', ev.detail.ratio);
+                });
                 t._activeDropdown = container.querySelector('#term-dropdown');
                 t._runner = container.querySelector('#term-runner');
                 t._activeConsole = container.querySelector('#term-console');
@@ -317,8 +347,15 @@
             await webui.wait(50);
             t._isRefreshing = false;
             if (next) {
-                // Switching refreshes the list again, which then selects what it switched to.
-                t.switchTerminal(next.id, next.projectId);
+                // Switching to a terminal refreshes the list again, which then selects it. Switching to nothing does
+                // not, so a refresh asked for meanwhile, such as by a status change, runs here rather than being lost.
+                const again = t._refreshAgain;
+                t._refreshAgain = false;
+                await t.switchTerminal(next.id, next.projectId);
+                if (!next.id && (again || t._refreshAgain)) {
+                    t._refreshAgain = false;
+                    t.refreshDropdown();
+                }
                 return;
             }
             if (t._refreshAgain) {
@@ -352,21 +389,36 @@
             if (!label?.isConnected || !webui.proxy?.terminalHelpers) {
                 clearInterval(t._statusTimer);
                 t._statusTimer = null;
+                t._statusTick = 0;
                 return;
             }
             const helpers = webui.proxy.terminalHelpers;
             const state = t.viewState();
             const run = t._none ? null : helpers.runStatus(state.terminals[state.activeId]);
+            // While a script runs this ticks 20 times a second, so nothing is redrawn while the label can't be seen,
+            // such as with the drawer closed, and only what changed is written.
+            const shown = label.checkVisibility?.() !== false;
             const text = run ? `${run.state} ${helpers.formatElapsed(run.elapsed)}` : '';
-            if (label.textContent !== text) label.textContent = text;
-            label.dataset.state = run ? run.state.toLowerCase() : '';
-            // Theme colors are made for backgrounds, so each is mixed with the label's text color to stay readable.
-            label.style.color = run ? `color-mix(in srgb, var(--color-${statusThemes[run.state]}) 60%, currentColor)` : '';
-            if (run?.state === 'Running') {
-                t._statusTimer ??= setInterval(() => t.renderStatus(), statusTick);
-            } else {
+            const upToDate = label.textContent === text;
+            if (shown) {
+                if (!upToDate) label.textContent = text;
+                const stateName = run ? run.state.toLowerCase() : '';
+                if ((label.dataset.state ?? '') !== stateName) label.dataset.state = stateName;
+                // Theme colors are made for backgrounds, so each is mixed with the label's text color to stay readable.
+                const color = run ? `color-mix(in srgb, var(--color-${statusThemes[run.state]}) 60%, currentColor)` : '';
+                if (label._color !== color) {
+                    label._color = color;
+                    label.style.color = color;
+                }
+            }
+            // A running script's time counts up while it shows. A hidden label is checked twice a second until it shows,
+            // so a run that ended while it was hidden still says so.
+            const running = run?.state === 'Running';
+            const tick = running ? (shown ? statusTick : hiddenStatusTick) : (shown || upToDate ? 0 : hiddenStatusTick);
+            if (t._statusTick !== tick) {
                 clearInterval(t._statusTimer);
-                t._statusTimer = null;
+                t._statusTimer = tick ? setInterval(() => t.renderStatus(), tick) : null;
+                t._statusTick = tick;
             }
         },
         /** Shows the active terminal. Its output is only replayed when it changes, or when `force` is set. */
@@ -380,6 +432,7 @@
             // How many scripts are running, in every project.
             const running = webui.proxy.terminalHelpers.runningCount();
             this.icon.setAttribute('count', running > 0 ? running : '');
+            toolsPanelOf(this)?.setCount('terminals', running);
             this.refreshDropdown();
             this.refreshButtons();
             this.renderConsole();

@@ -36,11 +36,9 @@ test('the Git Controller can be used with its help open', async ({ page }) => {
     await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(before);
     await expect(page.locator('webui-page-help .panel')).toBeVisible();
 });
-test('the app footer never covers the help bubble', async ({ page }) => {
+test('nothing covers the help bubble', async ({ page }) => {
     await openApp(page, { currentPage: '/script-manager' }, '/script-manager');
-    // Wait for the footer, which renders shortly after the page.
-    await page.locator('webui-app > footer[slot="footer"]').waitFor();
-    // A real click, which Playwright refuses when another element, such as the footer, would take it.
+    // A real click, which Playwright refuses when another element would take it.
     const bubble = page.locator('webui-page-help button.bubble');
     await bubble.click();
     await expect(page.locator('webui-page-help .panel')).toBeVisible();

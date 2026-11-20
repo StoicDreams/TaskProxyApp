@@ -95,6 +95,16 @@ export async function clickOn(page, locator, options = {}) {
     await page.waitForTimeout(options.after ?? 400);
 }
 
+/**
+ * Opens a tool on its Tools tab as a person would: the Tools button at the top right, unless Tools is already open, then
+ * the tool's tab. `id` is 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons', or 'theme'.
+ */
+export async function openToolTab(page, id, options = {}) {
+    const shown = await page.evaluate(() => document.querySelector('app-tools')?.isShown?.() ?? false);
+    if (!shown) await clickOn(page, page.locator('header app-tools'), { after: 700 });
+    await clickOn(page, page.locator(`webui-drawer.shared webui-button.tools-tab-${id}`), options);
+}
+
 /** Types into an input at a readable speed. */
 export async function typeInto(page, locator, text, { delay = 45 } = {}) {
     await clickOn(page, locator, { after: 150 });

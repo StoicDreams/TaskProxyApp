@@ -1,8 +1,9 @@
-import { test, expect, openApp, calls, onCommand } from '../support/app.mjs';
+import { test, expect, openApp, openTool, calls, onCommand } from '../support/app.mjs';
 
+// The Icons & Emojis tab of Tools (wc/icon-drawer.js).
 const open = async (page, state) => {
     await openApp(page, state);
-    await page.locator('app-icon-drawer').click();
+    await openTool(page, 'icons');
     await page.locator('webui-icon-search webui-input-text input').waitFor();
     await page.waitForFunction(() => document.querySelector('webui-icon-search')._emojis?.length > 0);
 };

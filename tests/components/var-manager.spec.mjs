@@ -1,8 +1,8 @@
-import { test, expect, openApp, openPage, calls, dialogButton, openDialog } from '../support/app.mjs';
+import { test, expect, openApp, openTool, openPage, calls, dialogButton, openDialog } from '../support/app.mjs';
 import { alertPopup } from '../support/wait.mjs';
 
 const open = async page => {
-    await page.locator('app-var-manager').click();
+    await openTool(page, 'variables');
     await page.locator('#env-selector').waitFor({ state: 'attached' });
     // The lists are filled in the same step that makes the drawer's controls work, and the drawer opens after it.
     await page.locator('#var-project-list > *').first().waitFor({ state: 'attached' });
@@ -19,6 +19,22 @@ test('project and global variables are listed with their values', async ({ page 
     await open(page);
     await expect(page.locator('#var-project-list webui-input-text input')).toHaveValue('first');
     await expect(page.locator('#var-global-list webui-input-text input')).toHaveValue('second');
+});
+test('values show masked as page scripts show them, and in full while their field is being edited', async ({ page }) => {
+    await openApp(page, { data: { token: 'abcdef123456xyz' }, variables: ['token|text|'], appData: { short: 'abcdef' }, appVariables: ['short|text|'] });
+    await open(page);
+    const field = page.locator('#var-project-list webui-input-text input');
+    await expect(field).toHaveValue('abc***xyz');
+    // Six characters or fewer show as they are, as in page scripts.
+    await expect(page.locator('#var-global-list webui-input-text input')).toHaveValue('abcdef');
+    await field.click();
+    await expect(field).toHaveValue('abcdef123456xyz');
+    await field.fill('replaced-value-99');
+    await expect.poll(() => page.evaluate(() => webui.getProjectData('token'))).toBe('replaced-value-99');
+    await field.press('Tab');
+    await expect(field).toHaveValue('rep***-99');
+    // Leaving the field never saves the masked copy.
+    await expect.poll(() => page.evaluate(() => webui.getProjectData('token'))).toBe('replaced-value-99');
 });
 test('scope switches show on for a new install', async ({ page }) => {
     await openApp(page, { newInstall: true });
@@ -108,9 +124,8 @@ test.describe('environments', () => {
         await page.evaluate(() => webui.projectData.data._environments.push({ name: 'other', variables: {} }));
         await page.locator('#btn-manage-env').click();
         await dialogButton(page, 'Done').click();
-        // Clicking while the drawer is open closes it and rebuilds it about a second later,
-        // so wait for the rebuilt selector to offer the new environment.
-        await page.evaluate(() => document.querySelector('app-var-manager').click());
+        // Showing it again rebuilds it, so wait for the rebuilt selector to offer the new environment.
+        await page.evaluate(() => document.querySelector('app-tools').show('variables'));
         await expect.poll(() => page.evaluate(() => {
             const el = document.querySelector('#env-selector');
             if (!el || !document.querySelector('.shared')?.classList.contains('open')) return false;
@@ -218,10 +233,11 @@ test.describe('values kept on the desktop', () => {
         await expect.poll(() => page.evaluate(() => window.__copied)).toEqual([]);
     });
 });
-test('the Variables button counts the variables on the page shown, and none on pages without them', async ({ page }) => {
+test('the Variables tab counts the variables on the page shown, and none on pages without them', async ({ page }) => {
     await openPage(page, '<webui-input-text data-bind="first"></webui-input-text>\n\n<webui-input-text data-bind="second"></webui-input-text>\n\n<webui-data data-third="3"></webui-data>');
-    const count = page.locator('app-var-manager webui-icon');
-    await expect(count).toHaveAttribute('count', '3');
+    await openTool(page, 'variables');
+    const count = page.locator('webui-drawer.shared webui-button.tools-tab-variables webui-badge');
+    await expect(count).toHaveText('3');
     await page.evaluate(() => webui.navigateTo('/'));
-    await expect(count).not.toHaveAttribute('count', /\d/);
+    await expect(count).toBeHidden();
 });

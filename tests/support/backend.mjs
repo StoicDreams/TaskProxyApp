@@ -9,7 +9,9 @@
  *   files and binaryFiles are also served at the file server addresses the file preview loads (see openApp).
  * - data, variables, navigation, docs, currentPage: fields of the open project.
  * - appData, appVariables: saved global values and their definitions.
- * - scripts: what get_scripts returns.
+ * - scripts: what get_scripts returns, and the open project's script files to make favorites from.
+ * - otherProjectFiles: { projectPath: { file: contents } }, the files of saved projects that aren't open, which favorite
+ *   scripts from those projects read.
  * - git.repoStatus: { repo: { changes, ahead, behind } } for the open project, which get_git_repo_status returns.
  *   Missing numbers are 0.
  * - gitStatus: { path: { changes, ahead, behind } } for each project, which get_project_git_status returns.
@@ -405,6 +407,35 @@ function setup(state) {
         Object.entries(patch.set || {}).forEach(([key, value]) => { target.data[key] = copy(value); });
         Object.entries(patch.fields || {}).forEach(([key, value]) => { if (!['data', 'id', 'path'].includes(key)) target[key] = copy(value); });
     };
+    /** A page's PowerShell blocks, each named by the last line of text above it, as services/favorites.rs finds them. */
+    const favoriteBlocks = markdown => {
+        const blocks = [];
+        let last = 0;
+        for (const found of markdown.matchAll(/```(?:powershell|pwsh|ps1)\b[^\n]*\n([\s\S]*?)```/gi)) {
+            const before = markdown.substring(last, found.index).replace(/<[^>]+>/g, '').replace(/[#*`_>]/g, '');
+            const lines = before.split('\n').map(line => line.trim()).filter(Boolean);
+            blocks.push({ text: found[1], label: lines.at(-1) || '' });
+            last = found.index + found[0].length;
+        }
+        return blocks;
+    };
+    /** A favorite's script, from the open project's files or, for another saved project, `otherProjectFiles`. */
+    const favoriteSource = (path, source) => {
+        const own = openProject && path.toLowerCase() === openProject.path.toLowerCase() ? files : (state.otherProjectFiles?.[path] || {});
+        if (source.kind === 'file') {
+            if (!(source.path in own)) throw 'Get Project File: File not found';
+            return own[source.path];
+        }
+        const markdown = own[`.taskproxy/pages/${source.page}.md`];
+        if (markdown === undefined) throw "This favorite's page is gone. Choose the script again from another page.";
+        const blocks = favoriteBlocks(markdown);
+        const same = blocks.filter(block => block.text === source.text);
+        const block = blocks[source.index]?.text === source.text ? blocks[source.index]
+            : same.length === 1 ? same[0]
+                : (source.count == null || source.count === blocks.length) ? blocks[source.index] : undefined;
+        if (!block) throw "This favorite's script is no longer on its page. Open the page, and choose the script again.";
+        return block.text;
+    };
     // Filling page scripts, as services/page_scripts.rs does. Rust's tests hold the cases.
     const pageScripts = {
         toSnake: (text, sep) => text.trim().replace(/[A-Z]/g, c => `${sep}${c.toLowerCase()}`).replace(/[-_ ]+/g, sep),
@@ -625,6 +656,31 @@ function setup(state) {
             },
             commit_jobs: () => commits.snapshot(),
             page_script_preview: ({ script, pageValues }) => pageScripts.fill(script, pageValues, true),
+            // Favorite scripts, as services/favorites.rs finds and runs them. Rust's tests hold how values are filled.
+            // What this computer offers for limiting scripts (services/performance.rs). performance overrides it.
+            script_performance_info: () => ({ threads: 12, canLimitThreads: true, hasIdlePriority: true, ...(state.performance || {}) }),
+            favorite_candidates: ({ page }) => {
+                if (!openProject) throw 'Open a project to add its scripts.';
+                const markdown = page ? files[`.taskproxy/pages/${page}.md`] : undefined;
+                return { project: openProject.path, page: page || null, blocks: markdown === undefined ? [] : favoriteBlocks(markdown), files: [...(state.scripts || [])].sort() };
+            },
+            favorite_script: ({ project, source }) => favoriteSource(project, source),
+            run_favorite: async ({ favorite }) => {
+                const saved = (state.projects || (project ? [project] : [])).find(item => item.path.toLowerCase() === `${favorite.project}`.toLowerCase());
+                if (!saved) throw `${favorite.project} is not one of your projects any more.`;
+                if (!(appData?.data?.['app-trusted-projects'] || []).includes(saved.path)) {
+                    throw `${saved.name} is not trusted to run its scripts yet. Open it and run one of its scripts to trust it.`;
+                }
+                const script = favoriteSource(saved.path, favorite.source);
+                const target = runs.target(saved.path);
+                const isFile = favorite.source.kind === 'file';
+                const args = {
+                    terminalId: isFile ? favorite.source.path : `Favorite: ${favorite.name}`, scriptContent: script, args: [],
+                    inSeparateWindow: false, isPageScript: !isFile, displayScript: isFile ? null : script,
+                };
+                const entry = runs.begin(target, args);
+                return runs.launch(target, args, entry);
+            },
             run_page_script: async ({ terminalId, script, pageValues }) => {
                 if (!openProject) throw 'Project not loaded.';
                 if (!(appData?.data?.['app-trusted-projects'] || []).includes(openProject.path)) {

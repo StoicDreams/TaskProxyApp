@@ -65,6 +65,11 @@
             if (!t._icon) {
                 t._icon = webui.create('webui-icon', { 'aria-hidden': 'true' });
                 t.appendChild(t._icon);
+                // With labeled, as at the bottom of Settings, it says what it does beside the icon.
+                if (t.hasAttribute('labeled')) {
+                    t._label = webui.create('span', { class: 'account-label' });
+                    t.appendChild(t._label);
+                }
                 t.addEventListener('click', () => t.open());
             }
             t.show();
@@ -84,6 +89,7 @@
             t.setAttribute('title', title);
             t.setAttribute('aria-label', title);
             t.dataset.state = !account ? 'signed-out' : account.offline ? 'offline' : 'signed-in';
+            if (t._label) t._label.textContent = !account ? 'Sign in to Stoic Dreams' : `Signed in as ${account.displayName}`;
             t._icon.setAttribute('icon', !account
                 ? 'user|theme:tertiary|backing|bordered'
                 : `user-check|theme:${account.offline ? 'warning' : 'success'}|fill|backing|bordered`);
@@ -173,6 +179,7 @@ ${offline}
     padding:1px;
     align-items:center;
     justify-content:center;
+    gap:0.5em;
 }
 </style>
 <slot></slot>

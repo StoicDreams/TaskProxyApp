@@ -27,23 +27,14 @@
         container.append(intro, manager);
         return container;
     }
-    function openDrawer(drawer, pluginId) {
-        const el = document.querySelector(drawer);
+    /** Shows the plugin manager in `target`, a Tools tab or a drawer, on one plugin when given its id. */
+    function openDrawer(target, pluginId) {
+        const el = typeof target === 'string' ? document.querySelector(target) : target;
         if (!el) {
             webui.log.warn('Drawer not found!');
             return;
         }
-        if (el.classList.contains('open')) {
-            el.classList.remove('open');
-            setTimeout(() => openDrawer(drawer, pluginId), 500);
-            return;
-        }
-        el.innerHTML = '';
-        el.appendChild(getHeaderContent());
-        el.appendChild(getBodyContent(pluginId));
-        setTimeout(() => {
-            el.classList.add('open');
-        }, 100);
+        showTool(el, getHeaderContent(), getBodyContent(pluginId));
     }
     webui.define("app-plugins-drawer", {
         linkCss: false,
@@ -60,9 +51,18 @@
             makeButton(t, t.getAttribute('title') || 'Plugins');
             t.addEventListener('click', () => t.open());
         },
-        /** Opens the drawer, on one plugin's settings when given its id. */
-        open(pluginId) {
-            openDrawer(this.drawer || '.shared', pluginId);
+        /**
+         * Opens the plugin manager, as the Plugins tab of Tools when it is one, on one plugin's settings when given its
+         * id. `target` is where Tools has it draw.
+         */
+        open(pluginId, { target = null } = {}) {
+            const t = this;
+            const tools = toolsPanelOf(t);
+            if (tools && !target) {
+                tools.show('plugins', { pluginId });
+                return;
+            }
+            openDrawer(target || t.drawer || '.shared', pluginId);
         },
         shadowTemplate: `
 <webui-icon icon="cloud_puzzle-piece|theme:success|fill|backing|bordered"></webui-icon>

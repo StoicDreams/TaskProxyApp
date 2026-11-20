@@ -26,23 +26,14 @@
 `;
         return container;
     }
-    function openDrawer(drawer) {
-        let el = document.querySelector(drawer);
+    /** Shows the icon and emoji search in `target`, a Tools tab or a drawer. */
+    function openDrawer(target) {
+        const el = typeof target === 'string' ? document.querySelector(target) : target;
         if (!el) {
             webui.log.warn('Drawer not found!');
             return;
         }
-        if (el.classList.contains('open')) {
-            el.classList.remove('open');
-            setTimeout(() => openDrawer(drawer), 500);
-            return;
-        }
-        el.innerHTML = '';
-        el.appendChild(getHeaderContent());
-        el.appendChild(getBodyContent());
-        setTimeout(() => {
-            el.classList.add('open');
-        }, 100);
+        showTool(el, getHeaderContent(), getBodyContent());
     }
     webui.define("app-icon-drawer", {
         linkCss: false,
@@ -67,9 +58,19 @@
             const t = this;
             makeButton(t);
             t.addEventListener('click', _ev => {
-                openDrawer(t.drawer);
+                t.open();
                 return true;
             });
+        },
+        /** Opens the search, as the Icons & Emojis tab of Tools when it is one. `target` is where Tools has it draw. */
+        open({ target = null } = {}) {
+            const t = this;
+            const tools = toolsPanelOf(t);
+            if (tools && !target) {
+                tools.show('icons');
+                return;
+            }
+            openDrawer(target || t.drawer);
         },
         disconnected() { },
         shadowTemplate: `

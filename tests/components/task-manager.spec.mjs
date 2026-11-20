@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, openTool, calls, dialogButton } from '../support/app.mjs';
 
 const now = Math.floor(Date.now() / 1000);
 const MB = 1024 * 1024;
@@ -21,7 +21,7 @@ const processes = [
 
 const open = async (page, state = {}) => {
     await openApp(page, { processes, ...state });
-    await page.getByRole('button', { name: 'Task Manager', exact: true }).click();
+    await openTool(page, 'tasks');
     await expect(page.locator('webui-drawer.shared .task-manager tbody')).toBeVisible();
 };
 const view = page => page.locator('webui-drawer.shared .task-manager');
@@ -34,12 +34,8 @@ const reads = async (page, ms = 0) => {
 };
 const row = (page, pid) => view(page).locator(`tr.tm-row[data-pid="${pid}"]`);
 
-test('the button sits between Terminals and the alerts, and opens on processes started from a terminal, under what started them', async ({ page }) => {
+test('the Task Manager tab of Tools opens on processes started from a terminal, under what started them', async ({ page }) => {
     await open(page);
-    await expect.poll(() => page.evaluate(() => {
-        const button = document.querySelector('app-task-manager');
-        return [button.previousElementSibling.localName, button.nextElementSibling.localName];
-    })).toEqual(['app-terminals', 'webui-alerts']);
     await expect(page.locator('webui-drawer.shared').getByRole('heading', { name: 'Task Manager' })).toHaveCount(1);
     // The shells themselves stay out, and the left behind server shows with what it started below it.
     await expect.poll(() => shown(page)).toEqual([400, 500, 510]);

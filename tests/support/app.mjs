@@ -246,6 +246,21 @@ export async function goToPage(page, path) {
 }
 
 /** Open the app on a user page, which is stored in `.taskproxy/pages/`. */
+/**
+ * Opens a tool on its Tools tab, as a person does: the Tools button at the top right, unless Tools is already open,
+ * then the tool's tab. `id` is the tab, such as 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons', or
+ * 'theme'. Returns the tab's content.
+ */
+export async function openTool(page, id) {
+    const shown = await page.evaluate(() => document.querySelector('app-tools')?.isShown?.() ?? false);
+    if (!shown) await page.locator('header app-tools').click();
+    const tab = page.locator(`webui-drawer.shared webui-button.tools-tab-${id}`);
+    await tab.click();
+    const content = page.locator(`webui-drawer.shared webui-content.tools-${id}`);
+    await expect(content).toBeVisible();
+    return content;
+}
+
 export async function openPage(page, markdown, state = {}) {
     const id = state.pageId || 'abc';
     await openApp(page, {

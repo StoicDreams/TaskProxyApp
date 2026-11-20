@@ -2,14 +2,17 @@ import { test, expect, openApp, openPage, calls } from '../support/app.mjs';
 
 // Everything a mouse can do, keyboard and screen reader users must be able to do too.
 
-test('the header tools are named buttons that open their drawers with Enter', async ({ page }) => {
+test('the header buttons are named, and Tools and its tabs open from the keyboard', async ({ page }) => {
     await openApp(page);
-    for (const name of ['Plugins', 'Icons & Emojis', 'Manage Variables', 'Terminals', 'Save Project & App Data']) {
+    for (const name of ['Tools', 'Save Project & App Data']) {
         await expect(page.getByRole('button', { name, exact: true })).toHaveCount(1);
     }
-    await page.getByRole('button', { name: 'Manage Variables', exact: true }).focus();
+    await page.getByRole('button', { name: 'Tools', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.locator('#env-selector')).toBeAttached();
+    const variables = page.locator('webui-drawer.shared webui-button.tools-tab-variables');
+    await variables.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('webui-drawer.shared #env-selector')).toBeAttached();
     await expect(page.getByRole('heading', { name: 'Variable Manager' })).toHaveCount(1);
 });
 

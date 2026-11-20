@@ -1,67 +1,7 @@
 "use strict"
 {
-    /** The text between the parentheses of a script's param block, if it has one. */
-    function findParamBlock(script) {
-        const start = script.match(/^\s*(?:(?:<#[\s\S]*?#>|#[^\n]*|\[[^\]\n]*\])\s*)*param\s*\(/i);
-        if (!start) return null;
-        let depth = 1;
-        let quote = null;
-        for (let i = start[0].length; i < script.length; ++i) {
-            const c = script[i];
-            if (quote) {
-                if (c === quote) quote = null;
-            } else if (c === '"' || c === "'") {
-                quote = c;
-            } else if (c === '#') {
-                while (i < script.length && script[i] !== '\n') ++i;
-            } else if (c === '(') {
-                ++depth;
-            } else if (c === ')' && --depth === 0) {
-                return script.substring(start[0].length, i);
-            }
-        }
-        return null;
-    }
-    /** Each parameter's name is the first variable outside of its attributes and default value. */
-    function parseParams(script) {
-        const block = findParamBlock(script);
-        if (block === null) return [];
-        let params = [];
-        let depth = 0;
-        let quote = null;
-        let hasName = false;
-        let attributes = '';
-        for (let i = 0; i < block.length; ++i) {
-            const c = block[i];
-            if (quote) {
-                if (c === quote) quote = null;
-            } else if (c === '"' || c === "'") {
-                quote = c;
-            } else if (c === '#') {
-                while (i < block.length && block[i] !== '\n') ++i;
-            } else if ('([{'.includes(c)) {
-                ++depth;
-                if (!hasName) attributes += c;
-            } else if (')]}'.includes(c)) {
-                --depth;
-                if (!hasName) attributes += c;
-            } else if (depth === 0 && c === ',') {
-                hasName = false;
-                attributes = '';
-            } else if (depth === 0 && c === '$' && !hasName) {
-                const name = block.substring(i + 1).match(/^[a-zA-Z0-9_]+/);
-                if (name) {
-                    hasName = true;
-                    if (!params.find(p => p.name === name[0])) {
-                        params.push({ name: name[0], isSwitch: /\[\s*switch\s*\]/i.test(attributes) });
-                    }
-                }
-            } else if (!hasName) {
-                attributes += c;
-            }
-        }
-        return params;
-    }
+    // A script's parameters, from its param block, come from parseScriptParams in app.js, which favorites use too.
+    const parseParams = parseScriptParams;
     /** Page scripts and the live terminal have names, but no file to save to. */
     function isScriptFile(name) {
         if (!/\.ps1$/i.test(name || '')) return false;
