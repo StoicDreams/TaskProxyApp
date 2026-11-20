@@ -3,7 +3,7 @@
     // The color of each run state in the Terminal label.
     const statusThemes = { Running: 'info', Finished: 'success', Failed: 'danger' };
     // How often a running script's time updates, in milliseconds. Often enough for the milliseconds to move.
-    const statusTick = 50;
+    const statusTick = 100;
     const hiddenStatusTick = 500;
     webui.define("app-terminals", {
         linkCss: false,
@@ -37,11 +37,11 @@
          * started, which opens it on a running view unless one is already chosen, so the script shows. `target` is
          * where Tools has it draw itself.
          */
-        openDrawer({ run = false, target = null } = {}) {
+        openDrawer({ run = false, target = null, terminalId = null, projectId } = {}) {
             const t = this;
             const tools = toolsPanelOf(t);
             if (tools && !target) {
-                tools.show('terminals', { run });
+                tools.show('terminals', { run, terminalId, projectId });
                 return;
             }
             let el = target || document.querySelector(t.drawer);
@@ -51,6 +51,21 @@
             }
             if (run && !webui.proxy.terminalHelpers.runningFilters.includes(t.filter())) {
                 t.setFilter('Running');
+            }
+            // A run names the terminal it started in, which is the one shown.
+            if (terminalId) {
+                const helpers = webui.proxy.terminalHelpers;
+                const other = helpers.otherProject(projectId);
+                helpers.getState(other).activeId = terminalId;
+                t._viewProject = other || undefined;
+            }
+            // Already shown there, as when a script runs while the Terminals tab is open, it stays as it is and only
+            // moves to the run, rather than being drawn again.
+            if (t._filterSwitch && el.contains(t._filterSwitch) && t._runner?.isConnected) {
+                if (t._filterSwitch.value !== t.filter()) t._filterSwitch.setValue?.(t.filter());
+                t.refreshDropdown();
+                if (run || terminalId) t.switchTerminal(t.viewState().activeId, t._viewProject);
+                return;
             }
             const header = webui.create('div');
             header.style.padding = 'var(--padding)';
@@ -120,7 +135,7 @@
     </webui-flex>
     <webui-flex slot="end" column class="term-output-pane" style="height: 100%; padding-left: var(--padding); box-sizing: border-box;">
         <webui-flex gap="0.5rem" align="center" wrap="wrap" style="margin-bottom: 0.25rem;">
-            <span style="font-weight: bold;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal: <span id="term-status" class="term-status"></span></span>
+            <span style="font-weight: bold;" title="Click the terminal and type to answer a running script's prompts. Ctrl+C copies selected text, and otherwise stops the script.">Terminal: <span id="term-status" class="term-status" style="display:inline-block; contain:layout paint; font-variant-numeric:tabular-nums;"></span></span>
             <webui-flex grow></webui-flex>
             <webui-button id="btn-kill" theme="warning" label="Stop" title="Stop the script the way Ctrl+C does, and force it to end if it is still running after a few seconds"></webui-button>
             <webui-button id="btn-select-all" theme="secondary" label="Select All" title="Select all of this terminal's output and copy it to the clipboard"></webui-button>
@@ -401,7 +416,7 @@
             const helpers = webui.proxy.terminalHelpers;
             const state = t.viewState();
             const run = t._none ? null : helpers.runStatus(state.terminals[state.activeId]);
-            // While a script runs this ticks 20 times a second, so nothing is redrawn while the label can't be seen,
+            // While a script runs this ticks 10 times a second, so nothing is redrawn while the label can't be seen,
             // such as with the drawer closed, and only what changed is written.
             const shown = label.checkVisibility?.() !== false;
             const text = run ? `${run.state} ${helpers.formatElapsed(run.elapsed)}` : '';

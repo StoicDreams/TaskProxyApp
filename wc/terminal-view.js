@@ -254,7 +254,8 @@
 }
 </style>
 <div class="frame">
-    <div class="terminal-host"></div>
+    <!-- xterm redraws its rows many times a second, which Web UI's loader has no need to check. -->
+    <div class="terminal-host" data-unobserved></div>
     <div class="placeholder">No terminal output.</div>
 </div>
 `

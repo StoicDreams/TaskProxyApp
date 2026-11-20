@@ -1,4 +1,4 @@
-import { test, expect, openApp, openTool, calls, onCommand, runOutput, runEnds, emit } from '../support/app.mjs';
+import { test, expect, openApp, openPage, openTool, calls, onCommand, runOutput, runEnds, emit } from '../support/app.mjs';
 
 const open = async (page, state = {}) => {
     await openApp(page, state);
@@ -455,16 +455,41 @@ test.describe('script filter', () => {
         await expect.poll(() => listed(page)).toEqual(['page-run (Running)']);
         await choose(page, 'All Running');
         await settled(page);
-        // Opening it while it is open closes it and builds it again, so wait for the new one.
-        await page.evaluate(() => {
+        // Opening it while it is open keeps it as it is, rather than drawing it again.
+        await page.evaluate(async () => {
             document.querySelector('#term-console').dataset.before = 'true';
-            document.querySelector('app-terminals').openDrawer({ run: true });
+            await webui.proxy.terminalHelpers.runScript('second-run', 'body', [], false, false, true);
+            document.querySelector('app-terminals').openDrawer({ run: true, terminalId: 'second-run' });
         });
-        await expect(page.locator('#term-console[data-before]')).toHaveCount(0);
-        await ready(page);
+        await settled(page);
+        await expect(page.locator('#term-console[data-before]')).toHaveCount(1);
         await expect(page.locator('webui-drawer.shared')).toHaveClass(/open/);
         await expect.poll(() => page.evaluate(() => webui.getData('app-terminals-filter'))).toBe('All Running');
         await expect(filter(page).locator('button[aria-checked="true"]').first()).toHaveText('All Running');
+        // The run that just started is the one shown.
+        await expect.poll(() => shown(page)).toBe('second-run');
+    });
+
+    test('a script run from the page while the Terminals tab is open keeps the drawer open and docked, and shows that run', async ({ page }) => {
+        await openPage(page, '# Title\n\n```powershell\nWrite-Host one\n```\n\n```powershell\nWrite-Host two\n```');
+        await openTool(page, 'terminals');
+        await ready(page);
+        const drawer = page.locator('webui-drawer.shared');
+        await drawer.locator('[slot="footer"] webui-toggle-icon').click();
+        await expect(drawer).toHaveAttribute('docked', /.*/);
+        // The page's Run buttons: their clicks reach the app, which closes drawers clicked outside of.
+        for (const [index, name] of [[0, 'Repo_Page_Title'], [1, 'Repo_Page_#2'], [0, 'Repo_Page_Title']]) {
+            const before = (await calls(page, 'spawn_script')).length;
+            await page.locator('webui-icon.run-script-btn').nth(index).click();
+            if (!before) await page.getByText('Trust Project & Run').click();
+            await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(before + 1);
+            await expect.poll(() => shown(page)).toBe(name);
+            await settled(page);
+            await expect(drawer).toHaveClass(/open/);
+            await expect(drawer).toHaveAttribute('docked', /.*/);
+            await runEnds(page, { projectId: 'project-id', terminalId: name, code: 0 });
+        }
+        await expect.poll(() => page.evaluate(() => webui.getData('app-terminals-filter'))).toBe('Running');
     });
 
     test('Kill All sits beside the list, and Script Content shares a row with its buttons', async ({ page }) => {

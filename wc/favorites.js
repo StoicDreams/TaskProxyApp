@@ -210,7 +210,7 @@
             }, err => webui.alert(webui.escapeForHTML(`${err}`), 'warning'));
             if (!run) return;
             webui.proxy.terminalHelpers.applyRun(run);
-            document.querySelector('app-terminals')?.openDrawer({ run: true });
+            document.querySelector('app-terminals')?.openDrawer({ run: true, terminalId: run.id, projectId: run.projectId });
         },
         renderManage() {
             const t = this;

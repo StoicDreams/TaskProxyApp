@@ -119,3 +119,13 @@ test('docked, the drawer stays docked on Tools after the app reloads', async ({ 
     // It comes back showing Tools on the tab last shown, rather than empty.
     await expect(drawer(page).locator('webui-content.tools-variables #env-selector')).toBeVisible();
 });
+test('the Theme tab is drawn once and kept, so it shows at once when opened again', async ({ page }) => {
+    await openApp(page);
+    const theme = await openTool(page, 'theme');
+    await expect(theme.locator('webui-theme-selector[panel] button[data-theme-value="midnight"]')).toHaveText(/Midnight/);
+    await theme.locator('webui-theme-selector[panel]').evaluate(el => { el.dataset.first = 'true'; });
+    await openTool(page, 'account');
+    await openTool(page, 'theme');
+    await expect(theme.locator('webui-theme-selector[panel]')).toHaveCount(1);
+    await expect(theme.locator('webui-theme-selector[panel][data-first]')).toHaveCount(1);
+});

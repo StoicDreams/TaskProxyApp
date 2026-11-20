@@ -22,6 +22,8 @@
         { id: 'icons', label: 'Icons & Emojis', icon: 'icons', draw: (t, target) => t.querySelector('app-icon-drawer')?.open({ target }) },
         {
             id: 'theme', label: 'Theme', icon: 'palette', draw: (t, target) => {
+                // Drawn once and kept: its tiles are slow to lay out the first time, for their fonts and textures.
+                if (target.querySelector(':scope > webui-theme-selector[panel]')) return;
                 // The theme list is made from the hidden selector's options, so the themes are written in one place.
                 const panel = webui.create('webui-theme-selector', { panel: '' });
                 const source = t.querySelector('webui-theme-selector');
@@ -129,7 +131,9 @@
                 t.build();
                 drawer.replaceChildren(t._panel);
             }
-            if (!drawer.classList.contains('open')) setTimeout(() => drawer.classList.add('open'), 0);
+            // Opened once the event that asked for it is done, since a click on the page, such as a script's Run
+            // button, closes the drawer as it reaches the app, after this has run.
+            setTimeout(() => drawer.classList.add('open'), 0);
             if (wanted !== current) {
                 // The tabs and onTab follow the saved tab, which draws the tool.
                 webui.setData(TAB_KEY, wanted);
