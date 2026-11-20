@@ -152,6 +152,18 @@ test.describe('spec 0.1.3', () => {
         await expect(hover).toHaveAttribute('src', shot);
         // All of it shows inside the window. How large it is, is checked by eye.
         await expect(hover).toBeInViewport({ ratio: 1 });
+        // Something else scrolling, such as a terminal's output, leaves the preview showing.
+        await page.evaluate(() => {
+            const other = document.createElement('div');
+            other.id = 'other-scroller';
+            other.style.cssText = 'position:fixed;bottom:0;right:0;width:100px;height:50px;overflow:auto';
+            other.innerHTML = '<div style="height:500px"></div>';
+            document.body.appendChild(other);
+            other.scrollTop = 200;
+        });
+        await expect.poll(() => page.evaluate(() => document.querySelector('#other-scroller').scrollTop)).toBe(200);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await expect(hover).toBeVisible();
         await page.mouse.move(0, 0);
         await expect(hover).toHaveCount(0);
         await image.click();

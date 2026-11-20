@@ -14,11 +14,45 @@
     const escape = text => webui.escapeForHTML(`${text ?? ''}`);
     /** The larger copy of an image shown while the pointer is over it. One is shared, since one shows at a time. */
     let hoverPreview;
+    /** The image the preview is showing. */
+    let hoverSource = null;
     function hideHoverPreview() {
         hoverPreview?.remove();
+        hoverSource = null;
     }
-    // The image moves away from the preview when the page scrolls.
-    window.addEventListener('scroll', hideHoverPreview, true);
+    /** Shows the larger copy of `img` beside it, on whichever side has more room, and inside the window. */
+    function showHoverPreview(img) {
+        hoverSource = img;
+        hoverPreview ??= el('img', { class: 'plugin-image-hover', alt: '' });
+        hoverPreview.src = img.src;
+        document.body.appendChild(hoverPreview);
+        const box = img.getBoundingClientRect();
+        const right = window.innerWidth - box.right;
+        const roomWide = Math.max(160, Math.min(Math.max(right, box.left) - 24, window.innerWidth * 0.6));
+        const roomHigh = Math.max(160, window.innerHeight * 0.8);
+        // Sized here, since the page's styles for images would otherwise shrink it. As large as fits, up to the
+        // image's own size, and always well above the size shown in the description.
+        const natural = { width: img.naturalWidth || box.width, height: img.naturalHeight || box.height };
+        const larger = Math.max(1, (box.height * 3) / natural.height);
+        const scale = Math.min(roomWide / natural.width, roomHigh / natural.height, larger);
+        const width = Math.round(natural.width * scale);
+        const height = Math.round(natural.height * scale);
+        Object.assign(hoverPreview.style, {
+            width: `${width}px`,
+            height: `${height}px`,
+            maxWidth: 'none',
+            maxHeight: 'none',
+            left: right >= box.left ? `${box.right + 8}px` : '',
+            right: right >= box.left ? '' : `${window.innerWidth - box.left + 8}px`,
+            top: `${Math.max(8, Math.min(box.top, window.innerHeight - height - 8))}px`,
+        });
+    }
+    // A scroll that moves the image moves its preview with it. Scrolls elsewhere, such as a terminal's output, leave
+    // it alone. The browser says when the pointer is no longer over the image.
+    window.addEventListener('scroll', ev => {
+        const scrolled = ev.target === document ? document.documentElement : ev.target;
+        if (hoverSource && hoverPreview?.isConnected && scrolled.contains?.(hoverSource)) showHoverPreview(hoverSource);
+    }, true);
     /** A data URI's bytes, read here since the app's content policy lets no fetch read data or blob addresses. */
     function blobOf(dataUri) {
         const [head, data] = `${dataUri}`.split(',', 2);
@@ -39,32 +73,7 @@
         img.tabIndex = 0;
         img.setAttribute('role', 'button');
         img.title = 'Open the image larger';
-        img.addEventListener('mouseenter', () => {
-            hoverPreview ??= el('img', { class: 'plugin-image-hover', alt: '' });
-            hoverPreview.src = img.src;
-            document.body.appendChild(hoverPreview);
-            const box = img.getBoundingClientRect();
-            // Beside the image, on whichever side has more room, and kept inside the window.
-            const right = window.innerWidth - box.right;
-            const roomWide = Math.max(160, Math.min(Math.max(right, box.left) - 24, window.innerWidth * 0.6));
-            const roomHigh = Math.max(160, window.innerHeight * 0.8);
-            // Sized here, since the page's styles for images would otherwise shrink it. As large as fits, up to the
-            // image's own size, and always well above the size shown in the description.
-            const natural = { width: img.naturalWidth || box.width, height: img.naturalHeight || box.height };
-            const larger = Math.max(1, (box.height * 3) / natural.height);
-            const scale = Math.min(roomWide / natural.width, roomHigh / natural.height, larger);
-            const width = Math.round(natural.width * scale);
-            const height = Math.round(natural.height * scale);
-            Object.assign(hoverPreview.style, {
-                width: `${width}px`,
-                height: `${height}px`,
-                maxWidth: 'none',
-                maxHeight: 'none',
-                left: right >= box.left ? `${box.right + 8}px` : '',
-                right: right >= box.left ? '' : `${window.innerWidth - box.left + 8}px`,
-                top: `${Math.max(8, Math.min(box.top, window.innerHeight - height - 8))}px`,
-            });
-        });
+        img.addEventListener('mouseenter', () => showHoverPreview(img));
         img.addEventListener('mouseleave', hideHoverPreview);
         const open = () => {
             hideHoverPreview();

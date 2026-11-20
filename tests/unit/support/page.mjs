@@ -231,6 +231,7 @@ function roleOf(el) {
     if (name === 'progress') return 'progressbar';
     if (name === 'summary') return 'button';
     if (name === 'details') return 'group';
+    if (name === 'fieldset') return 'group';
     if (name === 'section' && (el.hasAttribute('aria-label') || el.hasAttribute('aria-labelledby'))) return 'region';
     if (name === 'form') return 'form';
     return null;
@@ -260,6 +261,11 @@ function nameOf(el) {
         return normalize(el.getAttribute('placeholder') || el.getAttribute('title') || '');
     }
     if (el.localName === 'img') return normalize(el.getAttribute('alt') || el.getAttribute('title') || '');
+    // A fieldset is named by its legend.
+    if (el.localName === 'fieldset') {
+        const legend = [...el.children].find(child => child.localName === 'legend');
+        if (legend) return normalize(renderedText(legend));
+    }
     const text = normalize(renderedText(el));
     return text || normalize(el.getAttribute('title') || '');
 }
@@ -787,7 +793,7 @@ export class Page {
     _attach(env) {
         this.env = env;
         this.window = env.window;
-        this.document = env.window.document;
+        this.document = env.window?.document;
     }
     /** Lets go of the window, once the test is over, so it can be freed. */
     release() {
@@ -807,7 +813,10 @@ export class Page {
     async addScriptTag({ content, path, url } = {}) {
         const { readFileSync } = await import('node:fs');
         let code = content;
-        if (path) code = readFileSync(path, 'utf8');
+        if (path) {
+            this.env.record?.(path);
+            code = readFileSync(path, 'utf8');
+        }
         if (url) code = await (await this.window.fetch(url)).text();
         this.window.eval(code);
         await this.settle();
@@ -886,6 +895,7 @@ export class Page {
         else if (script?.content) source = `() => { ${script.content} }`;
         else if (script?.path) {
             const { readFileSync } = await import('node:fs');
+            this.env.record?.(script.path);
             source = `() => { ${readFileSync(script.path, 'utf8')} }`;
         }
         this.env.initScripts.push({ source, arg });

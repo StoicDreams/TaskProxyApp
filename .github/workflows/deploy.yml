@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.165
+  VERSION: 0.1.166
 
 jobs:
   test:
