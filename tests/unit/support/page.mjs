@@ -120,10 +120,90 @@ export function pierce(root, selector) {
     return pierceOne(root, selector);
 }
 
+const PLAYWRIGHT_PSEUDO = /:(text-is|has-text|text|visible)\b/;
+
+/** Splits a compound chain at its top-level child and sibling combinators: [compound, '>', compound, '+', …]. */
+function splitCombinators(part) {
+    const chain = [];
+    let depth = 0, quote = null, current = '';
+    for (const ch of part) {
+        if (quote) { current += ch; if (ch === quote) quote = null; continue; }
+        if (ch === '"' || ch === "'") quote = ch;
+        if (ch === '(' || ch === '[') depth++;
+        if (ch === ')' || ch === ']') depth--;
+        if (depth === 0 && (ch === '>' || ch === '+' || ch === '~')) {
+            chain.push(current.trim(), ch);
+            current = '';
+            continue;
+        }
+        current += ch;
+    }
+    chain.push(current.trim());
+    return chain;
+}
+
+/** Whether an element matches one compound selector that uses Playwright's text pseudo-classes or :visible. */
+function matchesCompound(el, compound) {
+    let rest = compound;
+    const checks = [];
+    // :is(…) and :where(…) holding Playwright's own: one of their selectors must match.
+    for (let at = rest.search(/:(is|where)\(/); at >= 0; at = rest.search(/:(is|where)\(/)) {
+        const open = rest.indexOf('(', at);
+        let depth = 0, end = open;
+        for (; end < rest.length; end++) {
+            if (rest[end] === '(') depth++;
+            else if (rest[end] === ')' && --depth === 0) break;
+        }
+        const options = splitList(rest.slice(open + 1, end));
+        checks.push(target => options.some(option => matchesCompound(target, option)));
+        rest = rest.slice(0, at) + rest.slice(end + 1);
+    }
+    if (/:visible\b/.test(rest)) checks.push(isShown);
+    rest = rest.replace(/:visible\b/g, '').replace(/:(text-is|has-text|text)\((["'])(.*?)\2\)/g, (_, kind, __, value) => {
+        checks.push(target => {
+            const text = normalize(renderedText(target));
+            return kind === 'text-is' ? text === value : text.toLowerCase().includes(value.toLowerCase());
+        });
+        return '';
+    });
+    try {
+        if (!el.matches(rest.trim() || '*')) return false;
+    } catch {
+        return false;
+    }
+    return checks.every(check => check(el));
+}
+
+/** Whether an element matches a chain from splitCombinators, checked from its last compound back. */
+function matchesChain(el, chain, index = chain.length - 1) {
+    if (!el || !matchesCompound(el, chain[index])) return false;
+    if (index === 0) return true;
+    const combinator = chain[index - 1];
+    if (combinator === '>') return matchesChain(el.parentElement, chain, index - 2);
+    if (combinator === '+') return matchesChain(el.previousElementSibling, chain, index - 2);
+    for (let sibling = el.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+        if (matchesChain(sibling, chain, index - 2)) return true;
+    }
+    return false;
+}
+
 function pierceOne(root, selector) {
     const parts = splitDescendants(selector);
     let current = [root];
     parts.forEach((rawPart, index) => {
+        // Playwright's text pseudo-classes or :visible before a child or sibling combinator, or inside :is(…), are matched
+        // element by element: the browser's selector engine cannot see them there.
+        const chain = splitCombinators(rawPart);
+        if (PLAYWRIGHT_PSEUDO.test(rawPart) && chain[0] && !/:(has|not)\(/.test(rawPart)
+            && (chain.slice(0, -1).some(compound => PLAYWRIGHT_PSEUDO.test(compound)) || /:(is|where)\(/.test(rawPart))) {
+            const next = new Set();
+            for (const base of current) {
+                for (const scope of scopesWithin(base)) for (const el of scope.querySelectorAll('*')) if (matchesChain(el, chain)) next.add(el);
+            }
+            current = [...next];
+            if (index === 0 && root.nodeType === 9) current = current.filter(el => el !== root);
+            return;
+        }
         // Playwright's :visible is not CSS: it is matched here, as an element that shows.
         const visibleOnly = /:visible\b/.test(rawPart);
         // So are :text-is("…") (the whole text), and :has-text("…") and :text("…") (contains, ignoring case).
@@ -179,8 +259,12 @@ function pierceOne(root, selector) {
     return current.filter(el => el !== root);
 }
 
-/** Text as a person reads it: text of the light DOM, or of the shadow root with each slot replaced by what it shows. */
-export function renderedText(node) {
+/**
+ * Text as a person reads it: text of the light DOM, or of the shadow root with each slot replaced by what it shows.
+ * With `controls`, a select or textarea gives its own text, as toHaveText reads
+ * it; otherwise they give none, as in an accessible name or getByText.
+ */
+export function renderedText(node, controls = false) {
     if (!node) return '';
     if (node.nodeType === 3) return node.data;
     if (node.nodeType !== 1 && node.nodeType !== 11) return '';
@@ -189,15 +273,16 @@ export function renderedText(node) {
     if (name === 'slot') {
         const assigned = node.assignedNodes ? node.assignedNodes({ flatten: true }) : [];
         const nodes = assigned.length ? assigned : [...node.childNodes];
-        return nodes.map(renderedText).join('');
+        return nodes.map(child => renderedText(child, controls)).join('');
     }
-    if (name === 'input' || name === 'textarea' || name === 'select') return '';
+    if (name === 'input' || (!controls && (name === 'textarea' || name === 'select'))) return '';
     const children = node.shadowRoot ? [...node.shadowRoot.childNodes] : [...node.childNodes];
     // As Playwright reads it: the text nodes joined, with nothing added between blocks.
-    return children.map(renderedText).join('');
+    return children.map(child => renderedText(child, controls)).join('');
 }
 
-const normalize = text => `${text ?? ''}`.replace(/\s+/g, ' ').trim();
+// As Playwright does: zero-width spaces dropped, and runs of white space made one space.
+const normalize = text => `${text ?? ''}`.replace(/\u200b/g, '').replace(/\s+/g, ' ').trim();
 
 import { cancelTopModal, isShown, mediaMatcher, whyHidden } from './stand-ins.mjs';
 export { isShown };
@@ -242,7 +327,7 @@ function nameOf(el) {
     const root = el.getRootNode();
     const labelledby = el.getAttribute('aria-labelledby');
     if (labelledby) {
-        const text = labelledby.split(/\s+/).map(id => root.getElementById?.(id) || el.ownerDocument.getElementById(id)).filter(Boolean).map(renderedText).join(' ');
+        const text = labelledby.split(/\s+/).map(id => root.getElementById?.(id) || el.ownerDocument.getElementById(id)).filter(Boolean).map(node => renderedText(node)).join(' ');
         if (normalize(text)) return normalize(text);
     }
     const label = el.getAttribute('aria-label');
@@ -285,7 +370,8 @@ export class Locator {
     }
     page() { return this._page; }
     toString() { return this._description; }
-    all() { return this._resolve(); }
+    /** A locator for each element found now, as Playwright's all() gives. */
+    all() { return this._resolve().map((_, index) => this.nth(index)); }
     elements() { return this._resolve(); }
     element() {
         const found = this._resolve();
@@ -347,7 +433,9 @@ export class Locator {
         }, `text=${text}`);
     }
     getByLabel(text, options = {}) {
-        return this._by(el => ['input', 'textarea', 'select'].includes(el.localName) && textMatches(nameOf(el), text, options), `label=${text}`);
+        // As in Playwright: fields by their labels, and any element by aria-label or aria-labelledby.
+        return this._by(el => (['input', 'textarea', 'select'].includes(el.localName) || el.hasAttribute('aria-label') || el.hasAttribute('aria-labelledby'))
+            && textMatches(nameOf(el), text, options), `label=${text}`);
     }
     getByTitle(text, options = {}) {
         return this._by(el => el.hasAttribute('title') && textMatches(normalize(el.getAttribute('title')), text, options), `title=${text}`);
@@ -403,6 +491,8 @@ export class Locator {
     async evaluateAll(fn, arg) { return this._page._call(fn, this._resolve(), arg); }
     async getAttribute(name) { return (await this._one()).getAttribute(name); }
     async textContent() { return (await this._one()).textContent; }
+    async allInnerTexts() { return this._resolve().map(el => normalize(renderedText(el))); }
+    async allTextContents() { return this._resolve().map(el => el.textContent ?? ''); }
     async innerText() { return normalize(renderedText(await this._one())); }
     async inputValue() { return (await this._one()).value; }
     async isVisible() { return isShown(this.element()); }
@@ -443,26 +533,26 @@ export class Locator {
         await this._page.settle();
     }
     async click(options = {}) {
-        const el = await this._one();
-        if (!options.force) await this._actionable(el);
+        let el = await this._one();
+        if (!options.force) el = await this._actionable(el);
         clickElement(el, options);
         await this._page.settle();
     }
     async dblclick(options = {}) {
-        const el = await this._one();
-        if (!options.force) await this._actionable(el);
+        let el = await this._one();
+        if (!options.force) el = await this._actionable(el);
         clickElement(el, options);
         clickElement(el, { ...options, detail: 2 });
         const win = el.ownerDocument.defaultView;
         el.dispatchEvent(new win.MouseEvent('dblclick', { bubbles: true, cancelable: true, composed: true, detail: 2 }));
         await this._page.settle();
     }
-    async check(options = {}) { const el = await this._one(); if (!options.force) await this._actionable(el); if (!(el.checked || el.getAttribute('aria-checked') === 'true')) clickElement(el); await this._page.settle(); }
-    async uncheck(options = {}) { const el = await this._one(); if (!options.force) await this._actionable(el); if (el.checked || el.getAttribute('aria-checked') === 'true') clickElement(el); await this._page.settle(); }
+    async check(options = {}) { let el = await this._one(); if (!options.force) el = await this._actionable(el); if (!(el.checked || el.getAttribute('aria-checked') === 'true')) clickElement(el); await this._page.settle(); }
+    async uncheck(options = {}) { let el = await this._one(); if (!options.force) el = await this._actionable(el); if (el.checked || el.getAttribute('aria-checked') === 'true') clickElement(el); await this._page.settle(); }
     async setChecked(checked, options) { return checked ? this.check(options) : this.uncheck(options); }
     async fill(value, options = {}) {
-        const el = await this._one();
-        if (!options.force) await this._actionable(el);
+        let el = await this._one();
+        if (!options.force) el = await this._actionable(el);
         const target = editableOf(el);
         target.focus?.();
         const win = target.ownerDocument.defaultView;
@@ -487,8 +577,8 @@ export class Locator {
         await this._page.keyboard.press(key, target);
     }
     async selectOption(values, options = {}) {
-        const found = await this._one();
-        if (!options.force) await this._actionable(found);
+        let found = await this._one();
+        if (!options.force) found = await this._actionable(found);
         const el = editableOf(found);
         const wanted = (Array.isArray(values) ? values : [values]).map(value => typeof value === 'object' ? (value.value ?? value.label) : value);
         for (const option of el.options || []) option.selected = wanted.includes(option.value) || wanted.includes(normalize(option.textContent));
@@ -512,15 +602,18 @@ export class Locator {
     /**
      * Waits until the element can take an action, as Playwright does: it shows, is enabled, and is stable, which
      * Playwright checks over two animation frames. Here that is every component it sits in being defined, then two
-     * frames for them to finish drawing.
+     * frames for them to finish drawing. An element drawn again meanwhile is found again, as Playwright does, and the
+     * element to act on is returned.
      */
     async _actionable(el) {
         const deadline = Date.now() + ACTION_TIMEOUT;
         const ready = () => isShown(el) && !isDisabled(el) && everyComponentDefined(el);
         for (; ;) {
+            if (!el.isConnected) el = this._resolve()[0] || el;
             if (ready()) {
                 await this._page.settle();
-                if (ready()) return;
+                if (!el.isConnected) continue;
+                if (ready()) return el;
             }
             if (Date.now() > deadline) {
                 throw new Error(`${this._description} is not visible and enabled to click: ${!isShown(el) ? whyHidden(el) : isDisabled(el) ? 'disabled' : 'a component it is in is not defined yet'}`);
@@ -870,6 +963,17 @@ export class Page {
         }
     }
     async waitForTimeout() { throw new Error('No waiting on time: wait for what the page does instead'); }
+    /** Waits for the page's address to match a glob (`**` any characters, `*` any but /), a RegExp, or a function of the URL. */
+    async waitForURL(target, { timeout = ACTION_TIMEOUT } = {}) {
+        const matches = href => typeof target === 'function' ? target(new URL(href))
+            : target instanceof RegExp ? target.test(href)
+                : new RegExp(`^${target.replace(/[.+^${}()|[\]\\?]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*')}$`).test(href);
+        const deadline = Date.now() + timeout;
+        while (!matches(this.window.location.href)) {
+            if (Date.now() > deadline) throw new Error(`waitForURL timed out: ${target}, at ${this.window.location.href}`);
+            await sleep(INTERVAL);
+        }
+    }
     /** Waits for an element matching the selector to show (or, with state, to be attached, hidden or detached). */
     async waitForSelector(selector, { state = 'visible', timeout = ACTION_TIMEOUT } = {}) {
         const deadline = Date.now() + timeout;
@@ -992,7 +1096,7 @@ function matcher(name, run) {
     };
 }
 
-const textOfLocator = el => normalize(renderedText(el));
+const textOfLocator = el => normalize(renderedText(el, true));
 const sameText = (actual, expected, contains) => expected instanceof RegExp ? expected.test(actual) : contains ? actual.includes(normalize(expected)) : actual === normalize(expected);
 
 function textMatcher(contains) {

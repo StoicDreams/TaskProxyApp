@@ -424,7 +424,15 @@ export function installStandIns(window) {
         setData(type, value) { this.data[type] = `${value}`; }
         getData(type) { return this.data[type] ?? ''; }
         clearData() { this.data = {}; }
-        get types() { return Object.keys(this.data); }
+        // Dragged files show as 'Files', as in a browser.
+        get types() { return [...Object.keys(this.data), ...(this.files.length ? ['Files'] : [])]; }
+    };
+    // A drag event carries its DataTransfer, as a browser's does.
+    window.DragEvent ??= class DragEvent extends window.MouseEvent {
+        constructor(type, init = {}) {
+            super(type, init);
+            Object.defineProperty(this, 'dataTransfer', { configurable: true, value: init.dataTransfer ?? null });
+        }
     };
 }
 
