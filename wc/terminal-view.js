@@ -30,6 +30,11 @@
         return xtermLoading;
     }
     const helpers = () => webui.proxy.terminalHelpers;
+    /** The terminal's font, following the text size chosen on the Accessibility tab (wc/accessibility.js). */
+    function terminalFontSize() {
+        const size = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--typography-size'));
+        return Math.round(13 * (size > 0 ? size / 16 : 1));
+    }
     webui.define("app-terminal-view", {
         linkCss: false,
         watchVisibility: false,
@@ -49,11 +54,18 @@
         connected() {
             const t = this;
             document.addEventListener('term-data', t._onData);
+            t._onTextSize ??= () => {
+                if (!t._term) return;
+                t._term.options.fontSize = terminalFontSize();
+                t.fitToView();
+            };
+            document.addEventListener('app-text-size', t._onTextSize);
             t._ready ??= t.setup();
         },
         disconnected() {
             const t = this;
             document.removeEventListener('term-data', t._onData);
+            document.removeEventListener('app-text-size', t._onTextSize);
             t._resizeObserver?.disconnect();
             t._resizeObserver = null;
             t._term?.dispose();
@@ -75,7 +87,7 @@
             const term = new xterm.Terminal({
                 theme,
                 fontFamily: 'ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace',
-                fontSize: 13,
+                fontSize: terminalFontSize(),
                 scrollback: 10000,
                 cursorBlink: true,
                 allowProposedApi: false,

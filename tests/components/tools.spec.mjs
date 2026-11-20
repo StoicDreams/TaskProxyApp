@@ -12,7 +12,7 @@ test('the header keeps Save and Feedback, and Tools takes the place of the other
     await expect(header.locator('app-save-button')).toBeVisible();
     await expect(header.locator('webui-feedback')).toBeVisible();
     await expect(header.getByRole('button', { name: 'Tools', exact: true })).toBeVisible();
-    for (const tool of ['app-terminals', 'app-task-manager', 'app-var-manager', 'webui-alerts', 'app-plugins-drawer', 'app-icon-drawer', 'webui-theme-selector']) {
+    for (const tool of ['app-terminals', 'app-task-manager', 'app-var-manager', 'webui-alerts', 'app-plugins-drawer', 'app-icon-drawer', 'webui-theme-selector', 'app-accessibility']) {
         await expect(header.locator(tool)).toBeHidden();
     }
     await expect(header.locator('app-account')).toHaveCount(0);
@@ -24,22 +24,29 @@ test('Tools opens the right drawer with a tab for each tool, on Terminals the fi
     await expect(drawer(page)).toHaveClass(/open/);
     await expect(drawer(page).getByRole('heading', { name: 'Tools' })).toHaveCount(1);
     // Each tab is its icon, named by its tooltip.
-    const names = ['Terminals', 'Task Manager', 'Variables', 'Alerts', 'Plugins', 'Icons & Emojis', 'Theme'];
+    const names = ['Terminals', 'Task Manager', 'Variables', 'Alerts', 'Plugins', 'Icons & Emojis', 'Theme', 'Accessibility', 'Account'];
     await expect.poll(() => tabs(page).evaluateAll(list => list.map(tab => tab.getAttribute('title')))).toEqual(names);
     for (const name of names) await expect(drawer(page).getByRole('button', { name, exact: true })).toHaveCount(1);
     await expect(drawer(page).locator('webui-content.tools-terminals #term-content-wrapper, webui-content.tools-terminals #term-install-wrapper').first()).toBeAttached();
 });
 
-test('each tab shows its tool', async ({ page }) => {
-    await openApp(page);
-    await expect((await openTool(page, 'tasks')).locator('.task-manager-body')).toBeAttached();
-    await expect((await openTool(page, 'variables')).locator('#env-selector')).toBeAttached();
-    await expect((await openTool(page, 'alerts')).locator('webui-alerts[panel]')).toContainText('You have no alerts at this time.');
-    await expect((await openTool(page, 'plugins')).locator('app-plugin-manager')).toBeAttached();
-    await expect((await openTool(page, 'icons')).locator('webui-icon-search')).toBeAttached();
-    const theme = await openTool(page, 'theme');
-    await expect(theme.locator('webui-theme-selector[panel] button[data-theme-value="midnight"]')).toHaveText(/Midnight/);
-});
+// One test for each tab, so a busy machine opening the app for each one never runs a single test past its time.
+const TOOL_CHECKS = {
+    tasks: tab => expect(tab.locator('.task-manager-body')).toBeAttached(),
+    variables: tab => expect(tab.locator('#env-selector')).toBeAttached(),
+    alerts: tab => expect(tab.locator('webui-alerts[panel]')).toContainText('You have no alerts at this time.'),
+    plugins: tab => expect(tab.locator('app-plugin-manager')).toBeAttached(),
+    icons: tab => expect(tab.locator('webui-icon-search')).toBeAttached(),
+    theme: tab => expect(tab.locator('webui-theme-selector[panel] button[data-theme-value="midnight"]')).toHaveText(/Midnight/),
+    accessibility: tab => expect(tab.locator('.accessibility-panel')).toBeAttached(),
+    account: tab => expect(tab.locator('app-account-panel app-account')).toBeAttached(),
+};
+for (const [id, check] of Object.entries(TOOL_CHECKS)) {
+    test(`the ${id} tab shows its tool`, async ({ page }) => {
+        await openApp(page);
+        await check(await openTool(page, id));
+    });
+}
 
 test('the tab last shown opens next time', async ({ page }) => {
     await openApp(page);
@@ -110,15 +117,16 @@ test('the tabs can be dragged into the user\'s own order, which is kept, and the
     await page.mouse.move(from.x + from.width / 2 - 10, from.y + from.height / 2, { steps: 3 });
     await page.mouse.move(to.x + 3, to.y + to.height / 2, { steps: 8 });
     await page.mouse.up();
-    await expect.poll(() => tabs(page).evaluateAll(list => list.map(tab => tab.dataset.tool))).toEqual(['theme', 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons']);
+    await expect.poll(() => tabs(page).evaluateAll(list => list.map(tab => tab.dataset.tool))).toEqual(['theme', 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons', 'accessibility', 'account']);
     await expect(drawer(page).locator('webui-content.tools-plugins app-plugin-manager')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-tools-order'])).toEqual(['theme', 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons']);
+    await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-tools-order'])).toEqual(['theme', 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons', 'accessibility', 'account']);
     // Each tab still opens its own tool where it is now, and the order is the same when Tools is built again.
     await drawer(page).locator('webui-button.tools-tab-theme').click();
     await expect(drawer(page).locator('webui-content.tools-theme webui-theme-selector[panel]')).toBeVisible();
+    // An order saved before the Accessibility and Account tabs existed gets them at its end.
     await openApp(page, { appData: { 'app-tools-order': ['theme', 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons'] } });
     await page.locator('header app-tools').click();
-    await expect.poll(() => tabs(page).evaluateAll(list => list.map(tab => tab.dataset.tool))).toEqual(['theme', 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons']);
+    await expect.poll(() => tabs(page).evaluateAll(list => list.map(tab => tab.dataset.tool))).toEqual(['theme', 'terminals', 'tasks', 'variables', 'alerts', 'plugins', 'icons', 'accessibility', 'account']);
 });
 
 test('docked, the drawer stays docked on Tools after the app reloads', async ({ page }) => {

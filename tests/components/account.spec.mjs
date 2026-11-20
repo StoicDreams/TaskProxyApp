@@ -1,9 +1,13 @@
-import { test, expect, openApp, calls, openDialog, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp as openAppOnly, openTool, calls, openDialog, dialogButton } from '../support/app.mjs';
 
 const ACCOUNT = { id: 1, displayName: 'Test User' };
 const SIGN_IN_URL = 'https://www.stoicdreams.com/signin?app=taskproxy&request=3160d8e4-e8dd-43c7-a397-43b17ef46cbc';
-// The sign-in sits at the bottom of Settings, which the app opens on with a project.
-const button = page => page.locator('.settings-footer app-account');
+// The sign-in sits at the top of the Account tab of Tools, which each test opens with the app.
+const button = page => page.locator('webui-drawer.shared app-account-panel app-account');
+async function openApp(page, state) {
+    await openAppOnly(page, state);
+    await openTool(page, 'account');
+}
 
 /** Records the messages shown with webui.alert, which alerts() returns. */
 function spyOnAlerts(page) {

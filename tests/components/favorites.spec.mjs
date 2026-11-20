@@ -99,10 +99,10 @@ test('icons are put in order by dragging, which runs nothing, or with Alt+arrows
     await page.mouse.move(to.x + to.width - 2, to.y + to.height - 1, { steps: 6 });
     await page.mouse.up();
     // A favorite that does not show here keeps its place among the others.
-    await expect.poll(async () => (await saved(page)).map(item => item.id)).toEqual(['b', 'c', 'hidden', 'a']);
+    await expect.poll(async () => ((await saved(page)) || []).map(item => item.id)).toEqual(['b', 'c', 'hidden', 'a']);
     await page.locator('app-favorites .fav-icon[data-id="c"]').focus();
     await page.keyboard.press('Alt+ArrowLeft');
-    await expect.poll(async () => (await saved(page)).map(item => item.id)).toEqual(['c', 'b', 'hidden', 'a']);
+    await expect.poll(async () => ((await saved(page)) || []).map(item => item.id)).toEqual(['c', 'b', 'hidden', 'a']);
     expect(await calls(page, 'run_favorite')).toEqual([]);
 });
 
@@ -156,14 +156,14 @@ test("a script file's parameters can be fixed or come from data, by another key"
     await env.locator('.fav-param-value').press('Tab');
     await force.locator('.fav-param-mode').selectOption('fixed');
     await force.locator('.fav-param-value').check();
-    await expect.poll(async () => (await saved(page))?.[0].params).toEqual([
+    await expect.poll(async () => (await saved(page))?.[0]?.params).toEqual([
         { name: 'Env', fromData: true, value: '', key: 'deploy_env', switch: false },
         { name: 'Force', fromData: false, value: true, key: '', switch: true },
     ]);
     await env.locator('.fav-param-mode').selectOption('fixed');
     await env.locator('.fav-param-value').fill('production');
     await env.locator('.fav-param-value').press('Tab');
-    await expect.poll(async () => (await saved(page))?.[0].params[0]).toEqual({ name: 'Env', fromData: false, value: 'production', key: 'deploy_env', switch: false });
+    await expect.poll(async () => (await saved(page))?.[0]?.params?.[0]).toEqual({ name: 'Env', fromData: false, value: 'production', key: 'deploy_env', switch: false });
 });
 
 test('a favorite is renamed, limited to some data scopes, shown in some projects or all, and removed', async ({ page }) => {
@@ -173,15 +173,15 @@ test('a favorite is renamed, limited to some data scopes, shown in some projects
     await expect(editor.locator('.fav-script')).toHaveText(DEPLOY);
     await editor.locator('webui-input-text.fav-name input').fill('Deploy');
     await editor.locator('webui-input-text.fav-name input').press('Tab');
-    await expect.poll(async () => (await saved(page))[0].name).toBe('Deploy');
+    await expect.poll(async () => (await saved(page))?.[0]?.name).toBe('Deploy');
     await editor.locator('input[data-scope="global"]').uncheck();
-    await expect.poll(async () => (await saved(page))[0].scopes).toEqual({ page: true, project: true, global: false });
+    await expect.poll(async () => (await saved(page))?.[0]?.scopes).toEqual({ page: true, project: true, global: false });
     await editor.locator('input[data-show="some"]').check();
-    await expect.poll(async () => (await saved(page))[0].projects).toEqual(['/repo']);
+    await expect.poll(async () => (await saved(page))?.[0]?.projects).toEqual(['/repo']);
     await detail(page).locator('input[data-project="/other"]').check();
-    await expect.poll(async () => (await saved(page))[0].projects).toEqual(['/repo', '/other']);
+    await expect.poll(async () => (await saved(page))?.[0]?.projects).toEqual(['/repo', '/other']);
     await detail(page).locator('input[data-show="all"]').check();
-    await expect.poll(async () => (await saved(page))[0].projects).toEqual([]);
+    await expect.poll(async () => (await saved(page))?.[0]?.projects).toEqual([]);
     await detail(page).locator('webui-button.fav-remove').click();
     await expect(openDialog(page)).toContainText('The script itself stays as it is.');
     await dialogButton(page, 'Confirm').click();
@@ -196,10 +196,10 @@ test('an icon is chosen from the project\'s images, and Default goes back to the
     await detail(page).locator('webui-button.fav-pick-image').click();
     await openDialog(page).locator('.fav-image-tile[data-image="img/rocket.png"]').click();
     await dialogButton(page, 'Use This Image').click();
-    await expect.poll(async () => (await saved(page))[0].icon).toEqual({ image: 'img/rocket.png' });
+    await expect.poll(async () => (await saved(page))?.[0]?.icon).toEqual({ image: 'img/rocket.png' });
     await expect(icons(page).first().locator('img')).toHaveAttribute('src', /rocket\.png$/);
     await detail(page).locator('webui-button.fav-clear-icon').click();
-    await expect.poll(async () => (await saved(page))[0].icon).toBeNull();
+    await expect.poll(async () => (await saved(page))?.[0]?.icon).toBeNull();
 });
 
 test('Done closes the manager back to one row of icons', async ({ page }) => {

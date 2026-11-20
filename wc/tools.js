@@ -1,6 +1,6 @@
 /*
  * The header's Tools button, at its right end, where the sign-in button was. It opens the shared right drawer on Task Proxy's tools, one tab
- * each: Terminals, Task Manager, Variables, Alerts, Plugins, Icons & Emojis, and Theme. Its button counts the scripts
+ * each: Terminals, Task Manager, Variables, Alerts, Plugins, Icons & Emojis, Theme, Accessibility, and Account. Its button counts the scripts
  * running and the alerts not yet closed, and each tab shows its own count.
  *
  * The tools' own elements, such as app-terminals, sit inside it, hidden, so they keep their state and what they
@@ -30,6 +30,9 @@
                 target.replaceChildren(panel);
             },
         },
+        { id: 'accessibility', label: 'Accessibility', icon: 'universal-access', draw: (t, target) => t.querySelector('app-accessibility')?.open({ target }) },
+        // The sign-in at the top, and the copyright and Powered by at the bottom, where the app's footer was.
+        { id: 'account', label: 'Account', icon: 'user', draw: (t, target) => target.replaceChildren(webui.create('app-account-panel', { class: 'tools-fill', since: '2016', company: 'Stoic Dreams' })) },
     ];
     /** The tools in the order the user put them, with any not placed yet at the end. */
     function orderedTools() {
@@ -178,10 +181,12 @@
                 const top = content.getBoundingClientRect().top;
                 const height = Math.max(160, Math.floor(bottom - top - 2));
                 if (content.style.height !== `${height}px`) content.style.height = `${height}px`;
-                // A tool that scrolls its own list, such as the Task Manager, fills what is left below its title.
-                const fill = content.querySelector(':scope > .task-manager-body');
+                // A tool that scrolls its own list, such as the Task Manager, fills what is left below its title, and the
+                // Account tab fills the tab to keep its footer at the bottom.
+                const fill = content.querySelector(':scope > .task-manager-body, :scope > .tools-fill');
                 if (fill) {
-                    const room = Math.max(120, Math.floor(top + height - fill.getBoundingClientRect().top));
+                    const padding = parseFloat(getComputedStyle(content).paddingBottom) || 0;
+                    const room = Math.max(120, Math.floor(top + height - padding - fill.getBoundingClientRect().top));
                     if (fill.style.height !== `${room}px`) fill.style.height = `${room}px`;
                 }
             });

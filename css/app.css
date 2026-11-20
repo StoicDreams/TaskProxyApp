@@ -2567,33 +2567,111 @@ app-page-import [hidden] {
 }
 
 /* The bottom of Settings: the Stoic Dreams sign-in, then the copyright and Powered by, as the app's footer had them. */
-.settings-footer {
+/* The Account tab of Tools (wc/account-panel.js): the sign-in at the top, the copyright and Powered by at the bottom. */
+app-account-panel {
     display: flex;
     flex-direction: column;
-    align-items: center;
     gap: var(--padding);
-    margin: var(--padding) 0;
 }
 
-.settings-footer app-account {
+app-account-panel > app-account {
+    align-self: flex-start;
     padding: 0.25em 0.75em;
     border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
     border-radius: var(--corners, 4px);
 }
 
-.settings-footer > .settings-footer-line {
+app-account-panel > .account-body {
+    flex: 1 1 auto;
+}
+
+/* The footer below a thin line, in one row: the copyright centered in the room left of Powered by, at the end. */
+app-account-panel > .account-footer {
+    display: flex;
+    align-items: center;
+    gap: var(--padding);
+    padding-top: var(--padding);
+    border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+app-account-panel .account-copyright {
+    flex: 1 1 auto;
+    text-align: center;
+    font-size: var(--font-size-small);
+    opacity: 0.8;
+}
+
+/* The Accessibility tab of Tools (wc/accessibility.js), and what its choices change across the app. */
+.accessibility-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--padding);
+}
+
+.accessibility-panel .a11y-text-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: center;
     gap: var(--padding);
-    width: 100%;
 }
 
-/* The copyright fills the room beside Powered by, centered in it, as the app's footer had it. */
-.settings-footer .settings-copyright {
-    flex: 1 1 0;
-    text-align: center;
+.accessibility-panel .a11y-text-size {
+    flex: 1 1 10rem;
+}
+
+.accessibility-panel .a11y-switches {
+    display: flex;
+    flex-direction: column;
+    gap: var(--padding);
+}
+
+.accessibility-panel .a11y-switch {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--padding);
+    cursor: pointer;
+}
+
+.accessibility-panel .a11y-switch-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.accessibility-panel .a11y-note {
+    opacity: 0.8;
+    font-size: var(--font-size-small);
+}
+
+/* Reduce motion: Web UI's timing variables reach components' shadow roots, and the rule covers the page itself. */
+:root[data-reduce-motion] {
+    --main-transition: 0ms;
+    --transition-speed: 0ms;
+    --transition-fast: 0ms;
+}
+
+:root[data-reduce-motion] *,
+:root[data-reduce-motion] *::before,
+:root[data-reduce-motion] *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+}
+
+:root[data-underline-links] a,
+:root[data-underline-links] webui-link {
+    text-decoration: underline;
+}
+
+/* A thicker focus outline, through Web UI's focus variables, which reach components' shadow roots. */
+:root[data-strong-focus] {
+    --focus-outline: 4px solid var(--color-focus);
+    --focus-offset: 3px;
+}
+
+:root[data-strong-focus] :focus-visible {
+    outline: var(--focus-outline) !important;
+    outline-offset: var(--focus-offset) !important;
 }
 
 /* Tools (wc/tools.js): one tab each, in the right drawer. */
@@ -2608,7 +2686,12 @@ app-page-import [hidden] {
 }
 
 .tools-content {
+    box-sizing: border-box;
+    padding: var(--padding);
     overflow-y: auto;
+    /* Only up and down: scrolled sideways, as WebKit did to show a focused element a little wider than the tab, the
+       left edge of what the tab shows was cut off. */
+    overflow-x: hidden;
     min-height: 0;
     /* A scrollbar coming and going would change the width, and a split pane filling the tab would follow it back and
        forth, between side by side and one pane, so its space is always kept. */
@@ -2910,4 +2993,16 @@ app-script-performance .perf-threads-row {
 app-script-performance .perf-threads {
     flex: 1 1 auto;
     max-width: 24rem;
+}
+
+/* The home link's name beside the logo, at the top of the menu, reads as the app's title. */
+webui-drawer.nav .nav-home-label {
+    font-size: 1.35em;
+    font-weight: 600;
+}
+
+/* The Help bubble starts halfway over the top of what is below it, the drawer's footer or the favorites bar: out of
+   the way, and plainly something that can be dragged elsewhere, which then keeps its own place. */
+:root {
+    --page-help-bottom: -1.35em;
 }

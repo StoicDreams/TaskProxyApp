@@ -98,8 +98,8 @@
             const t = this;
             webui.proxy.terminalHelpers.ensureListeners();
             const state = webui.proxy.terminalHelpers.getState();
-            const container = webui.create('section');
-            container.style.padding = 'var(--padding)';
+            // In Tools, the tab sizes it to the room below the header (tools.js), so the tab never needs to scroll.
+            const container = webui.create('section', { class: 'tools-fill' });
             container.style.display = 'flex';
             container.style.flexDirection = 'column';
             container.style.gap = 'var(--padding)';

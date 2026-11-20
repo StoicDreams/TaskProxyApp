@@ -1,5 +1,6 @@
 import { test, expect, openApp, switchProject, calls, callOrder, onCommand, PROJECT } from '../support/app.mjs';
 import { installBackend } from '../support/backend.mjs';
+import { readFileSync } from 'node:fs';
 
 test('an open project loads and its saved page is restored', async ({ page }) => {
     await openApp(page, { currentPage: '/about' });
@@ -161,4 +162,37 @@ test('the page a project reload passes through is never kept as the project\'s c
     // The reload went through, since the page it ended on was kept.
     await expect.poll(() => page.evaluate(() => window.__currentPages)).toContain('/');
     expect(await page.evaluate(() => window.__currentPages.filter(path => path.includes('_reloading')))).toEqual([]);
+});
+
+test.describe('the service worker', () => {
+    /** Stands in for navigator.serviceWorker, which Playwright blocks, recording what the page asks of it. */
+    const recordServiceWorker = page => page.addInitScript(() => {
+        window.__sw = { registered: [], unregistered: 0 };
+        Object.defineProperty(navigator, 'serviceWorker', {
+            configurable: true,
+            value: {
+                register: url => { window.__sw.registered.push(url); return Promise.resolve({}); },
+                getRegistrations: () => Promise.resolve([{ unregister: () => { window.__sw.unregistered++; return Promise.resolve(true); } }]),
+            },
+        });
+    });
+
+    test('inside Task Proxy none is registered, and one left from before is removed', async ({ page }) => {
+        // WebKitGTK aborted the dev build's web process when it stopped an idle service worker, turning the window gray.
+        await recordServiceWorker(page);
+        await openApp(page);
+        await expect.poll(() => page.evaluate(() => window.__sw.unregistered)).toBe(1);
+        expect(await page.evaluate(() => window.__sw.registered)).toEqual([]);
+    });
+
+    test('in a browser, such as a remote one, it is registered', async ({ page }) => {
+        // The page's own registration script, run where there is no Task Proxy around it.
+        const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+        const script = html.match(/<script type="text\/javascript">([\s\S]*?serviceWorker[\s\S]*?)<\/script>/)[1];
+        await recordServiceWorker(page);
+        await page.route('**/sw-check', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><script>${script}</script>` }));
+        await page.goto('/sw-check');
+        await expect.poll(() => page.evaluate(() => window.__sw.registered)).toEqual(['service-worker.min.js']);
+        expect(await page.evaluate(() => window.__sw.unregistered)).toBe(0);
+    });
 });

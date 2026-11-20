@@ -55,8 +55,6 @@
 
 <webui-stoic-social-links class="mb-2"></webui-stoic-social-links>
 
-<app-settings-footer class="settings-footer" since="2016" company="Stoic Dreams"></app-settings-footer>
-
 <webui-page-help heading="Settings Help">
 <h3>Project Management</h3>
 <webui-content src="d/help/project_management.md"></webui-content>

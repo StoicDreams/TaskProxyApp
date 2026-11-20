@@ -12,6 +12,7 @@ pub mod plugins;
 pub mod prelude;
 pub mod remote;
 pub mod services;
+mod web_recovery;
 
 const MAIN_WINDOW_LABEL: &str = "taskproxy";
 static DID_SAVE_ON_CLOSE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
@@ -131,6 +132,10 @@ pub fn run() {
             && let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL)
         {
             window.open_devtools();
+        }
+        // A crashed page would leave the window gray for good, so it is loaded again (web_recovery.rs).
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+            web_recovery::watch(&window);
         }
         services::terminal_controller::remove_stale_temp_scripts(app.handle());
         // The approved browsers and the log of what they did, for Remote Connections.

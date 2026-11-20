@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.163"
+version = "0.1.164"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -88,6 +88,10 @@ tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Reloads the window when WebKitGTK's web process crashes (web_recovery.rs). The same version and features wry uses.
+webkit2gtk = { version = "2.0", features = ["v2_40"] }
 
 [target.'cfg(windows)'.dependencies]
 # Limits the scripts Task Proxy runs to the CPU threads and priority chosen in Settings (services/performance.rs).

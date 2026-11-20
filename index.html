@@ -14,9 +14,16 @@
     <base href="/" />
     <script type="text/javascript">
         {
-            // Service workers only run on http and https, so tauri:// origins on Linux and macOS skip this.
-            if (location.protocol === 'http:' || location.protocol === 'https:') {
-                navigator.serviceWorker.register(`service-worker.min.js`);
+            // The service worker keeps the app's files for a remote browser, which loads them over https. Inside Task
+            // Proxy its files are already on the computer, and WebKitGTK aborts its web process when it stops an idle
+            // service worker while developer tools are allowed, as in a dev build on http://127.0.0.1. That turned
+            // the window gray. So inside the app none is registered, and one a dev build registered before is removed.
+            const inApp = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+            const sw = navigator.serviceWorker;
+            if (inApp) {
+                sw?.getRegistrations?.().then(list => list.forEach(registration => registration.unregister())).catch(() => { });
+            } else if (sw && (location.protocol === 'http:' || location.protocol === 'https:')) {
+                sw.register(`service-worker.min.js`).catch(() => { });
             }
         }
     </script>
@@ -48,7 +55,7 @@
         <webui-drawer slot="left" class="nav elevation-20" docked="true" data-state="slot|docked" data-moveable="left|right" data-dockable style="min-width:24ch;">
             <webui-nav-link url="/" data-subscribe="page-path:setter">
                 <webui-stoic-dreams-logo slot="icon" title="Task Proxy Logo" text="Task" text2="Proxy"></webui-stoic-dreams-logo>
-                <span data-subscribe="app-nav-home:html">Dashboard</span>
+                <span class="nav-home-label" data-subscribe="app-nav-home:html">Dashboard</span>
             </webui-nav-link>
             <app-project-dropdown></app-project-dropdown>
             <webui-nav data-subscribe="app-nav-routes:setNavRoutes"></webui-nav>
@@ -56,7 +63,7 @@
             <webui-flex grow></webui-flex>
             <app-project-links></app-project-links>
         </webui-drawer>
-        <webui-drawer slot="right" class="shared elevation-20" data-stopclick data-moveable="left|right" data-dockable resizable data-state="slot|docked|width">
+        <webui-drawer slot="right" class="shared elevation-20" fill data-stopclick data-moveable="left|right" data-dockable resizable data-state="slot|docked|width">
         </webui-drawer>
         <header slot="header">
             <button aria-label="open navigation menu" data-toggleclass=".nav|open" class="elevation-10 pa-1 mx-1">
@@ -78,6 +85,7 @@
             <webui-alerts title="View your notifications" data-title="My Alerts"></webui-alerts>
             <app-plugins-drawer title="Plugins" data-toggleclass=".shared|open"></app-plugins-drawer>
             <app-icon-drawer title="Icons & Emojis" data-toggleclass=".shared|open"></app-icon-drawer>
+            <app-accessibility></app-accessibility>
             <webui-theme-selector editable title="Theme" data-title="Theme">
                 <!-- THEMES:START (tools/themes/build-themes.mjs) -->
                 <option value="" data-scheme="dark" data-category="Classic" data-colors="#333333 #1878af #5e0592 #0c2ec2 #7d0b77 #1f705c #1878af">Task Proxy</option>
