@@ -3,7 +3,6 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installBackend } from './backend.mjs';
-import { cdnBodyFingerprint, finishRecording, noteCdn, startRecording, unchangedSincePassing } from './test-cache.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 // Set to a MyFiCDN checkout's cdn folder to test against unreleased components instead of the live CDN.
@@ -21,15 +20,13 @@ function buildIndex() {
         .replace(/<script data-trunk src="root_files\/app\.min\.js" data-no-minify><\/script>/, '<script src="/app.min.js"></script>');
 }
 
-function resolveFile(pathname, useMinified) {
+// Only the minified files are tested: they are what the app loads.
+function resolveFile(pathname) {
     const relative = decodeURIComponent(pathname).replace(/^\/+/, '');
     for (const folder of ['root_files', '']) {
         const file = normalize(join(ROOT, folder, relative));
         if (!file.startsWith(ROOT.replace(/[\\/]+$/, '') + sep)) continue;
-        const candidates = !useMinified && /\.min\.(js|css)$/.test(file) ? [file.replace(/\.min\.(js|css)$/, '.$1'), file] : [file];
-        for (const candidate of candidates) {
-            if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-        }
+        if (existsSync(file) && statSync(file).isFile()) return file;
     }
     return null;
 }
@@ -64,7 +61,6 @@ async function serveLiveCdn(route) {
     const url = `https://cdn.myfi.ws${new URL(request.url()).pathname}`;
     if (!liveCdn.has(url)) liveCdn.set(url, downloadLiveCdn(url));
     const file = await liveCdn.get(url);
-    noteCdn(url, file?.body);
     if (!file) {
         liveCdn.delete(url);
         return route.continue();
@@ -72,19 +68,18 @@ async function serveLiveCdn(route) {
     return route.fulfill({ status: file.status, contentType: file.contentType, body: file.body, headers: { 'access-control-allow-origin': '*' } });
 }
 
-function serve(route, useMinified) {
+function serve(route) {
     const url = new URL(route.request().url());
     // Components load from the live CDN, as they do in the app, so a breaking deploy fails these tests.
     if (url.hostname === 'cdn.myfi.ws') {
         if (!CDN_ROOT) return serveLiveCdn(route);
         const file = normalize(join(CDN_ROOT, decodeURIComponent(url.pathname)));
-        const source = !useMinified && file.endsWith('.min.js') ? file.replace(/\.min\.js$/, '.js') : file;
-        const found = [source, file].find(candidate => existsSync(candidate) && statSync(candidate).isFile());
+        const found = existsSync(file) && statSync(file).isFile() ? file : null;
         if (!found) return route.fulfill({ status: 404, body: 'Not Found' });
         return route.fulfill({ contentType: MIME[extname(found)] || 'application/octet-stream', body: readFileSync(found), headers: { 'access-control-allow-origin': '*' } });
     }
     if (url.hostname !== '127.0.0.1') return route.abort();
-    const file = url.pathname === '/' ? null : resolveFile(url.pathname, useMinified);
+    const file = url.pathname === '/' ? null : resolveFile(url.pathname);
     if (file) {
         return route.fulfill({ contentType: MIME[extname(file)] || 'application/octet-stream', body: readFileSync(file) });
     }
@@ -95,31 +90,19 @@ function serve(route, useMinified) {
     return route.fulfill({ contentType: 'text/html', body: buildIndex() });
 }
 
-/** A live CDN file's fingerprint now, for the test cache, downloaded once per worker like the files tests load. */
-async function cdnFingerprint(url) {
-    if (!liveCdn.has(url)) liveCdn.set(url, downloadLiveCdn(url));
-    return cdnBodyFingerprint((await liveCdn.get(url))?.body);
-}
-
+// The browser tests (tests/browser) and the captures (tools/capture): what needs a real browser. Everything else is in
+// tests/unit, which runs the same app in jsdom (tests/unit/support/app.mjs).
 export const test = base.extend({
-    useMinified: [false, { option: true }],
-    // Skips a test when nothing it used has changed since it last passed (support/test-cache.mjs).
-    testCache: [async ({}, use, testInfo) => {
-        testInfo.skip(await unchangedSincePassing(testInfo, cdnFingerprint), 'Nothing it uses changed since it last passed');
-        startRecording(testInfo);
-        await use();
-        finishRecording(testInfo);
-    }, { auto: true }],
     // A worker's first test would otherwise download every framework file the app loads while it opens the app. With
     // many workers starting at once on a busy machine, that took most of a test's time, so whichever test ran first in
     // a worker could time out. Each worker opens the app once, in its own time, before its first test that loads a
-    // page, so tests start with the files in memory. Tests the cache skips never start it.
+    // page, so tests start with the files in memory.
     warmCdn: [async ({ browser }, use, workerInfo) => {
         if (!CDN_ROOT) {
-            const { baseURL, serviceWorkers, viewport, useMinified } = workerInfo.project.use;
+            const { baseURL, serviceWorkers, viewport } = workerInfo.project.use;
             const context = await browser.newContext({ baseURL, serviceWorkers, viewport });
             const page = await context.newPage();
-            await page.route('**/*', route => serve(route, !!useMinified));
+            await page.route('**/*', route => serve(route));
             // Only a head start: if it can't finish, tests download what they need as before.
             let timer;
             await Promise.race([openApp(page).catch(() => { }), new Promise(resolve => { timer = setTimeout(resolve, 90000); })]);
@@ -128,7 +111,7 @@ export const test = base.extend({
         }
         await use();
     }, { scope: 'worker', timeout: 120000 }],
-    page: async ({ page, useMinified, testCache, warmCdn }, use) => {
+    page: async ({ page, warmCdn }, use) => {
         const errors = [];
         page.on('pageerror', error => {
             // Closing a dialog with Cancel rejects its promise, which most callers have no use for.
@@ -148,7 +131,7 @@ export const test = base.extend({
                 }
             });
         });
-        await page.route('**/*', route => serve(route, useMinified));
+        await page.route('**/*', route => serve(route));
         await use(page);
         expect(errors, 'Uncaught errors happened while this test ran').toEqual([]);
     },

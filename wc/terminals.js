@@ -264,7 +264,12 @@
          */
         async switchTerminal(id, projectId) {
             const t = this;
+            // The latest switch wins: an earlier one still waiting, or its runner update still pending, is dropped,
+            // so it cannot bring back the script it was showing.
+            const turn = t._switchTurn = (t._switchTurn || 0) + 1;
+            clearTimeout(t._runnerUpdate);
             await webui.wait(() => t._runner && typeof t._runner.setScript === 'function' && typeof t._activeConsole?.attach === 'function');
+            if (turn !== t._switchTurn) return;
             const helpers = webui.proxy.terminalHelpers;
             t._none = !id;
             if (t._none) {
@@ -287,15 +292,16 @@
                 let scriptContent = '';
                 if (id !== 'live' && !t._viewProject) {
                     scriptContent = await webui.proxy.getProjectFile(id).catch(() => '') || '';
+                    if (turn !== t._switchTurn) return;
                 }
-                state.terminals[id] = helpers.newTerminal(id, { script: scriptContent });
+                state.terminals[id] ??= helpers.newTerminal(id, { script: scriptContent });
             }
             const current = state.terminals[id];
             t.renderConsole();
             t.renderStatus();
             t.refreshDropdown();
             t.refreshButtons();
-            setTimeout(() => {
+            t._runnerUpdate = setTimeout(() => {
                 t._runner.setScript(current.id, current.script || '');
                 // Another project's script is only watched here, since its files are not the open project's.
                 t._runner.setReadOnly(!!current.isPageScript || !!t._viewProject);

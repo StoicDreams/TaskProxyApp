@@ -14,7 +14,7 @@ npm run capture -- videos               # Only the narrated tutorial videos
 - **Every run replaces every file.** Recordings never come out byte for byte the same, so git shows them all as changed. Commit them when the UI changed enough to be worth it, or discard them.
 - **Time:** about 8 minutes for everything. `CAPTURE_WORKERS` sets how many recordings run at once (3 by default); use 1 on a slow machine if recordings stutter.
 - **Needs:** `ffmpeg` with `libx264` and `libwebp`, and network access for the Web UI CDN. Set `WEBUI_CDN_ROOT` to capture against a MyFiCDN checkout.
-- **Source files:** captures use the source files, not the `.min.js` files, so they show changes that are not minified yet.
+- **Minified files:** captures use the `.min.js` and `.min.css` files, as the app does. Publish minifies before it records; run `PowerShell/Minify.ps1` first when capturing on its own.
 
 ## Files
 

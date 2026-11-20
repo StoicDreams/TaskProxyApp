@@ -9,7 +9,8 @@ written to the TaskProxy website checkout beside this repo, in webapp/root_files
 Every file is captured again on every run. Recordings never come out byte for byte the same, so git shows them all as
 changed: commit them when the UI changed enough to be worth it, or discard them. Publish.ps1 -SkipScreenshots leaves
 this out. It takes a few minutes; CAPTURE_WORKERS sets how many recordings run at once (3 by default).
-The captures use the source files, so they show changes that are not minified yet.
+The captures use the minified files, as the app does, so run Minify.ps1 first when running this on its own (Publish.ps1
+minifies before it starts this).
 
 .PARAMETER OutputPath
 Write the images and videos under this folder instead.

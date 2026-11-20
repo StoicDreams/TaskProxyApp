@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: 0.1.164
+  VERSION: 0.1.165
 
 jobs:
   test:
@@ -49,37 +49,9 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      # What each UI test used when it last passed, so tests whose files are unchanged are skipped
-      # (tests/support/test-cache.mjs). Each run saves its own copy, and the next restores the newest.
-      - name: restore the UI test cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .test-cache
-          key: ui-test-cache-${{ github.run_id }}
-          restore-keys: ui-test-cache-
-      # A commit message with [full tests] as a line of its own runs every test. Only a line of its own counts, so a
-      # message that describes the switch, such as in a Feature line, doesn't turn it on.
-      - name: choose whether every UI test runs
-        id: full-tests
-        env:
-          MESSAGE: ${{ github.event.head_commit.message }}
-        run: |
-          if printf '%s\n' "$MESSAGE" | tr -d '\r' | grep -qx '[[:space:]]*\[full tests\][[:space:]]*'; then
-            echo "no-cache=1" >> "$GITHUB_OUTPUT"
-            echo "Every UI test runs, as the commit message asks."
-          fi
-      # The minified files are what the app loads, so test those.
+      # The unit tests, then the browser tests, both on the minified files the app loads.
       - name: run UI tests
         run: npm run test:min
-        env:
-          PW_NO_CACHE: ${{ steps.full-tests.outputs.no-cache }}
-      # Passes from a run that failed elsewhere still hold, so the cache is saved either way.
-      - name: save the UI test cache
-        if: ${{ always() }}
-        uses: actions/cache/save@v4
-        with:
-          path: .test-cache
-          key: ui-test-cache-${{ github.run_id }}
       # The report has each failed test's trace and screenshot.
       - name: keep the UI test report
         if: ${{ failure() }}

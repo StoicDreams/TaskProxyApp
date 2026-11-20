@@ -75,8 +75,8 @@ export function installBackend(page, state) {
     return page.addInitScript(setup, state);
 }
 
-/* Runs in the page, so it can use nothing from this module. */
-function setup(state) {
+/* Runs in the page, so it can use nothing from this module. The unit tests (tests/unit/support/app.mjs) run it too. */
+export function setup(state) {
     const project = state.project === null ? null : (state.project || { name: 'Repo', path: '/repo' });
     const files = { ...(state.files || {}) };
     const binaryFiles = { ...(state.binaryFiles || {}) };
