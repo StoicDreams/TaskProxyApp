@@ -482,6 +482,15 @@
     function dangerNote(html, bold) {
         return `<p style="background: var(--color-danger); color: var(--color-danger-offset); padding: 0.25em 0.5em; border-radius: var(--corners);${bold ? ' font-weight: bold;' : ''}">${html}</p>`;
     }
+    /** A file's size now, and how much it grew or shrank since the last commit, when the backend gave them. */
+    function sizeHtml({ size, savedSize }) {
+        const known = value => typeof value === 'number' && Number.isFinite(value);
+        if (!known(size) && !known(savedSize)) return '';
+        const shown = known(size) ? ` <span class="size" title="Size now">${webui.formatBytes(size, 1)}</span>` : '';
+        const change = (known(size) ? size : 0) - (known(savedSize) ? savedSize : 0);
+        const sign = change > 0 ? '+' : change < 0 ? '-' : '±';
+        return `${shown} <span class="size-change" title="Change in size since the last commit">${sign}${webui.formatBytes(Math.abs(change), 1)}</span>`;
+    }
     function rowHtml(details, index) {
         const isNew = details.change === 'Add';
         const options = [[includeStates.include, 'Include'], [includeStates.exclude, 'Exclude'], [includeStates.ignore, 'Ignore']]
@@ -491,6 +500,7 @@
             + `<select class="include" data-state="${details.state}" title="${includeTitle}" aria-label="Include ${path}">${options}</select>`
             + `<button type="button" class="file" title="${path}"><span class="change-type">${details.change}</span> <strong class="name">${webui.escapeForHTML(details.name)}</strong>`
             + (details.folder ? ` <span class="folder">${webui.escapeForHTML(details.folder)}</span>` : '')
+            + sizeHtml(details)
             + `</button>`
             + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}"><webui-icon icon="${isNew ? 'trash' : 'undo'}"></webui-icon></button>`
             + `</div>`;
@@ -1211,6 +1221,9 @@
                 .map(line => parseChange(line, repo));
             t._filesRepo = repo;
             t._files.forEach(details => {
+                const stats = t._lineStats?.get(details.fileName);
+                details.size = stats?.size;
+                details.savedSize = stats?.savedSize;
                 if (ignoredFiles.has(`${details.repo}/${details.fileName}`)) {
                     details.state = includeStates.ignore;
                     details.isIncluded = false;
@@ -1902,6 +1915,11 @@ button.file {
 }
 button.file .name {
     white-space: nowrap;
+}
+.size, .size-change {
+    white-space: nowrap;
+    font-size: 0.85em;
+    font-weight: normal;
 }
 .folder {
     min-width: 0;

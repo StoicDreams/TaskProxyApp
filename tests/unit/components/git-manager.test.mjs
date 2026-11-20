@@ -625,6 +625,31 @@ test.describe('pending commit stats', () => {
         await open(page, { changes: ['R  old.txt -> new.txt'], lineStats: [{ path: 'new.txt', additions: 1, deletions: 1, binary: false }] });
         await expect(linesStat(page)).toHaveText('+1 -1');
     });
+    test('each file shows its size now, and how much it grew or shrank since the last commit', async ({ page }) => {
+        await open(page, {
+            changes: [' M a.txt', '?? new.txt', ' D gone.txt', ' M same.txt', 'R  old.txt -> moved.txt'],
+            lineStats: [
+                { path: 'a.txt', additions: 1, deletions: 0, binary: false, size: 3072, savedSize: 1024 },
+                { path: 'new.txt', additions: 1, deletions: 0, binary: false, size: 512, savedSize: null },
+                { path: 'gone.txt', additions: 0, deletions: 1, binary: false, size: null, savedSize: 2048 },
+                { path: 'same.txt', additions: 1, deletions: 1, binary: false, size: 10, savedSize: 10 },
+                { path: 'moved.txt', additions: 0, deletions: 0, binary: false, size: 2000, savedSize: 2500 },
+            ],
+        });
+        const row = file => manager(page).locator(`.file-row[data-path="${file}"] button.file`);
+        await expect(row('a.txt').locator('.size')).toHaveText('3 KB');
+        await expect(row('a.txt').locator('.size-change')).toHaveText('+2 KB');
+        await expect(row('new.txt').locator('.size')).toHaveText('512 Bytes');
+        await expect(row('new.txt').locator('.size-change')).toHaveText('+512 Bytes');
+        await expect(row('gone.txt').locator('.size')).toHaveCount(0);
+        await expect(row('gone.txt').locator('.size-change')).toHaveText('-2 KB');
+        await expect(row('same.txt').locator('.size-change')).toHaveText('±0 Bytes');
+        await expect(row('moved.txt').locator('.size-change')).toHaveText('-500 Bytes');
+    });
+    test('without sizes from the backend, rows show none', async ({ page }) => {
+        await open(page, { lineStats });
+        await expect(manager(page).locator('.file-row .size, .file-row .size-change')).toHaveCount(0);
+    });
     test('with nothing to commit, it says so', async ({ page }) => {
         await openApp(page, { currentPage: '/git-controller', git: { changes: [] } }, '/git-controller');
         await expect(filesStat(page)).toHaveText('No changes');

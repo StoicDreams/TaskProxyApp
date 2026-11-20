@@ -503,6 +503,12 @@ pub(crate) struct GitFileLineStats {
     pub additions: usize,
     pub deletions: usize,
     pub binary: bool,
+    /// The file's size in bytes now, or None when it was deleted.
+    #[serde(default)]
+    pub size: Option<u64>,
+    /// The file's size in bytes in the last commit, or None when it is new.
+    #[serde(default)]
+    pub saved_size: Option<u64>,
 }
 
 #[tauri::command]
@@ -1148,11 +1154,26 @@ fn change_line_stats(repository: &Repository) -> Result<Vec<GitFileLineStats>, S
             }
             _ => (0, 0, true),
         };
+        // The committed size from its blob, and the current size from the working copy, which holds the change.
+        let saved_size = Some(delta.old_file().id())
+            .filter(|id| !id.is_zero())
+            .and_then(|id| repository.find_blob(id).ok())
+            .map(|blob| blob.size() as u64);
+        let size = if delta.status() == git2::Delta::Deleted {
+            None
+        } else {
+            repository
+                .workdir()
+                .and_then(|root| std::fs::metadata(root.join(&path)).ok())
+                .map(|meta| meta.len())
+        };
         stats.push(GitFileLineStats {
             path,
             additions,
             deletions,
             binary,
+            size,
+            saved_size,
         });
     }
     Ok(stats)
@@ -2524,6 +2545,32 @@ mod tests {
                 ("a.txt".to_string(), 2, 1, false),
                 ("gone.txt".to_string(), 0, 3, false),
                 ("new.txt".to_string(), 3, 0, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn line_stats_give_the_size_now_and_in_the_last_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "grow.txt", "12345");
+        write(&repo, "gone.txt", "abc");
+        commit_all(&repo, "second");
+        write(&repo, "grow.txt", "1234567890");
+        write(&repo, "new.txt", "xy");
+        fs::remove_file(root_of(&repo).join("gone.txt")).unwrap();
+        let mut sizes: Vec<_> = change_line_stats(&repo)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.path, s.size, s.saved_size))
+            .collect();
+        sizes.sort();
+        assert_eq!(
+            sizes,
+            [
+                ("gone.txt".to_string(), None, Some(3)),
+                ("grow.txt".to_string(), Some(10), Some(5)),
+                ("new.txt".to_string(), Some(2), None),
             ]
         );
     }
