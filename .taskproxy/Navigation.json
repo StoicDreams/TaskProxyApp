@@ -1,16 +1,9 @@
 [
   {
-    "name": "Folder",
-    "icon": "badge_folder|backing|inverted|theme:success|bordered",
-    "url": null,
-    "children": [
-      {
-        "name": "Page",
-        "icon": "badge_file|theme:warning|backing|inverted|shade:duo",
-        "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
-        "children": null
-      }
-    ]
+    "name": "Tasks",
+    "icon": "calendar_list-check|bordered",
+    "url": "/524c217e-eda6-4c2f-8ce7-08e5963ebe92",
+    "children": null
   },
   {
     "name": "Dev",
@@ -19,9 +12,28 @@
     "children": null
   },
   {
+    "name": "AI Setup",
+    "icon": "robot",
+    "url": "/3f6b2c1e-8a4d-4e7f-9b21-6c5d0e8a7f13",
+    "children": null
+  },
+  {
     "name": "Release",
     "icon": "package",
     "url": "/901091c2-ba23-481a-8fd2-534467758277",
     "children": null
+  },
+  {
+    "name": "Example Folder",
+    "icon": "badge_folder|backing|inverted|theme:success|bordered",
+    "url": null,
+    "children": [
+      {
+        "name": "Example Page",
+        "icon": "badge_file|theme:warning|backing|inverted|shade:duo",
+        "url": "/0db6bb9d-6faf-434e-bc31-6b0d3cec5b6b",
+        "children": null
+      }
+    ]
   }
 ]
