@@ -219,3 +219,10 @@ test('Settings has a Remote Connections tab', async ({ page }) => {
     await expect(page.locator('.settings-remote app-remote-connections .remote-state')).toBeVisible();
     await expect(page.locator('.settings-remote app-remote-connections .remote-state')).toContainText('Remote Connections is off.');
 });
+test('it says where to connect from, and the page opens in the browser', async ({ page }) => {
+    const el = await panel(page);
+    const link = el.locator('.remote-where a');
+    await expect(link).toHaveText('www.taskproxy.com/remote/');
+    await link.click();
+    await expect.poll(() => calls(page, 'open_url')).toEqual([{ url: 'https://www.taskproxy.com/remote/' }]);
+});

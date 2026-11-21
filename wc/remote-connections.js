@@ -13,6 +13,8 @@
  */
 "use strict"
 {
+    /** The website's page that connects a browser to this computer. */
+    const REMOTE_PAGE = 'https://www.taskproxy.com/remote/';
     const panels = new Set();
     let listening = false;
     const LEVELS = [
@@ -170,6 +172,16 @@
                 ? ` ${status.name} is listed on www.taskproxy.com for your Stoic Dreams account, and browsers you approve here can use its Task Proxy.`
                 : ' Turn it on to use this computer\'s Task Proxy from a browser on www.taskproxy.com, signed in to the same Stoic Dreams account.'));
             part.appendChild(line);
+            // Where to connect from: the page is also linked from the website's Account panel once signed in.
+            const where = el('p', { class: 'remote-where' });
+            const link = el('a', { href: REMOTE_PAGE, class: 'remote-page-link' }, REMOTE_PAGE.replace('https://', ''));
+            link.addEventListener('click', ev => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                webui.proxy.openUrl(REMOTE_PAGE);
+            });
+            where.append('Connect from ', link, ', or from Account at the top of www.taskproxy.com once signed in.');
+            part.appendChild(where);
             if (status.enabled && status.reachability?.error) {
                 const alert = el('webui-alert', { show: true, severity: 'warning', class: 'remote-error' });
                 alert.textContent = `api.myfi.ws can't be reached right now, so browsers can't ask to connect: ${status.reachability.error}`;
