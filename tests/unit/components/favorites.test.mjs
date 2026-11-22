@@ -49,6 +49,14 @@ test('hovering an icon reads its script again for the tooltip', async ({ page })
     await expect(icons(page).first()).toHaveAccessibleName('Fav a: Write-Host "Changed"');
 });
 
+test("a script's comment-based help, attributes, and parameters are left out of its tooltip", async ({ page }) => {
+    const script = '<#\n.SYNOPSIS\nRuns the tests.\n#>\n[CmdletBinding()]\nparam(\n    [ValidateSet(\'unit\', \'e2e\')]\n    [string]$Suite = \'unit\',\n    [switch]$Watch\n)\n\nnpm run "test:$Suite"\n';
+    await openApp(page, state([favorite('a')]));
+    await page.evaluate(script => window.__backend.handlers.favorite_script = () => script, script);
+    await icons(page).first().hover();
+    await expect(icons(page).first()).toHaveAccessibleName('Fav a: npm run "test:$Suite"');
+});
+
 test('clicking an icon runs it in its project, with its parameters and the page values it may use, and shows it running', async ({ page }) => {
     const params = [{ name: 'Env', fromData: false, value: 'staging', key: '', switch: false }];
     await openApp(page, state([favorite('a', { params, scopes: { page: true, project: false, global: true } })]));

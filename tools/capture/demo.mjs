@@ -68,7 +68,7 @@ const onboardingPage = `<webui-data data-page-title="Team Onboarding" data-page-
 This page lives in the repository at \`.taskproxy/pages\`, so everyone who opens the project in Task Proxy sees the same steps. Edit it like any other doc, and commit the change for the rest of the team.
 
 1. Ask your lead for access to the **Acme** GitHub organization.
-2. Set your \`github_pat\` variable in **Manage Variables** so Task Proxy can push and pull.
+2. Set your \`github_pat\` variable on the **Variables** tab of **Tools** so Task Proxy can push and pull.
 3. Run the steps below, top to bottom.
 
 </webui-page-segment>
@@ -89,7 +89,7 @@ npm install
 
 <webui-page-segment>
 
-The API address comes from the **apiBaseUrl** variable, so switching environments in **Manage Variables** changes what this script writes.
+The API address comes from the **apiBaseUrl** variable, so switching environments on the **Variables** tab changes what this script writes.
 
 \`\`\`pwsh
 $apiBaseUrl = 'https://dev.api.acme.test'

@@ -65,7 +65,7 @@ test('run a page script against another environment', async ({ page }) => {
         await caption(page, 'Team pages hold the steps, and the scripts that do them', 2400);
         await moveTo(page, page.locator('webui-icon.run-script-btn').nth(1), { offsetY: 40 });
         await caption(page, 'This script uses the apiBaseUrl variable', 2200);
-        await caption(page, 'Open Manage Variables to choose an environment');
+        await caption(page, 'Open the Variables tab of Tools to choose an environment');
         await openToolTab(page, 'variables', { after: 1500 });
         const env = page.locator('#env-selector');
         await env.waitFor({ state: 'attached' });
@@ -115,7 +115,7 @@ test('answer a script\'s prompt in the terminal', async ({ page }) => {
         await caption(page, 'Each parameter gets its own input');
         await typeInto(page, environment, 'staging', { delay: 70 });
         await clickOn(page, manager.locator('.params-container [data-param="SkipBuild"]'), { after: 1200 });
-        await caption(page, 'Run it, then open the Terminal Manager');
+        await caption(page, 'Run it, then open the Terminals tab of Tools');
         await clickOn(page, manager.locator('webui-button[label="Run"]').first(), { after: 600 });
         await openToolTab(page, 'terminals', { after: 800 });
         await expect.poll(() => page.evaluate(() => !!webui.proxy.terminalHelpers.getState().terminals['.taskproxy/scripts/deploy.ps1'])).toBe(true);

@@ -58,7 +58,23 @@
     }
     /** A script's first line that does something, for its tooltip. */
     function firstLine(text) {
-        const line = `${text || ''}`.split('\n').map(line => line.trim()).find(line => line && !line.startsWith('#') && !/^param\s*\(/i.test(line));
+        // Comment-based help (<# ... #>), attributes such as [CmdletBinding()], and the whole param(...) block, however
+        // many lines it takes, say nothing about what the script does.
+        const lines = `${text || ''}`.replace(/<#[\s\S]*?#>/g, '').split('\n').map(line => line.trim());
+        const depthOf = line => (line.match(/\(/g) || []).length - (line.match(/\)/g) || []).length;
+        let inParams = 0;
+        const line = lines.find(line => {
+            if (inParams > 0) {
+                inParams += depthOf(line);
+                return false;
+            }
+            if (!line || line.startsWith('#') || /^\[[^\]]*\]$/.test(line)) return false;
+            if (/^param\s*\(/i.test(line)) {
+                inParams = depthOf(line);
+                return false;
+            }
+            return true;
+        });
         if (!line) return '';
         return line.length > 120 ? `${line.substring(0, 117)}...` : line;
     }

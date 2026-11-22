@@ -518,6 +518,8 @@ test.describe('features', () => {
             await page.waitForTimeout(1000);
             await clickOn(page, importer.locator('webui-button', { hasText: 'Import Pages' }), { after: 1200 });
             await expect(importer.locator('webui-alert[show]')).toContainText('Imported');
+            // The new pages, under the folder the import added to the navigation.
+            await clickOn(page, page.locator('webui-drawer.nav webui-nav').getByText('docs', { exact: true }), { after: 900 });
         });
     });
 
@@ -545,7 +547,7 @@ test.describe('features', () => {
             const favorites = page.locator('app-favorites');
             await clickOn(page, favorites.locator('.fav-edit'), { after: 1000 });
             await clickOn(page, favorites.locator('webui-button.fav-add'), { after: 1000 });
-            await clickOn(page, favorites.locator('.fav-choice[data-block="3"]'), { after: 1200 });
+            await clickOn(page, favorites.locator('.fav-choice[data-block="2"]'), { after: 1200 });
             await moveTo(page, favorites.locator('.fav-editor .fav-name'));
             await page.waitForTimeout(800);
             await clickOn(page, favorites.locator('webui-button.fav-done'), { after: 1000 });
@@ -584,7 +586,8 @@ test.describe('features', () => {
 
     test('project tiles', async ({ page }) => {
         const [mobile, design, payments] = OTHER_PROJECTS;
-        await open(page, '/', {
+        // On a page of the project, since Settings' own icon picker reads the project's images, which showLogos leaves out.
+        await open(page, `/${PAGE_IDS.onboarding}`, {
             projects: [PROJECT, ...OTHER_PROJECTS],
             gitStatus: { [PROJECT.path]: { changes: 4, ahead: 2, behind: 1 }, [mobile.path]: { changes: 1 }, [payments.path]: { behind: 3 } },
             ciStatus: {
@@ -679,8 +682,6 @@ test.describe('features', () => {
             await page.evaluate(() => window.__backend.myfi.approve({ id: 'demo-account', displayName: 'Sam Rivera' }));
             await expect(account).toContainText('Signed in as Sam Rivera');
             await moveTo(page, account);
-            // Until the popup saying so has gone, so the poster shows the panel.
-            await expect(page.locator('webui-alerts webui-alert[show], webui-alerts .alert')).toHaveCount(0, { timeout: 15000 }).catch(() => { });
             await page.waitForTimeout(600);
         });
     });
