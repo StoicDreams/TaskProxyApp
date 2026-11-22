@@ -1,6 +1,9 @@
 import { test, expect, openApp } from '../../tests/support/app.mjs';
 import { existsSync, readFileSync } from 'node:fs';
-import { demoState, PAGE_IDS, testRunOutput } from './demo.mjs';
+import {
+    AI_APP_DATA, AI_PROVIDERS, AI_REPLIES, IMPORT_DOCS, IMPORT_PLAN, IMPORT_SUGGESTED, OTHER_PROJECTS, PAGE_IDS, PROJECT, PROJECT_LOGOS,
+    STOREFRONT_IMAGES, demoState, testRunOutput,
+} from './demo.mjs';
 import { clickOn, openToolTab, loop, moveTo, parkMouse, prepare, scriptOutput, typeInto } from './helpers.mjs';
 
 // Short looping videos for TaskProxy.com, in place of screenshots: each shows one action from start to finish,

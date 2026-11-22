@@ -417,3 +417,99 @@ export const testRunOutput = [
     { wait: 200 },
     '\r\n  \x1b[32m6 passed\x1b[0m \x1b[2m(4.1s)\x1b[0m\r\n',
 ];
+
+/** The other saved projects, beside Acme Storefront, for the project list and its tiles. */
+export const OTHER_PROJECTS = [
+    { name: 'Acme Mobile', path: '/home/sam/code/acme-mobile' },
+    { name: 'Design System', path: '/home/sam/code/design-system' },
+    { name: 'Payments API', path: '/home/sam/code/payments-api' },
+];
+
+/** Square logos for the demo projects, as an image in each repo would be. */
+const logo = (background, art) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${background}"/>${art}</svg>`;
+export const PROJECT_LOGOS = {
+    // A shopping cart.
+    [PROJECT.path]: logo('#0f766e', '<path d="M12 16h6l6 24h22l5-17H21" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="27" cy="48" r="3.5" fill="#fbbf24"/><circle cx="43" cy="48" r="3.5" fill="#fbbf24"/>'),
+    // A phone.
+    '/home/sam/code/acme-mobile': logo('#7c3aed', '<rect x="21" y="10" width="22" height="44" rx="5" fill="none" stroke="#fff" stroke-width="4"/><circle cx="32" cy="46" r="2.5" fill="#fff"/><rect x="27" y="15" width="10" height="3" rx="1.5" fill="#c4b5fd"/>'),
+    // Swatches.
+    '/home/sam/code/design-system': logo('#e11d48', '<circle cx="24" cy="26" r="10" fill="#fde68a"/><circle cx="40" cy="26" r="10" fill="#93c5fd" fill-opacity=".9"/><circle cx="32" cy="40" r="10" fill="#fff" fill-opacity=".85"/>'),
+    // A card.
+    '/home/sam/code/payments-api': logo('#1d4ed8', '<rect x="10" y="18" width="44" height="28" rx="5" fill="none" stroke="#fff" stroke-width="4"/><rect x="10" y="25" width="44" height="5" fill="#fff"/><rect x="16" y="36" width="12" height="4" rx="2" fill="#fbbf24"/>'),
+};
+
+/** The images in Acme Storefront that could be its icon. */
+export const STOREFRONT_IMAGES = {
+    'assets/brand/storefront-logo.svg': PROJECT_LOGOS[PROJECT.path],
+    'assets/brand/storefront-mono.svg': logo('#111827', '<path d="M12 16h6l6 24h22l5-17H21" fill="none" stroke="#e5e7eb" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="27" cy="48" r="3.5" fill="#e5e7eb"/><circle cx="43" cy="48" r="3.5" fill="#e5e7eb"/>'),
+    'public/favicon.svg': logo('#f59e0b', '<text x="32" y="43" font-family="Arial, sans-serif" font-size="30" font-weight="700" text-anchor="middle" fill="#fff">A</text>'),
+    'src/assets/empty-cart.svg': logo('#e5e7eb', '<path d="M12 16h6l6 24h22l5-17H21" fill="none" stroke="#6b7280" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>'),
+};
+
+/** AI providers as a team member might have them: Ollama on this computer for quick drafts, and Claude Code. */
+export const AI_PROVIDERS = {
+    providers: [
+        { id: 'ollama', name: 'Ollama', kind: 'openAi', baseUrl: 'http://localhost:11434/v1', models: [{ id: 'qwen2.5-coder:7b', name: '' }, { id: 'llama3.2:3b', name: '' }], hidden: [] },
+        {
+            id: 'claude', name: 'Claude Code', kind: 'command',
+            command: 'claude -p --setting-sources user --strict-mcp-config --permission-mode default --model {model} --tools "Read,Grep,Glob"',
+            models: [{ id: 'sonnet', name: 'Claude Sonnet' }, { id: 'opus', name: 'Claude Opus' }], hidden: [],
+        },
+    ],
+};
+
+/** App data that turns every AI integration on, with Ollama for drafts and Claude for reviews. */
+export const AI_APP_DATA = {
+    'app-ai-integrations': { git: true, review: true, pages: true, scripts: true, markdown: true },
+    'app-ai-models': { default: { provider: 'ollama', model: 'qwen2.5-coder:7b' }, review: { provider: 'claude', model: 'sonnet' } },
+    'app-trusted-projects': [PROJECT.path],
+};
+
+/** What AI writes for each demo: the commit message, the review, a page part, and import suggestions. */
+export const AI_REPLIES = {
+    git: 'Apply discounts to the cart total\n\nFeature: The cart total takes an optional discount, and never goes below zero\nFeature: The nav links to the new Deals page\nBug: Item quantities were left out of the cart total\nTests: checkout.test.js covers quantities and discounts',
+    review: `## Summary
+
+The cart now counts quantities and takes a discount, and the new tests cover both. Two things to look at before merging.
+
+## Findings
+
+1. **src/cart.js**: \`item.quantity\` is used without a default, so an item saved before this change (with no quantity) makes the total \`NaN\`. Use \`item.quantity ?? 1\`.
+2. **src/cart.js**: a negative \`discount\` raises the total. Clamp it with \`Math.max(0, discount)\`, or reject it.
+3. **tests/checkout.test.js**: add a case for an item with no quantity, which would have caught the first finding.
+
+## Looks good
+
+- \`Math.max(0, total - discount)\` keeps the total from going below zero.
+- The README now points new developers at the Team Onboarding page.`,
+    pages: `Check these before tagging a release:
+
+- All tests pass on \`main\`, and CI is green for the last push.
+- The changelog lists every **Feature** and **Bug** since the last release.
+- Product has signed off on the release notes.
+
+Then tag and publish it:
+
+1. Run **Bump the version** below, and commit the change as \`Release 1.5.0\`.
+2. Push the tag with \`git push --tags\`, which deploys it to **staging**.
+3. Check the storefront on staging, then run the **Deploy** page for \`prod\`.`,};
+
+/** The markdown files an import of docs/ reads, and what AI suggests for them. */
+export const IMPORT_DOCS = {
+    'docs/architecture.md': '# Architecture\n\nThe storefront is a Vite app that talks to the Acme API.\n',
+    'docs/contributing.md': '# Contributing\n\n1. Branch from `main`.\n2. Keep each pull request to one change.\n',
+    'docs/runbooks/deploy.md': '# deploy\n\nDeploy with `./scripts/deploy.ps1 -Environment prod`.\n',
+    'docs/runbooks/rollback.md': '# rollback\n\nRedeploy the last good tag.\n',
+};
+export const IMPORT_PLAN = [
+    { file: 'docs/architecture.md', title: 'Architecture', subtitle: '', navPath: [], excerpt: 'The storefront is a Vite app that talks to the Acme API.' },
+    { file: 'docs/contributing.md', title: 'Contributing', subtitle: '', navPath: [], excerpt: 'Branch from main. Keep each pull request to one change.' },
+    { file: 'docs/runbooks/deploy.md', title: 'deploy', subtitle: '', navPath: ['runbooks'], excerpt: 'Deploy with ./scripts/deploy.ps1 -Environment prod.' },
+    { file: 'docs/runbooks/rollback.md', title: 'rollback', subtitle: '', navPath: ['runbooks'], excerpt: 'Redeploy the last good tag.' },
+];
+export const IMPORT_SUGGESTED = JSON.stringify([
+    { file: 'docs/architecture.md', title: 'Architecture', subtitle: 'How the storefront fits together', navPath: ['Guides'] },
+    { file: 'docs/contributing.md', title: 'Contributing', subtitle: 'Branches, pull requests, and tests', navPath: ['Guides'] },
+    { file: 'docs/runbooks/deploy.md', title: 'Deploy to Production', subtitle: 'Ship a tagged release', navPath: ['Runbooks'] },
+    { file: 'docs/runbooks/rollback.md', title: 'Roll Back a Release', subtitle: 'Return to the last good tag', navPath: ['Runbooks'] },
+]);

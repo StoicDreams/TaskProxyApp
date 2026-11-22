@@ -408,15 +408,16 @@
      * replaces the Git Controller that said it first.
      */
     const draftsNotUsed = new Set();
-    function saveUnsavedDrafts() {
+    /** `atLoad`: saved as this code loads, when a Git Controller may still be drawn to say what happened. */
+    function saveUnsavedDrafts({ atLoad = false } = {}) {
         unsavedDrafts.values().forEach(({ path, repo, draft, before }) => {
             if (webui.projectData?.path !== path || keepDraft(path, repo, draft, before)) return;
             // Said by the Git Controller showing that repo, or else in the app's alerts, since the button it was asked
-            // from may be gone.
+            // from may be gone. As this code loads, it is left for the Git Controller to say when it shows that repo.
             const view = viewShowing(path, repo);
-            if (view) {
+            if (view || atLoad) {
                 draftsNotUsed.add(`${path}|${repo}`);
-                view.setAlert(CHANGED_WHILE_WRITING, 'warning');
+                view?.setAlert(CHANGED_WHILE_WRITING, 'warning');
             } else {
                 appAlert(CHANGED_WHILE_WRITING, 'warning');
             }
@@ -438,7 +439,7 @@
     waitForDrafts();
     // This code can load after a project opened, as it does at startup when drafts are waiting, and onLoaded only
     // hears the projects opened after it.
-    if (unsavedDrafts.values().length && webui.proxy?.projects?.isLoaded) saveUnsavedDrafts();
+    if (unsavedDrafts.values().length && webui.proxy?.projects?.isLoaded) saveUnsavedDrafts({ atLoad: true });
     const minPanesHeight = 360;
     const includeStates = { include: '1', exclude: '0', ignore: '2' };
     const includeTitle = 'Include: commit this file. Exclude: leave it out of this commit. Ignore: always leave it out.';
