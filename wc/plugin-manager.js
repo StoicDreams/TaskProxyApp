@@ -101,6 +101,14 @@
         disconnected() {
             this._load++;
         },
+        /**
+         * Says what an action did that draws the lists again, above the tabs, which stay. With `trigger`, the button
+         * that ran it, it also clears what that button said before.
+         */
+        say(text, variant, trigger) {
+            setNote(this._note, text, variant);
+            if (trigger) clearActionNote(trigger);
+        },
         /** The tabs and their panes, made once, so reloading the lists keeps the tab and how the panes are sized. */
         build() {
             const t = this;
@@ -121,7 +129,10 @@
                 available: t.splitPane(available.content, 'Available plugins'),
             };
             folder.content.appendChild(t.renderFolder());
-            t.replaceChildren(tabs);
+            // What installing, removing, or turning a plugin on or off did, above the tabs, which stay as the lists
+            // are drawn again.
+            t._note = el('webui-alert', { class: 'plugin-manager-note' });
+            t.replaceChildren(t._note, tabs);
         },
         /**
          * A list of plugins beside the one chosen. Too narrow for both, the chosen one covers the list, and the strip
@@ -222,18 +233,24 @@
             const update = t._updates.get(plugin.id);
             if (update) {
                 const updateButton = button(`Update to v${update.version}`, 'primary', 'refresh');
-                updateButton.addEventListener('click', () => t.installFromCatalog(update));
+                updateButton.addEventListener('click', () => t.installFromCatalog(update, updateButton));
                 actions.appendChild(updateButton);
             }
             const toggle = button(plugin.enabled ? 'Turn off' : 'Turn on', 'secondary', plugin.enabled ? 'pause' : 'play');
             toggle.addEventListener('click', async () => {
-                if (await webui.proxy.plugins.setEnabled(plugin.id, !plugin.enabled)) t.load();
+                t.say('', undefined, toggle);
+                // A failure draws nothing again, so it is said by the button.
+                if (await webui.proxy.plugins.setEnabled(plugin.id, !plugin.enabled, err => actionNote(toggle, `${err}`, 'danger'))) {
+                    t.say(`${nameOf(plugin)} is turned ${plugin.enabled ? 'off' : 'on'}.`, 'success');
+                    t.load();
+                }
             });
             const remove = button('Remove', 'danger', 'trash');
             remove.addEventListener('click', () => {
                 webui.dialog.confirm(`Remove ${escape(nameOf(plugin))}, with its settings and saved data?`, async () => {
-                    if (await webui.proxy.plugins.remove(plugin.id)) {
-                        webui.alert(`${escape(nameOf(plugin))} was removed.`, 'success');
+                    t.say('', undefined, remove);
+                    if (await webui.proxy.plugins.remove(plugin.id, err => actionNote(remove, `${err}`, 'danger'))) {
+                        t.say(`${nameOf(plugin)} was removed.`, 'success');
                         t.load();
                     }
                     return true;
@@ -294,7 +311,9 @@
                 card.appendChild(el('webui-badge', { class: 'plugin-badge', theme: 'success', 'data-role': 'installed' }, `Installed (v${installed.version})`));
             } else {
                 const action = button(update ? `Update to v${entry.version}` : 'Install', 'primary', update ? 'refresh' : 'download');
-                action.addEventListener('click', () => t.installFromCatalog(entry));
+                // What it says goes straight after it, not after the whole card.
+                action.dataset.actionRow = '';
+                action.addEventListener('click', () => t.installFromCatalog(entry, action));
                 card.appendChild(action);
             }
             if (entry.permissions) {
@@ -308,31 +327,35 @@
             const box = el('webui-flex', { column: true, gap: 'var(--padding)', class: 'plugin-manager-actions' });
             box.appendChild(el('p', {}, 'For plugins you build yourself: choose the folder with plugin.json and plugin.wasm. A plugin installed from a folder is not signed by Stoic Dreams, so only install plugins you trust.'));
             const install = button('Install from folder', 'primary', 'folder-open');
-            install.addEventListener('click', () => t.installFromFolder());
+            install.addEventListener('click', () => t.installFromFolder(install));
             const row = el('webui-flex', { wrap: true, gap: 'var(--padding)' });
             row.appendChild(install);
             box.appendChild(row);
             return box;
         },
-        async installFromCatalog(entry) {
+        /** Installs or updates a plugin from the catalog, saying a failure by `trigger`, the button that ran it. */
+        async installFromCatalog(entry, trigger) {
             const t = this;
             if (!await confirmInstall({ ...entry, permissions: entry.permissions || {} }, true)) return;
-            const installed = await webui.proxy.plugins.installCatalog(entry.id);
+            t.say('', undefined, trigger);
+            const installed = await webui.proxy.plugins.installCatalog(entry.id, err => actionNote(trigger, `${err}`, 'danger'));
             if (!installed) return;
-            webui.alert(`${escape(entry.name)} ${escape(entry.version)} is installed.`, 'success');
+            t.say(`${entry.name} ${entry.version} is installed.`, 'success');
             t._chosen.installed = entry.id;
             t.load();
         },
-        async installFromFolder() {
+        /** Installs a plugin from a folder, saying a failure by `trigger`, the button that ran it. */
+        async installFromFolder(trigger) {
             const t = this;
             const folder = await webui.proxy.plugins.pickFolder();
             if (!folder) return;
-            const manifest = await webui.proxy.plugins.inspectFolder(folder);
+            t.say('', undefined, trigger);
+            const manifest = await webui.proxy.plugins.inspectFolder(folder, err => actionNote(trigger, `${err}`, 'danger'));
             if (!manifest) return;
             if (!await confirmInstall(manifest, false)) return;
-            const installed = await webui.proxy.plugins.installFolder(folder);
+            const installed = await webui.proxy.plugins.installFolder(folder, err => actionNote(trigger, `${err}`, 'danger'));
             if (!installed) return;
-            webui.alert(`${escape(manifest.name)} ${escape(manifest.version)} is installed.`, 'success');
+            t.say(`${manifest.name} ${manifest.version} is installed.`, 'success');
             // The new plugin shows where its settings are.
             t._chosen.installed = manifest.id;
             webui.setData(TAB_KEY, INSTALLED_TAB);

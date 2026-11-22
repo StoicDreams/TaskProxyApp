@@ -1,5 +1,5 @@
 import { test, expect, openApp, mount, calls, dialogButton, openDialog } from '../support/app.mjs';
-import { alertPopup } from '../../support/wait.mjs';
+import { actionNote } from '../../support/wait.mjs';
 
 async function runner(page, state = {}) {
     await openApp(page, state);
@@ -37,12 +37,45 @@ test('run saves the file and passes parameters as arguments', async ({ page }) =
     expect((await calls(page, 'spawn_script'))[0]).toMatchObject({ terminalId: 'a.ps1', args: ['-Name', 'val', '-Force'] });
     expect((await calls(page, 'save_project_file'))[0].filePath).toBe('a.ps1');
 });
+test('a script that could not be saved says why, and does not run', async ({ page }) => {
+    const el = await runner(page);
+    await setScript(el, 'a.ps1', 'Write-Host hi');
+    await page.evaluate(() => { window.__backend.handlers.save_project_file = () => { throw 'The disk is full.'; }; });
+    await click(el, 'Run');
+    await expect(actionNote(page, 'The disk is full.')).toHaveCount(1);
+    await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
+});
 test('an empty script does not run', async ({ page }) => {
     const el = await runner(page);
     await setScript(el, 'a.ps1', '   ');
     await click(el, 'Run');
-    await expect(alertPopup(page, 'Script is empty.')).toHaveCount(1);
+    await expect(actionNote(page, 'Script is empty.')).toHaveCount(1);
     await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
+});
+test('what the buttons said goes when another script is shown, or loaded, and stays for the same one', async ({ page }) => {
+    const el = await runner(page, { files: { 'b.ps1': 'Write-Host b' } });
+    await setScript(el, 'a.ps1', '   ');
+    await click(el, 'Run');
+    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
+    await setScript(el, 'a.ps1', '   ');
+    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
+    await setScript(el, 'other.ps1', 'Write-Host other');
+    await expect(actionNote(el, 'Script is empty.')).toHaveCount(0);
+    await setScript(el, 'a.ps1', '   ');
+    await click(el, 'Run');
+    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
+    await el.evaluate(node => node.loadScript('b.ps1'));
+    await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host b');
+    await expect(actionNote(el, 'Script is empty.')).toHaveCount(0);
+});
+test('what the buttons said goes when the script is shown read-only', async ({ page }) => {
+    const el = await runner(page);
+    await setScript(el, 'a.ps1', '   ');
+    await click(el, 'Run');
+    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
+    await el.evaluate(node => node.setReadOnly(true));
+    await expect(el.locator('webui-button[label="Run"]')).toBeHidden();
+    await expect(actionNote(el, 'Script is empty.')).toHaveCount(0);
 });
 test('a page script is never saved as a file, even with a dot in its name', async ({ page }) => {
     const el = await runner(page);
@@ -72,6 +105,23 @@ test('reset on the live terminal keeps it as the live terminal', async ({ page }
     await click(el, 'Run');
     await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
     expect((await calls(page, 'spawn_script'))[0].terminalId).toBe('live');
+});
+test('typed changes are asked about before another script is shown, and kept on Keep Editing', async ({ page }) => {
+    const el = await runner(page);
+    await setScript(el, 'a.ps1', 'Write-Host a');
+    await el.locator('webui-input-message textarea').fill('Write-Host mine');
+    // Not awaited, since it waits for the question to be answered.
+    await el.evaluate(node => { node.setScript('b.ps1', 'Write-Host b'); });
+    await dialogButton(page, 'Keep Editing').click();
+    await expect(openDialog(page)).toHaveCount(0);
+    await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host mine');
+    await expect.poll(() => el.evaluate(node => node._fileName)).toBe('a.ps1');
+    // Saved, they are no longer asked about.
+    await click(el, 'Save');
+    await expect.poll(() => calls(page, 'save_project_file')).toEqual([{ filePath: 'a.ps1', contents: 'Write-Host mine' }]);
+    await setScript(el, 'b.ps1', 'Write-Host b');
+    await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host b');
+    await expect(openDialog(page)).toHaveCount(0);
 });
 test('reset reloads a script file', async ({ page }) => {
     const el = await runner(page, { files: { 'a.ps1': 'from disk' } });
@@ -111,4 +161,141 @@ test('save as writes a new script', async ({ page }) => {
     await dialogButton(page, 'Save').click();
     await expect.poll(async () => (await calls(page, 'save_project_file')).length).toBe(1);
     expect((await calls(page, 'save_project_file'))[0]).toEqual({ filePath: '.taskproxy/scripts/fresh.ps1', contents: 'body' });
+});
+
+test('save as that fails keeps the dialog open, saying why', async ({ page }) => {
+    const el = await runner(page);
+    await setScript(el, 'live', 'body');
+    await page.evaluate(() => { window.__backend.handlers.save_project_file = () => { throw 'The disk is full.'; }; });
+    await click(el, 'Save As');
+    await page.locator('webui-input-text[name="scriptName"] input').fill('fresh');
+    await dialogButton(page, 'Save').click();
+    await expect(openDialog(page).getByText('The disk is full.')).toBeVisible();
+    await expect(page.locator('webui-input-text[name="scriptName"] input')).toHaveValue('fresh');
+});
+
+test.describe('Write with AI', () => {
+    const AI = { providers: [{ id: 'p', name: 'Local', kind: 'openAi', baseUrl: 'http://localhost:11434/v1', models: [{ id: 'm', name: 'Model' }], hidden: [] }] };
+    const DRAFT = "param(\n  [string]$Name = 'world'\n)\nWrite-Host \"Hello $Name\"";
+    const write = async (el, page, asked) => {
+        await el.locator('#ai-script webui-button.ai-run').click();
+        await page.locator('textarea[name="ai_request"]').fill(asked);
+        await dialogButton(page, 'Write with AI').click();
+    };
+
+    test('it writes the script into the editor unsaved, with its parameters, from the script open now', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT } });
+        await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await write(el, page, 'Greet a name given as a parameter');
+        await expect(el.locator('webui-input-message textarea')).toHaveValue(DRAFT);
+        await expect.poll(() => paramNames(el)).toEqual([['Name', 'webui-input-text']]);
+        await expect.poll(() => calls(page, 'ai_write').then(list => list.map(call => call.request.integration))).toEqual(['scripts']);
+        const sent = (await calls(page, 'ai_write')).at(-1).request;
+        expect(sent.context).toContain('hello.ps1');
+        expect(sent.context).toContain('Write-Host hi');
+        expect(sent.request).toContain('Greet a name given as a parameter');
+        await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
+    });
+
+    test('a script changed while it writes keeps the changes, and the draft is not used', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT } });
+        await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await page.evaluate(() => {
+            const original = window.__backend.handlers.ai_write;
+            window.__backend.handlers.ai_write = args => new Promise(resolve => { window.__release = () => resolve(original(args)); });
+        });
+        await write(el, page, 'Greet a name');
+        await expect.poll(() => page.evaluate(() => typeof window.__release)).toBe('function');
+        await el.locator('webui-input-message textarea').fill('Write-Host mine');
+        await page.evaluate(() => window.__release());
+        await expect(el.locator('#ai-script webui-alert.ai-problem[show]')).toHaveText(/changed while AI was writing, so the draft wasn't used/);
+        await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host mine');
+    });
+
+    test('an empty answer leaves the script as it was', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: '' } });
+        await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await write(el, page, 'Greet a name');
+        await expect(el.locator('#ai-script webui-alert.ai-problem[show]')).toHaveText(/The AI answer was empty/);
+        await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host hi');
+    });
+
+    test('a draft shows as not saved, in place of what Save said before', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT } });
+        await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await click(el, 'Save');
+        await expect.poll(() => calls(page, 'save_project_file')).toHaveLength(1);
+        await expect(el.locator('webui-alert.action-note[show]')).toHaveAttribute('variant', 'success');
+        await write(el, page, 'Greet a name');
+        await expect(el.locator('webui-input-message textarea')).toHaveValue(DRAFT);
+        await expect(actionNote(el, 'Not saved yet. Check the script, then Save it.')).toHaveCount(1);
+        await expect(el.locator('webui-alert.action-note[show]')).toHaveCount(1);
+    });
+
+    test('showing another script asks before discarding a draft, and keeps it unless told to discard it', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT } });
+        await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await write(el, page, 'Greet a name');
+        await expect(el.locator('webui-input-message textarea')).toHaveValue(DRAFT);
+        // Not awaited, since it waits for the question to be answered.
+        await el.evaluate(node => { node.setScript('other.ps1', 'Write-Host other'); });
+        await dialogButton(page, 'Keep Editing').click();
+        await expect(openDialog(page)).toHaveCount(0);
+        await expect(el.locator('webui-input-message textarea')).toHaveValue(DRAFT);
+        await expect.poll(() => el.evaluate(node => node._fileName)).toBe('hello.ps1');
+        await el.evaluate(node => { node.setScript('other.ps1', 'Write-Host other'); });
+        await dialogButton(page, 'Discard').click();
+        await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host other');
+        // Nothing is unsaved now, so the next script is shown without asking.
+        await setScript(el, 'third.ps1', 'Write-Host third');
+        await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host third');
+        await expect(openDialog(page)).toHaveCount(0);
+    });
+
+    test('a draft discarded, by Reset or for the same script, no longer shows as not saved', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT }, files: { 'hello.ps1': 'Write-Host hi' } });
+        const notSaved = actionNote(el, 'Not saved yet. Check the script, then Save it.');
+        await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await write(el, page, 'Greet a name');
+        await expect(notSaved).toHaveCount(1);
+        await click(el, 'Reset');
+        await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host hi');
+        await expect(notSaved).toHaveCount(0);
+        await write(el, page, 'Greet a name');
+        await expect(notSaved).toHaveCount(1);
+        await el.evaluate(node => { node.setScript('hello.ps1', 'Write-Host again'); });
+        await dialogButton(page, 'Discard').click();
+        await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host again');
+        await expect(notSaved).toHaveCount(0);
+    });
+
+    test('a saved draft is shown over without asking', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT } });
+        await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await write(el, page, 'Greet a name');
+        await expect(actionNote(el, 'Not saved yet. Check the script, then Save it.')).toHaveCount(1);
+        await click(el, 'Save');
+        await expect.poll(() => calls(page, 'save_project_file')).toEqual([{ filePath: 'hello.ps1', contents: DRAFT }]);
+        await expect(actionNote(el, 'Not saved yet. Check the script, then Save it.')).toHaveCount(0);
+        await setScript(el, 'other.ps1', 'Write-Host other');
+        await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host other');
+        await expect(openDialog(page)).toHaveCount(0);
+    });
+
+    test('a script holding a code fence is sent inside a longer fence', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT } });
+        const script = "$md = @'\n```pwsh\nWrite-Host inner\n```\n'@";
+        await setScript(el, 'hello.ps1', script);
+        await write(el, page, 'Explain it');
+        await expect.poll(() => calls(page, 'ai_write')).toHaveLength(1);
+        const sent = (await calls(page, 'ai_write'))[0].request.context;
+        expect(sent).toContain('\n\n````powershell\n' + script + '\n````');
+    });
+
+    test('a page script, shown read-only, has no Write with AI', async ({ page }) => {
+        const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } } });
+        await expect(el.locator('#ai-script')).toBeVisible();
+        await el.evaluate(node => node.setReadOnly(true));
+        await expect(el.locator('#ai-script')).toBeHidden();
+    });
 });

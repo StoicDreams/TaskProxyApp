@@ -46,7 +46,8 @@
             }
             let el = target || document.querySelector(t.drawer);
             if (!el) {
-                webui.alert('Drawer not found!');
+                // The app's own setup is wrong, with no screen to say it on.
+                appAlert('Drawer not found!');
                 return;
             }
             if (run && !webui.proxy.terminalHelpers.runningFilters.includes(t.filter())) {
@@ -170,10 +171,12 @@
                             btnInstallPwsh.style.display = 'inline-flex';
                             btnInstallPwsh.addEventListener('click', async () => {
                                 webui.proxy.loading.show('Installing PowerShell...');
-                                let msg = await webui.proxy.terminal.autoInstallPowerShell(err => webui.alert(err, 'danger'));
+                                clearActionNote(btnInstallPwsh);
+                                let msg = await webui.proxy.terminal.autoInstallPowerShell(err => actionNote(btnInstallPwsh, err, 'danger'));
                                 webui.proxy.loading.hide();
                                 if (msg) {
-                                    webui.alert(msg, 'success');
+                                    // The Terminal Manager is drawn again in its place, so this is said in the app's alerts.
+                                    appAlert(msg, 'success');
                                     t.openDrawer();
                                 }
                             });
@@ -223,13 +226,16 @@
                 });
                 t._btnKill.addEventListener('click', async () => {
                     if (t._none) return;
-                    await webui.proxy.terminalHelpers.stopScript(t.viewState().activeId, t._viewProject);
+                    clearActionNote(t._btnKill);
+                    await webui.proxy.terminalHelpers.stopScript(t.viewState().activeId, t._viewProject, err => actionNote(t._btnKill, err, 'danger'));
                 });
                 btnKillAll.addEventListener('click', async () => {
                     // Rust forgets the project's queue first, so finishing scripts do not start the next one.
-                    await webui.proxy.terminal.killAll().catch(err => webui.alert(err));
+                    clearActionNote(btnKillAll);
+                    await webui.proxy.terminal.killAll().catch(err => actionNote(btnKillAll, err, 'danger'));
                 });
-                container.querySelector('#btn-select-all').addEventListener('click', async () => {
+                const btnSelectAll = container.querySelector('#btn-select-all');
+                btnSelectAll.addEventListener('click', async () => {
                     // The terminal pads rows with spaces and keeps blank rows, so only the lines with text are copied.
                     const text = t._activeConsole.selectAll()
                         .split(/\r?\n/)
@@ -240,9 +246,9 @@
                     if (!text) return;
                     try {
                         await navigator.clipboard.writeText(text);
-                        webui.alert('Copied the terminal output.', 'success');
+                        actionNote(btnSelectAll, 'Copied the terminal output.', 'success');
                     } catch (err) {
-                        webui.alert(`The terminal output could not be copied: ${err?.message ?? err}`, 'danger');
+                        actionNote(btnSelectAll, `The terminal output could not be copied: ${err?.message ?? err}`, 'danger');
                     }
                 });
                 btnClear.addEventListener('click', () => {
@@ -286,13 +292,15 @@
             await webui.wait(() => t._runner && typeof t._runner.setScript === 'function' && typeof t._activeConsole?.attach === 'function');
             if (turn !== t._switchTurn) return;
             const helpers = webui.proxy.terminalHelpers;
+            // What Stop said is about the terminal shown before, so it goes when another is shown.
+            const before = t._none ? null : helpers.terminalValue(t.viewState().activeId, t._viewProject);
+            if (before !== (id ? helpers.terminalValue(id, projectId) : null)) clearActionNote(t._btnKill);
             t._none = !id;
             if (t._none) {
                 t.renderConsole();
                 t.renderStatus();
                 t.refreshButtons();
-                t._runner.setScript('', '');
-                t._runner.setReadOnly(true);
+                await t.showInRunner(turn, null, '', true);
                 return;
             }
             t._viewProject = helpers.otherProject(projectId);
@@ -316,11 +324,38 @@
             t.renderStatus();
             t.refreshDropdown();
             t.refreshButtons();
-            t._runnerUpdate = setTimeout(() => {
-                t._runner.setScript(current.id, current.script || '');
-                // Another project's script is only watched here, since its files are not the open project's.
-                t._runner.setReadOnly(!!current.isPageScript || !!t._viewProject);
-            }, 10);
+            // Another project's script is only watched here, since its files are not the open project's.
+            const readOnly = !!current.isPageScript || !!t._viewProject;
+            t._runnerUpdate = setTimeout(() => t.showInRunner(turn, current, current.script || '', readOnly), 10);
+        },
+        /**
+         * Puts the terminal being switched to in the script runner, which first asks whether to discard a draft that
+         * isn't saved. Kept, the terminal it belongs to is shown again, and the list selects it.
+         */
+        async showInRunner(turn, terminal, script, readOnly) {
+            const t = this;
+            // Asked before the runner changes, so a newer switch, which gets the same answer, is the only one to change it.
+            const keep = await t._runner.keepUnsaved(script);
+            if (turn !== t._switchTurn) return;
+            if (!keep) {
+                await t._runner.setScript(terminal?.id ?? '', script, { discard: true });
+                if (turn !== t._switchTurn) return;
+                t._runner.setReadOnly(readOnly);
+                t._runnerShows = { id: terminal?.id ?? null, projectId: t._viewProject, filter: t.filter() };
+                return;
+            }
+            const kept = t._runnerShows;
+            if (!kept) return;
+            t._none = !kept.id;
+            t._viewProject = webui.proxy.terminalHelpers.otherProject(kept.projectId) || undefined;
+            if (kept.id) t.viewState().activeId = kept.id;
+            if (t.filter() !== kept.filter) t.setFilter(kept.filter);
+            // Listed as the one being watched, so the list keeps it, as one that finished while shown.
+            t._listedFilter = kept.filter;
+            t.renderConsole();
+            t.renderStatus();
+            t.refreshButtons();
+            t.refreshDropdown();
         },
         /**
          * Lists the scripts the chosen view shows. When the terminal being shown is not one of them, as after

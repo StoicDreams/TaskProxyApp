@@ -1,4 +1,5 @@
 import { test, expect, openApp, calls, openDialog } from '../support/app.mjs';
+import { spyOnAlerts, alerts } from '../../support/wait.mjs';
 
 const projects = [{ name: 'One', path: '/one' }, { name: 'Two', path: '/two' }];
 
@@ -181,15 +182,13 @@ test.describe('changed files and commits', () => {
     });
     test('a failed fetch is quiet', async ({ page }) => {
         await openApp(page, { project: projects[0], projects, gitStatus: counts });
+        await spyOnAlerts(page);
         await page.evaluate(() => {
-            window.__alerts = [];
-            const original = webui.alert;
-            webui.alert = function (...args) { window.__alerts.push(args); return original.apply(this, args); };
             window.__backend.handlers.fetch_project_remotes = () => { throw 'Credentials Missing/Invalid'; };
         });
         await page.locator('app-project-dropdown').evaluate(el => el.fetchRemotes());
         await expect(dropdown(page).locator('.picked .git-changes webui-icon')).toHaveAttribute('count', '3');
-        await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([]);
+        await expect.poll(() => alerts(page)).toEqual([]);
         await expect(openDialog(page)).toHaveCount(0);
     });
 });

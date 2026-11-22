@@ -136,6 +136,7 @@ test('a process shows its details, and stopping it with what it started asks fir
     await dialogButton(page, 'Stop').click();
     await expect.poll(() => calls(page, 'stop_process')).toEqual([{ pid: 500, started: now - 7200, children: true, force: false }]);
     await expect(view(page).locator('.tm-message')).toHaveText('Asked to stop 500.');
+    await expect(view(page).locator('.tm-message')).toHaveAttribute('show');
     await expect.poll(() => shown(page)).toEqual([400]);
 });
 
@@ -147,7 +148,7 @@ test('force close says what it does, a refusal is shown, and the parent link sel
     await dialogButton(page, 'Force Close').click();
     await expect.poll(() => calls(page, 'stop_process')).toEqual([{ pid: 400, started: now - 600, children: false, force: true }]);
     await expect(view(page).locator('.tm-message')).toHaveText('cargo (400) could not be closed.');
-    await expect(view(page).locator('.tm-message')).toHaveClass(/error/);
+    await expect(view(page).locator('.tm-message')).toHaveAttribute('variant', 'danger');
     // bash is not shown by the Terminal preset, so its details show above the list.
     await view(page).locator('tr.tm-details [data-select="300"]').click();
     await expect(view(page).locator('tr.tm-details')).toContainText('bash (300) does not match the filter.');

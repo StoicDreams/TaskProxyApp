@@ -64,7 +64,9 @@ pub(crate) struct CommitJob {
     pub project_name: String,
     pub repo: String,
     pub message: String,
-    /// The files chosen when the commit was made.
+    /// The files the Git Controller listed as included when the commit was made. The commit takes every file
+    /// changed when it runs except the excluded and ignored ones, so a file that changed after the list was
+    /// drawn, or that the script changed, joins it too.
     pub files: Vec<String>,
     /// The files marked to leave out, which stay out even when its script changes them.
     pub excluded: Vec<String>,
@@ -278,17 +280,15 @@ fn change_name(line: &str) -> Option<String> {
     Some(name.to_string())
 }
 
-/// The files a job commits, in the order git lists them: those chosen when it was made, and those its script
-/// changed, leaving out the files marked to leave out and the project's ignored files.
-fn files_to_commit(changes: &[String], job: &CommitJob, before: Option<&[String]>) -> Vec<String> {
+/// The files a job commits, in the order git lists them: every changed file, leaving out the files marked to
+/// leave out and the project's ignored files. The list the commit was made from can be older than the repo, such
+/// as when files changed after it was drawn, and nothing the user didn't leave out may be left behind.
+fn files_to_commit(changes: &[String], job: &CommitJob) -> Vec<String> {
     changes
         .iter()
         .filter_map(|line| change_name(line))
         .filter(|name| !job.ignored.contains(&format!("{}/{}", job.repo, name)))
         .filter(|name| !job.excluded.contains(name))
-        .filter(|name| {
-            job.files.contains(name) || before.is_some_and(|before| !before.contains(name))
-        })
         .collect()
 }
 
@@ -350,7 +350,6 @@ async fn changes(app: &AppHandle, job: &CommitJob) -> Result<Vec<String>, String
 
 /// Runs a job: its script, then the commit, then a sync when asked. Returns the outcome and whether it committed.
 async fn run_job(app: &AppHandle, job: &CommitJob) -> (JobOutcome, bool) {
-    let mut before = None;
     if let Some(script) = &job.script {
         update(app, |store| {
             store.set_state(
@@ -361,13 +360,6 @@ async fn run_job(app: &AppHandle, job: &CommitJob) -> (JobOutcome, bool) {
                     "info",
                 )),
             )
-        });
-        // The files changed before the script runs, so the changes it makes join the commit and no others do.
-        before = changes(app, job).await.ok().map(|lines| {
-            lines
-                .iter()
-                .filter_map(|line| change_name(line))
-                .collect::<Vec<_>>()
         });
         let target = RunTarget {
             project_id: job.project_id.clone(),
@@ -410,7 +402,7 @@ async fn run_job(app: &AppHandle, job: &CommitJob) -> (JobOutcome, bool) {
             return (outcome("Failed", &text, "danger"), false);
         }
     };
-    let files = files_to_commit(&changed, job, before.as_deref());
+    let files = files_to_commit(&changed, job);
     if files.is_empty() {
         return (
             outcome("Failed", "No files are left to commit.", "warning"),
@@ -730,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn the_commit_takes_the_chosen_files_and_those_the_script_changed() {
+    fn the_commit_takes_every_changed_file_but_the_excluded_ones() {
         let mut chosen = job("1", "/repo", "");
         chosen.files = lines(&["a.txt", "c.txt"]);
         chosen.excluded = lines(&["b.txt"]);
@@ -739,16 +731,14 @@ mod tests {
             "?? b.txt",
             " D c.txt",
             " M a.min.txt",
-            " M old.txt",
+            " M later.txt",
         ]);
-        let before = lines(&["a.txt", "b.txt", "c.txt", "old.txt"]);
-        // old.txt changed before the script and was not chosen, so it stays out.
+        // a.min.txt and later.txt were not listed when the commit was made, as when a script or an edit
+        // changed them after the list was drawn, and only a file left out on purpose stays out.
         assert_eq!(
-            files_to_commit(&changes, &chosen, Some(&before)),
-            ["a.txt", "c.txt", "a.min.txt"]
+            files_to_commit(&changes, &chosen),
+            ["a.txt", "c.txt", "a.min.txt", "later.txt"]
         );
-        // Without a list from before the script, only the chosen files go in.
-        assert_eq!(files_to_commit(&changes, &chosen, None), ["a.txt", "c.txt"]);
     }
 
     #[test]
@@ -758,7 +748,7 @@ mod tests {
         chosen.excluded = lines(&["new.txt"]);
         chosen.ignored = lines(&["libs/api/b.txt", "/a.txt"]);
         let changes = lines(&[" M a.txt", " M b.txt", "?? new.txt"]);
-        assert_eq!(files_to_commit(&changes, &chosen, Some(&[])), ["a.txt"]);
+        assert_eq!(files_to_commit(&changes, &chosen), ["a.txt"]);
     }
 
     #[test]
@@ -789,15 +779,15 @@ mod tests {
         }
     }
 
-    /// A job's steps on a real repository: the files changed before its script, the script's changes, then the
-    /// commit of the chosen files and those the script changed.
+    /// A job's commit on a real repository: what was listed, what changed after the list was drawn (by an edit
+    /// or the script), and an excluded file the script wrote.
     #[test]
-    fn a_job_commits_the_chosen_files_and_the_scripts_changes_in_a_real_repository() {
+    fn a_job_commits_every_change_but_the_excluded_ones_in_a_real_repository() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let repository = git2::Repository::init(root).unwrap();
         let write = |file: &str, contents: &str| std::fs::write(root.join(file), contents).unwrap();
-        for file in ["a.txt", "a.min.txt", "old.txt", "c.txt"] {
+        for file in ["a.txt", "a.min.txt", "later.txt", "c.txt"] {
             write(file, "first");
         }
         {
@@ -812,28 +802,28 @@ mod tests {
                 .commit(Some("HEAD"), &signature, &signature, "first", &tree, &[])
                 .unwrap();
         }
-        // Changed before the script: a.txt and c.txt were chosen, old.txt was not.
-        write("a.txt", "chosen");
-        std::fs::remove_file(root.join("c.txt")).unwrap();
-        write("old.txt", "not chosen");
         let names = |lines: &[String]| {
             lines
                 .iter()
                 .filter_map(|line| change_name(line))
                 .collect::<Vec<_>>()
         };
-        let before = names(&git_controller::collect_changes(&repository).unwrap());
-        // The script minifies a.txt, and writes b.txt, which the user excluded.
+        // Listed in the Git Controller: a.txt and c.txt.
+        write("a.txt", "listed");
+        std::fs::remove_file(root.join("c.txt")).unwrap();
+        // Changed after the list was drawn, then by the script: later.txt, a.min.txt, and b.txt, which the user
+        // excluded.
+        write("later.txt", "changed later");
         write("a.min.txt", "minified");
         write("b.txt", "excluded");
         let mut chosen = job("1", &root.to_string_lossy(), "");
         chosen.files = lines(&["a.txt", "c.txt"]);
         chosen.excluded = lines(&["b.txt"]);
         let after = git_controller::collect_changes(&repository).unwrap();
-        let files = files_to_commit(&after, &chosen, Some(&before));
+        let files = files_to_commit(&after, &chosen);
         let mut sorted = files.clone();
         sorted.sort();
-        assert_eq!(sorted, ["a.min.txt", "a.txt", "c.txt"]);
+        assert_eq!(sorted, ["a.min.txt", "a.txt", "c.txt", "later.txt"]);
         git_controller::commit_files(&repository, root, &files, "Commit with a script").unwrap();
 
         let head = repository.head().unwrap().peel_to_commit().unwrap();
@@ -845,17 +835,17 @@ mod tests {
                     .unwrap()
             })
         };
-        assert_eq!(committed("a.txt").as_deref(), Some("chosen"));
+        assert_eq!(committed("a.txt").as_deref(), Some("listed"));
         assert_eq!(
             committed("a.min.txt").as_deref(),
             Some("minified"),
             "the script's change joins the commit"
         );
-        assert_eq!(committed("c.txt"), None, "a chosen deletion is committed");
+        assert_eq!(committed("c.txt"), None, "a listed deletion is committed");
         assert_eq!(
-            committed("old.txt").as_deref(),
-            Some("first"),
-            "a change that was not chosen stays out"
+            committed("later.txt").as_deref(),
+            Some("changed later"),
+            "a change made after the list was drawn is committed"
         );
         assert_eq!(
             committed("b.txt"),
@@ -863,9 +853,6 @@ mod tests {
             "an excluded file stays out even when the script wrote it"
         );
         let left = names(&git_controller::collect_changes(&repository).unwrap());
-        assert_eq!(left.len(), 2, "{:?}", left);
-        assert!(
-            left.iter().any(|name| name == "old.txt") && left.iter().any(|name| name == "b.txt")
-        );
+        assert_eq!(left, ["b.txt"], "only the excluded file is left");
     }
 }

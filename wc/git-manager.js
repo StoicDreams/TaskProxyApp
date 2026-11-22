@@ -108,13 +108,20 @@
             viewFor(job)?.loadRepoChanges(new Set(job.excluded));
         }
     }
-    /** Takes a queued commit out of the queue, or stops the script a running one waits on. Whether it did either. */
-    function cancelJob(job) {
+    /**
+     * Takes a queued commit out of the queue, or stops the script a running one waits on. Resolves to whether it did
+     * either, false when the commit had already gone past both, or undefined when it couldn't ask, after `problem`
+     * says why by the button pressed.
+     */
+    function cancelJob(job, problem) {
         return webui.proxy.git.commitCancel(job.id).catch(err => {
-            webui.alert(err);
-            return false;
+            problem(err);
+            return undefined;
         });
     }
+    const ALREADY_FINISHED = 'That commit had already finished, so there was nothing to cancel.';
+    /** When Rust found nothing to stop: the commit was being made, past its script, or had just ended. */
+    const PAST_CANCELLING = 'That commit was already being made or had finished, so there was nothing to cancel.';
     function showJobs() {
         liveManagers.forEach(t => {
             t.showCommitState();
@@ -135,7 +142,7 @@
         if (view) {
             view.setAlert(message, type);
         } else if (type !== 'info') {
-            webui.alert(`${job.origin.name}: ${message}`, type);
+            appAlert(`${job.origin.name}: ${message}`, type);
         }
     }
     /** Clears the sent message from the project it was written in, unless another has been typed since. */
@@ -297,10 +304,6 @@
             return { name, kind, choices, defaultValue: readDefault(match[2]), mandatory, help: help[name.toLowerCase()] || '' };
         }).filter(Boolean);
     }
-    /** Text as a PowerShell string that nothing inside it can end early or expand. */
-    function quotePowerShell(value) {
-        return `'${String(value).replace(/(['‘’‚‛])/g, '$1$1')}'`;
-    }
     /**
      * PowerShell that runs the script with the chosen values, and turns any error it hits into a failing
      * exit code: a thrown error, an error it writes, or a command that fails.
@@ -348,6 +351,94 @@
         return '';
     }
     const messageSyncDelay = 500;
+    /**
+     * Commit messages AI wrote for a project that wasn't open when they came, by `path|repo`, saved once it is. Kept
+     * in app data, so a restart meanwhile doesn't lose them.
+     */
+    const PENDING_DRAFTS = 'app-ai-pending-commit-messages';
+    const unsavedDrafts = {
+        all: () => webui.getData(PENDING_DRAFTS) || {},
+        set(key, entry) {
+            webui.setData(PENDING_DRAFTS, { ...unsavedDrafts.all(), [key]: entry });
+        },
+        delete(key) {
+            const all = { ...unsavedDrafts.all() };
+            if (!(key in all)) return;
+            delete all[key];
+            webui.setData(PENDING_DRAFTS, Object.keys(all).length ? all : undefined);
+        },
+        values: () => Object.values(unsavedDrafts.all()),
+    };
+    const CHANGED_WHILE_WRITING = 'The commit message changed while AI was writing, so the draft wasn\'t used, to keep your changes. Write with AI again to replace it.';
+    /** Stops saving drafts as projects load, while it is waiting to. */
+    let stopWaitingForDrafts = null;
+    /**
+     * Puts a commit message AI wrote in the repo it was written for: in its box when a Git Controller shows that
+     * repo, and saved with the project, at once when it is open or else once it is opened again. `before` is the
+     * message when AI was asked: one changed since is kept, and the draft is not used. Returns false then, 'deferred'
+     * when it will be put in once its project is open, and true when it was put in.
+     */
+    function keepDraft(path, repo, draft, before) {
+        // While another project loads, projectData is still the one before, which can no longer be saved.
+        if (!webui.proxy.projects.isLoaded || webui.projectData?.path !== path || !webui.projectData?.data) {
+            unsavedDrafts.set(`${path}|${repo}`, { path, repo, draft, before });
+            stopWaitingForDrafts ??= webui.proxy.projects.onLoaded?.(saveUnsavedDrafts) ?? null;
+            return 'deferred';
+        }
+        unsavedDrafts.delete(`${path}|${repo}`);
+        draftsNotUsed.delete(`${path}|${repo}`);
+        if ((getCommitMessages()[repo] || '') !== before) return false;
+        getCommitMessages()[repo] = draft;
+        webui.proxy.syncProjectData();
+        liveManagers.forEach(view => {
+            if (view._messagePath === path && view._messageRepo === repo && view._message) view._message.value = draft;
+        });
+        return true;
+    }
+    /** The Git Controller on screen showing a project's repo, if one is. */
+    function viewShowing(path, repo) {
+        for (const view of liveManagers) {
+            if (view.isConnected && view._messagePath === path && view._messageRepo === repo) return view;
+        }
+        return null;
+    }
+    /**
+     * Drafts not used because the message changed, by `path|repo`, said by each Git Controller that shows that repo
+     * until its message is edited or AI writes it again. The page can be drawn again as a project opens, which
+     * replaces the Git Controller that said it first.
+     */
+    const draftsNotUsed = new Set();
+    function saveUnsavedDrafts() {
+        unsavedDrafts.values().forEach(({ path, repo, draft, before }) => {
+            if (webui.projectData?.path !== path || keepDraft(path, repo, draft, before)) return;
+            // Said by the Git Controller showing that repo, or else in the app's alerts, since the button it was asked
+            // from may be gone.
+            const view = viewShowing(path, repo);
+            if (view) {
+                draftsNotUsed.add(`${path}|${repo}`);
+                view.setAlert(CHANGED_WHILE_WRITING, 'warning');
+            } else {
+                appAlert(CHANGED_WHILE_WRITING, 'warning');
+            }
+        });
+        waitForDrafts();
+    }
+    /**
+     * Saves drafts as their projects open, whatever page they open on, while any are waiting, including those kept from
+     * before a restart.
+     */
+    function waitForDrafts() {
+        if (unsavedDrafts.values().length) {
+            stopWaitingForDrafts ??= webui.proxy?.projects?.onLoaded?.(saveUnsavedDrafts) ?? null;
+        } else if (stopWaitingForDrafts) {
+            stopWaitingForDrafts();
+            stopWaitingForDrafts = null;
+        }
+    }
+    waitForDrafts();
+    // This code can load after a project opened, as it does at startup when drafts are waiting, and onLoaded only
+    // hears the projects opened after it.
+    if (unsavedDrafts.values().length && webui.proxy?.projects?.isLoaded) saveUnsavedDrafts();
     const minPanesHeight = 360;
     const includeStates = { include: '1', exclude: '0', ignore: '2' };
     const includeTitle = 'Include: commit this file. Exclude: leave it out of this commit. Ignore: always leave it out.';
@@ -491,12 +582,12 @@
         const sign = change > 0 ? '+' : change < 0 ? '-' : '±';
         return `${shown} <span class="size-change" title="Change in size since the last commit">${sign}${webui.formatBytes(Math.abs(change), 1)}</span>`;
     }
-    function rowHtml(details, index) {
+    function rowHtml(details, index, selected) {
         const isNew = details.change === 'Add';
         const options = [[includeStates.include, 'Include'], [includeStates.exclude, 'Exclude'], [includeStates.ignore, 'Ignore']]
             .map(([value, label]) => `<option value="${value}"${value === details.state ? ' selected' : ''}>${label}</option>`).join('');
         const path = webui.escapeForHTML(details.fileName);
-        return `<div class="file-row ${changeClasses[details.change]}" data-index="${index}" data-path="${path}">`
+        return `<div class="file-row ${changeClasses[details.change]}${selected ? ' selected' : ''}" data-index="${index}" data-path="${path}">`
             + `<select class="include" data-state="${details.state}" title="${includeTitle}" aria-label="Include ${path}">${options}</select>`
             + `<button type="button" class="file" title="${path}"><span class="change-type">${details.change}</span> <strong class="name">${webui.escapeForHTML(details.name)}</strong>`
             + (details.folder ? ` <span class="folder">${webui.escapeForHTML(details.folder)}</span>` : '')
@@ -505,6 +596,13 @@
             + `<button type="button" class="revert" title="${isNew ? 'Delete new file' : 'Revert changes to this file'}" aria-label="${isNew ? 'Delete' : 'Revert'} ${path}"><webui-icon icon="${isNew ? 'trash' : 'undo'}"></webui-icon></button>`
             + `</div>`;
     }
+    /**
+     * A list of up to this many files is drawn whole. A longer one draws only the rows in view and a few around them,
+     * since tens of thousands of rows, each with a select, buttons and an icon, froze the window for minutes.
+     */
+    const drawAllUpTo = 300;
+    /** Rows drawn above and below the ones in view, so scrolling shows rows already there. */
+    const overscan = 30;
     // How often the Repo list asks again about CI runs that have not finished.
     const ciRecheck = 60000;
     webui.define("app-git-manager", {
@@ -548,10 +646,20 @@
             t._btnCancelCommit.addEventListener('click', () => t.cancelCommit());
             t._queueTab = t.template.querySelector('#tab-queue');
             t._queueView = t.template.querySelector('.queue-view');
+            // What a Cancel in the queue did is said under the queue, which is drawn again as commits move.
+            t._queueView.setAttribute('data-action-row', '');
             t._queueView.addEventListener('click', ev => {
                 const button = webui.closest(ev, '[data-cancel]');
-                const job = button && commitJobs.active.find(job => job.id === button.dataset.cancel);
-                if (job) cancelJob(job);
+                if (!button) return;
+                clearActionNote(t._queueView);
+                const job = commitJobs.active.find(job => job.id === button.dataset.cancel);
+                if (!job) {
+                    actionNote(t._queueView, ALREADY_FINISHED, 'info');
+                    return;
+                }
+                cancelJob(job, err => actionNote(t._queueView, `${err}`, 'danger')).then(stopped => {
+                    if (stopped === false) actionNote(t._queueView, PAST_CANCELLING, 'info');
+                });
             });
             t._btnSync = t.template.querySelector('webui-button[label="Sync"]');
             t._btnPush = t.template.querySelector('webui-button[label="Push"]');
@@ -574,6 +682,67 @@
             t._hasPendingChanges = false;
             t._branchList = [];
             t._currentBranch = '';
+            t._aiCommit = t.template.querySelector('#ai-commit');
+            t._tabs = t.template.querySelector('webui-tabs');
+            // The Review tab sits between Commit and Branches while code reviews are turned on (syncReviewTab).
+            t._reviewTab = webui.create('webui-button', { slot: 'tabs', id: 'tab-review', text: 'Review' });
+            t._reviewContent = webui.create('webui-content', { slot: 'content', nodetach: '', class: 'review-content' });
+            t._review = webui.create('app-ai-review');
+            t._reviewContent.appendChild(t._review);
+        },
+        /** The files included in the next commit, by their paths in the repo. */
+        includedFiles() {
+            const t = this;
+            if (t._filesRepo !== t._repos.value) return [];
+            return (t._files || []).filter(item => item.isIncluded).map(item => item.fileName);
+        },
+        /** Writes the commit message with AI from the included files, into the message box to review. */
+        async writeMessage({ model, requestId, isCurrent }) {
+            const t = this;
+            const repo = t._repos.value;
+            if (repo === undefined) throw 'No repo is set.';
+            const files = t.includedFiles();
+            if (!files.length) throw 'Include at least one file to write a commit message for.';
+            // Goes to the project and repo it was written for, whatever is shown when it comes.
+            const path = webui.projectData?.path;
+            if (!path) throw 'Open a project to write a commit message for it.';
+            const project = webui.getData('app-current-project')?.display || 'its project';
+            const before = getCommitMessages()[repo] || '';
+            const draft = await webui.proxy.ai.write({ integration: 'git', model, requestId, repo, files });
+            if (!isCurrent()) return;
+            const kept = keepDraft(path, repo, draft, before);
+            if (!kept) throw CHANGED_WHILE_WRITING;
+            if (kept === 'deferred') {
+                const text = `The commit message AI wrote is saved for ${project}, and will be in its box when ${project} is opened again.`;
+                // Another project is open, so it is said by a Git Controller on screen, or else in the app's alerts,
+                // since this button shows that project's repo now.
+                const view = [...liveManagers].find(view => view.isConnected);
+                if (view) view.setAlert(text, 'info');
+                else appAlert(text, 'info');
+            }
+        },
+        /** Shows the Review tab between Commit and Branches while code reviews are on, keeping the tab shown. */
+        syncReviewTab() {
+            const t = this;
+            const tabs = t._tabs;
+            if (!tabs || typeof tabs.tabButtons !== 'function' || typeof tabs.tabContents !== 'function') return;
+            const want = !!webui.proxy?.ai?.isOn('review');
+            const has = t._reviewTab.parentNode === tabs;
+            if (want === has) return;
+            const buttons = tabs.tabButtons();
+            const shown = buttons[tabs.currentTab?.() || 0];
+            if (want) {
+                const branches = buttons.find(button => button.id === 'tab-branches');
+                const branchesContent = tabs.tabContents().find(content => content.id === 'content-branches');
+                tabs.insertBefore(t._reviewTab, branches || null);
+                tabs.insertBefore(t._reviewContent, branchesContent || null);
+            } else {
+                t._reviewTab.remove();
+                t._reviewContent.remove();
+            }
+            tabs.render();
+            const index = tabs.tabButtons().indexOf(shown);
+            tabs.setTab(index >= 0 ? index : 0);
         },
         /** Shows the message saved for the selected repo, and makes it the one that edits are saved to. */
         async restoreMessage() {
@@ -583,12 +752,19 @@
             t._messagePath = webui.projectData.path;
             t.showCommitState();
             await customElements.whenDefined('webui-input-message');
+            // A draft that came while this project wasn't open, before a restart, is saved now.
+            if (webui.proxy.projects.isLoaded) saveUnsavedDrafts();
+            if (draftsNotUsed.has(`${t._messagePath}|${repo}`)) t.setAlert(CHANGED_WHILE_WRITING, 'warning');
             t._message.value = (repo !== undefined && getCommitMessages()[repo]) || '';
+            // Shows whether AI is writing this repo's message, which may have been asked for before it was drawn.
+            t._aiCommit?.refresh?.();
         },
         rememberMessage(value) {
             const t = this;
             // Only save into the project and repo the message was loaded for.
             if (t._messageRepo === undefined || webui.projectData.path !== t._messagePath) return;
+            // Edited since, so a draft not used is no longer news.
+            draftsNotUsed.delete(`${t._messagePath}|${t._messageRepo}`);
             const messages = getCommitMessages();
             if (value) {
                 messages[t._messageRepo] = value;
@@ -807,7 +983,9 @@
             const job = jobFor(webui.projectData?.path, t._repos.value);
             if (!job) return;
             const wasQueued = job.state === 'queued';
-            if (await cancelJob(job) && wasQueued) t.setAlert('The commit was taken out of the queue, so nothing was committed.', 'info');
+            const stopped = await cancelJob(job, err => t.setAlert(`${err}`, 'danger'));
+            if (stopped === false) t.setAlert(PAST_CANCELLING, 'info');
+            else if (stopped && wasQueued) t.setAlert('The commit was taken out of the queue, so nothing was committed.', 'info');
         },
         /**
          * The Queue tab: the commit running now and those waiting, in every project and repo, then those that ended
@@ -960,6 +1138,10 @@
             }
             const included = files.filter(f => f.isIncluded);
             t._valCommitFiles.textContent = `${included.length} of ${files.length}`;
+            if (t._lineStats === undefined) {
+                t._valCommitLines.innerHTML = '<em>Counting</em>';
+                return;
+            }
             if (!t._lineStats) {
                 t._valCommitLines.innerHTML = '<em>Unavailable</em>';
                 return;
@@ -1066,6 +1248,11 @@
             let fullFilePath = changeDetail.repo === '' ? changeDetail.fileName : `${changeDetail.repo}/${changeDetail.fileName}`;
             // Files that are not text are previewed as they are. Reading or diffing them as text first would load all
             // of a large file, such as a video, into memory for nothing.
+            // Which files are binary comes with the line counts, which a file selected as the list loads waits for.
+            if (t._lineStats === undefined && t._lineStatsLoad && !mediaFile.test(changeDetail.fileName)) {
+                await t._lineStatsLoad;
+                if (t._diffRequest !== request) return;
+            }
             const knownBinary = !!t._lineStats?.get(changeDetail.fileName)?.binary || mediaFile.test(changeDetail.fileName);
             if (knownBinary) {
                 if (changeDetail.change === 'Delete') {
@@ -1205,25 +1392,26 @@
             let repo = t._repos.value;
             if (repo === undefined) return;
             await whenProxyReady();
-            // Line counts are extra detail, so a failure shows as unavailable rather than an alert.
-            let [changes, lineStats] = await Promise.all([
-                webui.proxy.git.getChanges(repo),
-                webui.proxy.git.getChangeStats(repo, () => { }),
-            ]);
+            const load = t._changesLoad = (t._changesLoad || 0) + 1;
+            // Line counts and sizes read every changed file, which takes a while with many, so the files are listed
+            // first and they are added when they come. A failure shows as unavailable rather than an alert.
+            const lineStats = Promise.resolve(webui.proxy.git.getChangeStats(repo, () => { })).catch(() => null);
+            let changes = await webui.proxy.git.getChanges(repo);
             // The page replaced this view while it waited, as a project reload does, so there is nothing to show.
-            if (!t.isConnected) return;
+            if (!t.isConnected || load !== t._changesLoad) return;
             changes = changes || [];
-            t._lineStats = lineStats ? new Map(lineStats.map(stats => [stats.path, stats])) : null;
+            // Another repo starts at the top of its list, and the same one keeps its place.
+            const sameList = t._filesRepo === repo && t._filesPath === webui.projectData?.path;
+            t._lineStats = undefined;
             t._hasPendingChanges = changes.length > 0;
             const ignoredFiles = new Set(getIgnoredFiles());
             t._files = changes
                 .filter(line => line && line.length >= 3)
                 .map(line => parseChange(line, repo));
             t._filesRepo = repo;
+            t._filesPath = webui.projectData?.path;
+            t._review?.showReport?.();
             t._files.forEach(details => {
-                const stats = t._lineStats?.get(details.fileName);
-                details.size = stats?.size;
-                details.savedSize = stats?.savedSize;
                 if (ignoredFiles.has(`${details.repo}/${details.fileName}`)) {
                     details.state = includeStates.ignore;
                     details.isIncluded = false;
@@ -1232,10 +1420,26 @@
                     details.isIncluded = false;
                 }
             });
-            // Plain elements built in one pass, since a component per row is slow with hundreds of files.
-            t._filesContainer.innerHTML = t._files.map(rowHtml).join('');
+            if (!sameList) t._filesContainer.scrollTop = 0;
             t.applyFileFilter();
             t.updateCommitStats();
+            // Kept so a file selected before they come waits for them, since they say which files are binary.
+            t._lineStatsLoad = lineStats.then(stats => {
+                if (load !== t._changesLoad || !t.isConnected) return;
+                t._lineStats = stats ? new Map(stats.map(item => [item.path, item])) : null;
+                t._files.forEach(details => {
+                    const item = t._lineStats?.get(details.fileName);
+                    details.size = item?.size;
+                    details.savedSize = item?.savedSize;
+                });
+                t.drawFiles(true);
+                t.updateCommitStats();
+            }).catch(() => {
+                // Counts that could not be read end as unavailable, rather than counting for ever.
+                if (load !== t._changesLoad || !t.isConnected) return;
+                t._lineStats = null;
+                t.updateCommitStats();
+            });
             // Keep the file that was open, when it still has changes.
             const keep = t._files.findIndex(f => f.fileName === t._selectedFile && f.repo === t._selectedRepo);
             const index = keep !== -1 ? keep : (t._files.length ? 0 : -1);
@@ -1246,14 +1450,106 @@
                 t.showFilePreview(false);
             } else {
                 t.selectFile(index);
+                // A long list draws only the rows in view, so the open file is scrolled to, to draw its row, within
+                // the list only, since the list itself may be below the page's fold.
+                if (!sameList || keep === -1) t.scrollToFile(index, true);
             }
             t.loadRemoteStatus();
             t.autoFetch(repo);
             webui.proxy.reloadProjectFiles();
             document.dispatchEvent(new CustomEvent('app-git-changes'));
         },
+        /** The file's row, when it is drawn: a long list draws only the rows in view. */
         getRow(index) {
             return this._filesContainer.querySelector(`.file-row[data-index="${index}"]`);
+        },
+        /**
+         * Draws the rows of the files the filter shows. Plain elements in one pass, since a component per row is slow
+         * with hundreds of files, and only those in view in a long list, with space above and below for the rest so it
+         * scrolls as the whole list would. `force` draws them again when nothing scrolled, as when a row's details
+         * changed.
+         */
+        drawFiles(force, depth = 0, focus) {
+            const t = this;
+            const shown = t._shown || [];
+            const container = t._filesContainer;
+            let first = 0, last = shown.length;
+            let pitch = 0, top = 0;
+            if (shown.length > drawAllUpTo) {
+                pitch = t.rowPitch();
+                // Where the list is scrolled to, in rows, by the height the drawn space was made with, since a row's
+                // height can change after it is drawn, as fonts and icons load.
+                const drawnPitch = t._drawn?.shown === shown && t._drawn.pitch || pitch;
+                const inView = Math.ceil((container.clientHeight || 0) / pitch);
+                // No further than the last rows, as when the list got shorter while it was scrolled down.
+                top = Math.min(container.scrollTop / drawnPitch, Math.max(0, shown.length - inView));
+                first = Math.max(0, Math.floor(top) - overscan);
+                last = Math.min(shown.length, first + Math.max(inView, overscan) + 2 * overscan);
+                if (drawnPitch !== pitch) force = true;
+            }
+            if (!force && t._drawn && t._drawn.first === first && t._drawn.last === last && t._drawn.shown === shown) return;
+            t._drawn = { first, last, shown, pitch };
+            // A row with focus that is drawn again gets it back, so moving with the keys or scrolling keeps the place.
+            // The draw again after measuring a row is given what had it, since the first draw took it away.
+            if (!focus) {
+                const active = t.shadowRoot?.activeElement || document.activeElement;
+                const focused = container.contains(active) ? active : null;
+                focus = {
+                    index: focused?.closest('.file-row')?.dataset.index,
+                    cls: focused?.classList.contains('revert') ? 'revert' : focused?.classList.contains('include') ? 'include' : 'file',
+                };
+            }
+            let html = pitch ? `<div class="files-space" style="height:${first * pitch}px"></div>` : '';
+            for (let at = first; at < last; at++) {
+                const index = shown[at];
+                const details = t._files[index];
+                html += rowHtml(details, index, details.fileName === t._selectedFile && details.repo === t._selectedRepo);
+            }
+            if (pitch) html += `<div class="files-space" style="height:${(shown.length - last) * pitch}px"></div>`;
+            container.innerHTML = html;
+            if (pitch) {
+                // Kept on the same row when the space above it was made with another height.
+                const scrollTop = Math.round(top * pitch);
+                if (Math.abs(container.scrollTop - scrollTop) > 1) container.scrollTop = scrollTop;
+                // The first draw guesses the row height, so it draws again once a row is measured.
+                if (depth < 2 && Math.abs(t.rowPitch() - pitch) > 0.5) {
+                    t.drawFiles(true, depth + 1, focus);
+                    return;
+                }
+            }
+            if (focus.index !== undefined) container.querySelector(`.file-row[data-index="${focus.index}"] .${focus.cls}`)?.focus({ preventScroll: true });
+        },
+        /** The height of a row and the gap after it, measured once a row is drawn, as text size changes it. */
+        rowPitch() {
+            const t = this;
+            const rows = t._filesContainer.querySelectorAll('.file-row');
+            if (rows.length > 1) {
+                const measured = rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top;
+                if (measured > 0) t._rowPitch = measured;
+            }
+            return t._rowPitch || 30;
+        },
+        /** Scrolls a long list so the file's row is drawn and in view, and with `listOnly`, scrolls nothing else. */
+        scrollToFile(index, listOnly) {
+            const t = this;
+            const position = (t._shown || []).indexOf(index);
+            if (position === -1 || t.getRow(index)?.offsetParent && t.rowInView(index)) return;
+            if ((t._shown || []).length > drawAllUpTo) {
+                const pitch = t.rowPitch();
+                const container = t._filesContainer;
+                const top = position * pitch;
+                if (top < container.scrollTop) container.scrollTop = top;
+                else if (top + pitch > container.scrollTop + container.clientHeight) container.scrollTop = top + pitch - container.clientHeight;
+                t.drawFiles();
+            }
+            if (!listOnly) t.getRow(index)?.scrollIntoView?.({ block: 'nearest' });
+        },
+        rowInView(index) {
+            const row = this.getRow(index);
+            if (!row) return false;
+            const box = row.getBoundingClientRect();
+            const view = this._filesContainer.getBoundingClientRect();
+            return box.top >= view.top && box.bottom <= view.bottom;
         },
         selectFile(index) {
             const t = this;
@@ -1281,13 +1577,16 @@
         applyFileFilter() {
             const t = this;
             const filter = (t._fileFilter.value || '').trim().toLowerCase();
-            t._filesContainer.querySelectorAll('.file-row').forEach(row => {
-                const details = t._files[row.dataset.index];
-                row.hidden = !!filter && !details.fileName.toLowerCase().includes(filter);
+            const files = t._files || [];
+            t._shown = [];
+            files.forEach((details, index) => {
+                if (!filter || details.fileName.toLowerCase().includes(filter)) t._shown.push(index);
             });
+            t.drawFiles(true);
         },
+        /** The files the filter shows, drawn or not. */
         visibleIndexes() {
-            return Array.from(this._filesContainer.querySelectorAll('.file-row:not([hidden])')).map(row => Number(row.dataset.index));
+            return [...(this._shown || [])];
         },
         confirmRevert(index) {
             const t = this;
@@ -1306,9 +1605,9 @@
                 onconfirm: async (data, content) => {
                     let result;
                     if (isNew) {
-                        result = await webui.proxy.git.deleteFile(repo, details.fileName, msg => content.alert(msg));
+                        result = await webui.proxy.git.deleteFile(repo, details.fileName, msg => content.alert(webui.escapeForHTML(`${msg}`)));
                     } else {
-                        result = await webui.proxy.git.restoreFile(repo, details.fileName, msg => content.alert(msg));
+                        result = await webui.proxy.git.restoreFile(repo, details.fileName, msg => content.alert(webui.escapeForHTML(`${msg}`)));
                     }
                     if (result) {
                         t.setAlert(result, 'success');
@@ -1361,6 +1660,12 @@
                 });
             }, 50);
             t._message.addEventListener('input', _ => t.rememberMessage(t._message.value));
+            t._aiCommit.action = args => t.writeMessage(args);
+            // A message is for the open project's selected repo, and is written whatever is shown meanwhile.
+            t._aiCommit.job = () => t._repos.value === undefined ? '' : `${webui.projectData?.path ?? ''}|${t._repos.value}`;
+            t._review.source = { repo: () => t._repos.value, files: () => t.includedFiles() };
+            t.dataset.subscribe = 'app-ai-integrations:syncReviewTab';
+            customElements.whenDefined('webui-tabs').then(() => requestAnimationFrame(() => t.syncReviewTab()));
             t._beforeScript.addEventListener('change', _ => t.chooseBeforeCommit(t._beforeScript.value || ''));
             t._beforeParams.addEventListener('change', _ => t.rememberBeforeCommitValues());
             t._beforeParams.addEventListener('input', _ => t.rememberBeforeCommitValues());
@@ -1406,7 +1711,7 @@
                             let inputEl = content.querySelector('[name="branchName"]');
                             let branchName = (formData.branchName || (inputEl ? inputEl.value : '')).trim();
                             if (!branchName) return content.alert('Branch name cannot be empty.');
-                            let result = await webui.proxy.git.createBranch(repo, branchName, targetBranch, msg => content.alert(msg));
+                            let result = await webui.proxy.git.createBranch(repo, branchName, targetBranch, msg => content.alert(webui.escapeForHTML(`${msg}`)));
                             if (result) {
                                 t.setAlert(result, 'success');
                                 await t.loadBranches();
@@ -1422,7 +1727,7 @@
                         confirm: 'Merge',
                         cancel: 'Cancel',
                         onconfirm: async (data, content) => {
-                            let result = await webui.proxy.git.mergeBranch(repo, targetBranch, msg => content.alert(msg));
+                            let result = await webui.proxy.git.mergeBranch(repo, targetBranch, msg => content.alert(webui.escapeForHTML(`${msg}`)));
                             if (result) {
                                 t.setAlert(result, 'success');
                                 await t.loadBranches();
@@ -1440,7 +1745,7 @@
                         confirm: 'Delete',
                         cancel: 'Cancel',
                         onconfirm: async (data, content) => {
-                            let result = await webui.proxy.git.deleteBranch(repo, targetBranch, msg => content.alert(msg));
+                            let result = await webui.proxy.git.deleteBranch(repo, targetBranch, msg => content.alert(webui.escapeForHTML(`${msg}`)));
                             if (result) {
                                 t.setAlert(result, 'success');
                                 await t.loadBranches();
@@ -1463,7 +1768,7 @@
                     confirm: 'Revert All',
                     cancel: 'Cancel',
                     onconfirm: async (data, content) => {
-                        let result = await webui.proxy.git.restoreAll(repo, msg => content.alert(msg));
+                        let result = await webui.proxy.git.restoreAll(repo, msg => content.alert(webui.escapeForHTML(`${msg}`)));
                         if (result) {
                             t.setAlert(result, 'success');
                             await t.loadRepoChanges();
@@ -1541,10 +1846,19 @@
                 const next = visible[position + (ev.key === 'ArrowDown' ? 1 : -1)];
                 if (next === undefined) return;
                 ev.preventDefault();
-                t.getRow(next).querySelector('button.file').focus();
+                t.scrollToFile(next);
+                t.getRow(next)?.querySelector('button.file').focus();
                 t.selectFile(next);
             });
             t._fileFilter.addEventListener('input', () => t.applyFileFilter());
+            // A long list draws the rows coming into view as it scrolls.
+            t._filesContainer.addEventListener('scroll', () => {
+                if (t._scrollFrame) return;
+                t._scrollFrame = requestAnimationFrame(() => {
+                    t._scrollFrame = 0;
+                    t.drawFiles();
+                });
+            });
             // Anything above the panes that grows or shrinks moves them, such as the alert or the status lines.
             // Sized in the next frame, since resizing what is observed from inside the callback makes the browser
             // report a ResizeObserver loop.
@@ -1553,6 +1867,8 @@
                 t._fitFrame = requestAnimationFrame(() => {
                     t._fitFrame = 0;
                     t.fitPanes();
+                    // The list may now have room for more rows, or fewer.
+                    t.drawFiles();
                 });
             });
             t._resizeObserver.observe(t);
@@ -1661,7 +1977,7 @@
                     confirm: 'Overwrite',
                     cancel: 'Cancel',
                     onconfirm: async (data, content) => {
-                        let result = await webui.proxy.git.pullOverwrite(repo, msg => content.alert(msg));
+                        let result = await webui.proxy.git.pullOverwrite(repo, msg => content.alert(webui.escapeForHTML(`${msg}`)));
                         if (result) {
                             t.setAlert(result, 'success');
                             await t.loadRepoChanges();
@@ -1853,11 +2169,18 @@ pre {
     flex: 1;
     min-height: 0;
     overflow: auto;
+    /* A long list swaps its rows as it scrolls, and the browser moving the scroll to keep a row in place undid that. */
+    overflow-anchor: none;
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
+/* Room for the rows of a long list that aren't drawn. */
+.files-space {
+    flex: none;
+}
 .file-row {
+    flex: none;
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr) max-content;
     gap: 2px;
@@ -2068,6 +2391,7 @@ button.revert {
         <div class="commit-panes">
             <div class="commit-side">
                 <webui-input-message theme="title" label="Commit Message" max-height="12em"></webui-input-message>
+                <app-ai-action id="ai-commit" integration="git" label="Write with AI" busy-label="Writing the message"></app-ai-action>
                 <div class="commit-actions" data-state="ready">
                     <webui-select id="before-commit-script" label="Run Before Commit" title="A script in this project to run before each commit. If it fails, nothing is committed."></webui-select>
                     <div class="commit-controls">
@@ -2100,8 +2424,8 @@ button.revert {
             </div>
         </div>
     </webui-content>
-    <webui-button slot="tabs">Branches</webui-button>
-    <webui-content slot="content" nodetach>
+    <webui-button slot="tabs" id="tab-branches">Branches</webui-button>
+    <webui-content slot="content" nodetach id="content-branches">
         <div style="margin-top: var(--padding); overflow-x: auto;">
             <webui-table
                 id="branch-table"

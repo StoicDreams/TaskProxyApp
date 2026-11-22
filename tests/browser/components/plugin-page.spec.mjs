@@ -1,4 +1,5 @@
 import { test, expect, openApp, calls, dialogButton, onCommand, openDialog } from '../../support/app.mjs';
+import { actionNote } from '../../support/wait.mjs';
 
 const manifest = {
     id: 'test', name: 'Test Plugin', version: '0.1.0', apiVersion: 1, icon: 'flask',
@@ -15,18 +16,7 @@ async function openPlugin(page, node, state = {}, path = '/plugin/test/home') {
     await openApp(page, { plugins, currentPage: path, ...state, pluginPages: { 'test/home': node, ...(state.pluginPages || {}) } }, path);
     await expect(page.locator('app-plugin-page')).toBeVisible();
     await expect(page.locator('app-plugin-page')).not.toContainText('Loading');
-    await spyOnAlerts(page);
 }
-
-/** Records the messages shown with webui.alert, which alerts() returns. */
-function spyOnAlerts(page) {
-    return page.evaluate(() => {
-        window.__alerts = [];
-        const original = webui.alert;
-        webui.alert = function (...args) { window.__alerts.push(`${args[0]}`); return original.apply(this, args); };
-    });
-}
-const alerts = page => page.evaluate(() => window.__alerts);
 
 test.describe('a page beside another', () => {
     const list = {
@@ -174,7 +164,8 @@ test.describe('spec 0.1.3', () => {
         await expect(hover).toHaveCount(0);
         // Copied through Rust, which puts it on the system clipboard.
         await page.locator('.plugin-image-copy').click();
-        await expect.poll(() => alerts(page)).toContain('Copied the image.');
+        // Said in the dialog, by its Copy button.
+        await expect(actionNote(page, 'Copied the image.')).toHaveCount(1);
         const copied = await page.evaluate(async () => {
             const bitmap = await createImageBitmap(new Blob([new Uint8Array(window.__backend.clipboard.bytes)]));
             return { width: bitmap.width, height: bitmap.height };

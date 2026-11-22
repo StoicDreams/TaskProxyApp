@@ -1,6 +1,6 @@
 [package]
 name = "taskproxy"
-version = "0.1.170"
+version = "0.2.0"
 description = "Stoic Dreams Task Proxy"
 authors = [
     "Erik Gassler <erik@stoicdreams.com>",
@@ -95,7 +95,8 @@ webkit2gtk = { version = "2.0", features = ["v2_40"] }
 
 [target.'cfg(windows)'.dependencies]
 # Limits the scripts Task Proxy runs to the CPU threads and priority chosen in Settings (services/performance.rs).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+# Also ends what an AI command leaves running, in a job object (services/ai.rs).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-positioner = { version = "2.0.0", features = ["tray-icon"] }

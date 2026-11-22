@@ -1,5 +1,15 @@
 "use strict"
 {
+    /**
+     * An AI draft without a <webui-page-segment> wrapper around all of it, which the model can copy from the page it
+     * is shown, and which would nest one segment in another once this one wraps it. Kept as it is when it holds
+     * other segment tags.
+     */
+    function unwrapSegment(text) {
+        const match = /^\s*<webui-page-segment\b[^>]*>([\s\S]*)<\/webui-page-segment>\s*$/i.exec(text);
+        if (!match || /<\/?webui-page-segment\b/i.test(match[1])) return text;
+        return match[1].trim();
+    }
     const SEGMENT = 'segment';
     const LINE_BREAK = 'line break';
     const HEADINGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
@@ -58,10 +68,49 @@
             t._inputText = t.template.querySelector('webui-input-text');
             t._type = t.template.querySelector('webui-switch');
             t._inputOptions = t.template.querySelector('.input-options');
+            t._ai = t.template.querySelector('#ai-segment');
             t._isEditing = false;
             t._parsed = parseSegment('');
             t._segmentType = SEGMENT;
             t._inputValue = '';
+        },
+        /** Shows the editor's markdown as it will look, while editing. */
+        showLive() {
+            const t = this;
+            if (!t._isEditing) return;
+            t._content.setHtml(pageHtml(t.buildFinalMarkdown()));
+        },
+        /**
+         * Writes this segment with AI from what the user asked, with the whole page as context, into the editor. Undo
+         * puts back what was there before editing.
+         */
+        async writeWithAi({ model, requestId, asked, isCurrent }) {
+            const t = this;
+            const type = t._segmentType;
+            // A line break has no text, so a draft for it would go nowhere.
+            if (type === LINE_BREAK) throw 'A line break has no text to write. Choose Segment or a heading first.';
+            const heading = isHeading(type);
+            const current = heading ? t._inputText.value : t._inputMessage.value;
+            const marker = '[THE PART TO WRITE]';
+            const segments = [...(t.parentNode?.children || [])].filter(node => node.localName === 'app-markdown-segment');
+            const page = segments.map(segment => segment === t ? marker : segment.getMarkdown()).filter(Boolean).join('\n\n');
+            const title = webui.getData('page-title') || '';
+            const context = `The page${title ? `, "${title}"` : ''}, with ${marker} where the part goes:\n\n${page}`;
+            const request = `${asked}\n\n${heading ? 'It is a heading: reply with the heading text only, on one line.' : 'Reply with the markdown for that part only, without the <webui-page-segment> tags around it.'}${current.trim() ? `\n\nWhat the part says now:\n\n${current}` : ''}`;
+            const draft = await webui.proxy.ai.write({ integration: 'pages', model, requestId, request, context });
+            if (!isCurrent()) return;
+            if (!t._isEditing || !t.isConnected) throw 'The editor was closed before AI finished, so the draft wasn\'t used. Edit the part and Write with AI again.';
+            // What was typed while it wrote is kept, and the draft, written from the text before, is not used.
+            const now = heading ? t._inputText.value : t._inputMessage.value;
+            if (t._segmentType !== type || now !== current) throw 'This part changed while AI was writing, so the draft wasn\'t used, to keep your changes. Write with AI again to start from it as it is now.';
+            const text = unwrapSegment(typeof draft === 'string' ? draft : '');
+            const line = text.split('\n').map(part => part.replace(/^#+\s*/, '').trim()).find(Boolean);
+            if (!text.trim() || (heading && !line)) throw 'The AI answer was empty, so this part was left as it was. Try again, or with another model.';
+            // A segment tag left in it would end this part, or start another inside it, once saved, breaking the page.
+            if (/<\/?webui-page-segment\b/i.test(text)) throw 'The AI answer held page segment tags, which would break the page when saved, so this part was left as it was. Try again, or with another model.';
+            if (heading) t._inputText.value = line;
+            else t._inputMessage.value = text;
+            t.showLive();
         },
         /** The markdown for the type and text in the editor. */
         buildFinalMarkdown() {
@@ -95,10 +144,8 @@
             }
             t._type.setOptions(TYPES);
             t.setMarkdown(t.dataset.markdown || '');
-            const liveUpdate = () => {
-                if (!t._isEditing) return;
-                t._content.setHtml(pageHtml(t.buildFinalMarkdown()));
-            };
+            const liveUpdate = () => t.showLive();
+            t._ai.action = args => t.writeWithAi(args);
             t._inputMessage.addEventListener('input', liveUpdate);
             t._inputText.addEventListener('input', liveUpdate);
             t._btnEdit.addEventListener('click', _ => {
@@ -141,6 +188,8 @@
             t._segmentType = TYPES.includes(type) ? type : SEGMENT;
             if (t._type.value !== t._segmentType) t._type.setValue(t._segmentType);
             t._inputOptions.classList.remove('it-single', 'it-multi');
+            // Write with AI writes text, which a line break has none of. Set here, as its own hidden follows the settings.
+            t._ai.style.display = t._segmentType === LINE_BREAK ? 'none' : '';
             if (isHeading(t._segmentType)) {
                 const text = t._inputValue.replace(/\s*\n\s*/g, ' ').trim();
                 if (t._inputText.value !== text) t._inputText.value = text;
@@ -245,6 +294,7 @@ display: none;
 <webui-flex align="center" gap="var(--padding)">
 <webui-switch label="Segment type"></webui-switch>
 <webui-flex grow></webui-flex>
+<app-ai-action id="ai-segment" integration="pages" label="Write with AI" ask="What should this part of the page say? Describe it, or how to change what is there now."></app-ai-action>
 <webui-button id="btn-delete" theme="danger" start-icon="trash" label="Delete" title="Delete this segment"></webui-button>
 </webui-flex>
 <div class="input-options">

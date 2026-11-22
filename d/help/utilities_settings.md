@@ -26,4 +26,16 @@
         - **When it applies**: To scripts started after a change. A script already running keeps the limits it started with.
         </webui-page-segment>
     </webui-content>
+
+    <webui-button slot="tabs">AI</webui-button>
+    <webui-content slot="content" nodetach>
+        <webui-page-segment>
+        - **Providers**: Settings' **AI** tab has its own tabs, starting with **Providers**, where each provider you add gets a tab. **Add Provider** asks what you want to use: Claude Code with a Claude subscription, Ollama or LM Studio for free models on this computer, an OpenAI, Anthropic, or OpenRouter API key, or, for those who know how, another server or command. Each choice shows the steps to set it up, with a button to open each site, and each command it needs shown with a **Run** button that runs it in the Terminal Manager, where you can watch it and answer what it asks. Each asks only for what it needs, such as which Claude models to use or whether Ollama is on this computer. API keys stay on this computer and are never shown again. Changes to providers are kept only once you choose **Save Providers**: until then a warning says they aren't saved, and **Discard Changes** goes back to what is saved. Leaving Settings keeps them until you close Task Proxy.
+        - **Models**: A server's models are listed once it is saved, and again with **Refresh Models**. Uncheck any you don't want to choose from. Every provider's models show together wherever a model is chosen. **Test** checks the provider answers.
+        - **Use AI For**: Turn on Git commit messages, code reviews, pages, scripts, or importing markdown files. Each shows a **Write with AI** button, or **Review** or **Suggest with AI**, where it is used.
+        - **Default Models**: Set globally, or for this project, for everything or for each use. Each button starts on the most specific one set, and you can pick another for one request.
+        - **Instructions**: A tab for the instructions shared by every request, and one for each use, such as commit messages. Each shows the built-in instructions Task Proxy always sends first (on **Shared**, what every request is told about Task Proxy and the project's `.taskproxy` folder: its pages, navigation, variables, and scripts, and how a page's PowerShell blocks run), then a global box, for every project, and one for this project. What you write adds to the built-in instructions, never replaces them. For each tab, this project's box is used in place of the global box when it has text; when it is empty, the global box is used. An empty box adds nothing; the grey text in an empty box is only an example. Edit them here, or from the book button beside each Write with AI button.
+        - **What is sent**: What you are working on, with the instructions: the included files' changes, or the whole project for a project review; the page or script being edited; or the files being imported. Ollama and LM Studio keep it on this computer. Claude Code and the API providers send it to their servers.
+        </webui-page-segment>
+    </webui-content>
 </webui-tabs>

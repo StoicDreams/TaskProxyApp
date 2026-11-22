@@ -1,4 +1,4 @@
-import { test, expect, openApp, calls, dialogButton } from '../support/app.mjs';
+import { test, expect, openApp, calls, dialogButton, switchProject } from '../support/app.mjs';
 
 const jira = {
     id: 'jira', name: 'Jira', version: '0.1.0', apiVersion: 1, icon: 'ticket',
@@ -40,12 +40,49 @@ test("a project's own settings can be changed, and it can stop using them", asyn
     await settings.locator('webui-button', { hasText: 'Save settings' }).click();
     await expect.poll(() => calls(page, 'plugin_save_settings')).toEqual([{ id: 'jira', values: { jira_site: 'https://team.atlassian.net' } }]);
     await expect.poll(() => page.evaluate(() => window.__changed)).toBe(1);
+    // Said by the Save button, in an alert that stays there as the settings are drawn again.
+    await expect(settings.locator('[data-note-at="save"] + webui-alert.plugin-settings-note[show]')).toHaveText('Settings saved.');
     await settings.locator('[data-role="stop-using"]').click();
     await dialogButton(page, 'Confirm').click();
     await expect.poll(() => calls(page, 'plugin_use_sign_in')).toEqual([{ id: 'jira', signIn: null }]);
     // With none, it offers the settings other projects use, or new ones.
     await expect(settings.locator('[data-role="sign-in-choice"]')).toBeVisible();
     await expect(settings).toContainText('Or enter new settings for this project');
+    // What stopping did replaces what saving said.
+    // Its button is gone, so it is said at the top.
+    await expect(settings.locator('webui-alert.plugin-settings-note[show]:first-child')).toHaveText('Repo no longer uses those settings.');
+});
+
+test('another project opening shows its settings, without what was said about the last one\'s', async ({ page }) => {
+    const settings = await openSettings(page, { hasProject: true, signIn: 'sign-in-1', settings: fields(true), signIns: [work] });
+    await settings.locator('webui-button', { hasText: 'Save settings' }).click();
+    await expect(settings.locator('webui-alert.plugin-settings-note[show]')).toHaveText('Settings saved.');
+    const asked = (await calls(page, 'plugin_settings')).length;
+    await switchProject(page, { name: 'Other', path: '/other' });
+    await expect.poll(async () => (await calls(page, 'plugin_settings')).length).toBeGreaterThan(asked);
+    await expect(settings).toContainText('Other uses these settings');
+    await expect(settings.locator('webui-alert.plugin-settings-note[show]')).toHaveCount(0);
+});
+
+test('what saving said is not shown under another project\'s settings when it answers after the switch', async ({ page }) => {
+    const settings = await openSettings(page, { hasProject: true, signIn: 'sign-in-1', settings: fields(true), signIns: [work] });
+    await page.evaluate(() => {
+        const save = window.__backend.handlers.plugin_save_settings;
+        window.__releaseSave = null;
+        window.__backend.handlers.plugin_save_settings = async args => {
+            await new Promise(resolve => window.__releaseSave = resolve);
+            return save(args);
+        };
+    });
+    await settings.locator('webui-button', { hasText: 'Save settings' }).click();
+    await expect.poll(() => page.evaluate(() => !!window.__releaseSave)).toBe(true);
+    await switchProject(page, { name: 'Other', path: '/other' });
+    await expect(settings).toContainText('Other uses these settings');
+    const changed = await page.evaluate(() => window.__changed);
+    await page.evaluate(() => window.__releaseSave());
+    // The save still tells the app the settings changed, which is when it would have said so.
+    await expect.poll(() => page.evaluate(() => window.__changed)).toBe(changed + 1);
+    await expect(settings.locator('webui-alert.plugin-settings-note[show]')).toHaveCount(0);
 });
 
 test('a project with no settings can use those of another project', async ({ page }) => {
@@ -55,6 +92,7 @@ test('a project with no settings can use those of another project', async ({ pag
     await choice.locator('webui-button', { hasText: 'Use these' }).click();
     await expect.poll(() => calls(page, 'plugin_use_sign_in')).toEqual([{ id: 'jira', signIn: 'sign-in-1' }]);
     await expect(settings.locator('[data-role="stop-using"]')).toBeVisible();
+    await expect(settings.locator('webui-alert.plugin-settings-note[show]')).toHaveText('Repo now uses those settings.');
     await expect(settings.locator('webui-input-text[name="jira_site"]')).toHaveAttribute('value', 'jira_site of sign-in-1');
 });
 
@@ -135,10 +173,14 @@ test.describe('plugins set up per project', () => {
         await turn.click();
         await expect.poll(() => calls(page, 'plugin_use_in_project')).toEqual([{ id: 'notes', used: true }]);
         await expect(nav(page).locator('[url="/plugin/notes/list"]')).toHaveCount(1);
+        // What it did is said by the button.
+        const said = card.locator('[data-note-at="use-in-project"] + webui-alert.plugin-settings-note[show]');
+        await expect(said).toHaveText('Turned on for Repo.');
         await expect(turn).toContainText('Stop using it in this project');
         await turn.click();
         await expect.poll(() => calls(page, 'plugin_use_in_project')).toHaveLength(2);
         await expect(nav(page).locator('[url^="/plugin/notes/"]')).toHaveCount(0);
+        await expect(said).toHaveText('Turned off for Repo.');
     });
 
     test('switching projects asks again which plugins are set up', async ({ page }) => {

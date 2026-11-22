@@ -1,5 +1,5 @@
-import { test, expect, openApp, openPage, calls, dialogButton, openDialog } from '../support/app.mjs';
-import { alertPopup } from '../../support/wait.mjs';
+import { test, expect, openApp, openPage, calls, dialogButton, openDialog, switchProject } from '../support/app.mjs';
+import { alertPopup, actionNote } from '../../support/wait.mjs';
 
 // Favorite scripts (wc/favorites.js), in the bottom drawer. The list is app data; the mock backend finds and runs
 // each script as services/favorites.rs does, whose own tests hold how values are filled.
@@ -84,8 +84,48 @@ test('a favorite whose script is gone says why, and runs nothing', async ({ page
     const gone = favorite('a', { source: { kind: 'page', page: 'steps', index: 4, text: 'removed\n', count: 5 } });
     await openApp(page, state([gone]));
     await icons(page).first().click();
-    await expect(alertPopup(page, "This favorite's script is no longer on its page. Open the page, and choose the script again.")).toHaveCount(1);
+    // Said after the bar, by the icon, not in the app's alerts.
+    const why = "This favorite's script is no longer on its page. Open the page, and choose the script again.";
+    await expect(page.locator('app-favorites .fav-bar + webui-alert.action-note[show]')).toHaveText(why);
+    await expect(alertPopup(page, why)).toHaveCount(0);
     await expect.poll(() => calls(page, 'run_favorite')).toEqual([]);
+    // Running it again clears what was said, until it says so again.
+    await page.evaluate(() => {
+        window.__releaseScript = null;
+        const script = window.__backend.handlers.favorite_script;
+        window.__backend.handlers.favorite_script = async args => {
+            await new Promise(resolve => window.__releaseScript = resolve);
+            return script(args);
+        };
+    });
+    await icons(page).first().click();
+    await expect(actionNote(page.locator('app-favorites'), why)).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => typeof window.__releaseScript)).toBe('function');
+    await page.evaluate(() => window.__releaseScript());
+    await expect(actionNote(page.locator('app-favorites'), why)).toHaveCount(1);
+});
+
+test('what an icon said on the bar goes on managing favorites, opening another project, or removing a favorite', async ({ page }) => {
+    const gone = favorite('a', { source: { kind: 'page', page: 'steps', index: 4, text: 'removed\n', count: 5 } });
+    await openApp(page, state([gone, favorite('b')]));
+    const said = page.locator('app-favorites .fav-bar + webui-alert.action-note[show]');
+    const failRun = async () => {
+        await icons(page).first().click();
+        await expect(said).toHaveCount(1);
+    };
+    await failRun();
+    await bar(page).getByRole('button', { name: 'Manage favorite scripts' }).click();
+    await expect(manage(page)).toBeVisible();
+    await expect(said).toHaveCount(0);
+    await failRun();
+    await switchProject(page, OTHER);
+    await expect(said).toHaveCount(0);
+    await failRun();
+    await manage(page).locator('.fav-row[data-id="b"]').click();
+    await detail(page).locator('webui-button.fav-remove').click();
+    await dialogButton(page, 'Confirm').click();
+    await expect.poll(async () => (await saved(page)).map(item => item.id)).toEqual(['a']);
+    await expect(said).toHaveCount(0);
 });
 
 test('a few icons that fit show no ellipsis', async ({ page }) => {
@@ -111,6 +151,8 @@ test("the pencil opens the drawer over the page to manage them, and adds a scrip
     });
     await expect(detail(page).locator('.fav-param[data-param="target"]')).toBeVisible();
     await expect(icons(page)).toHaveCount(1);
+    // Said under the panel's buttons, since the panes below are drawn again.
+    await expect(manage(page).locator('webui-alert.action-note[show]')).toHaveText('Added Build it to your favorites.');
 });
 
 test("a script file's parameters can be fixed or come from data, by another key", async ({ page }) => {
@@ -172,6 +214,21 @@ test('an icon is chosen from the project\'s images, and Default goes back to the
     await expect.poll(async () => (await saved(page))?.[0]?.icon).toBeNull();
 });
 
+test('a script file that can\'t be read says why under the files, and what was said goes once the manager closes', async ({ page }) => {
+    await openPage(page, PAGE, { ...state(), pageId: 'steps' });
+    await bar(page).getByRole('button', { name: 'Manage favorite scripts' }).click();
+    await manage(page).locator('webui-button.fav-add').click();
+    await page.evaluate(() => { window.__backend.handlers.favorite_script = () => { throw 'deploy.ps1 could not be read.'; }; });
+    await detail(page).locator('.fav-choice[data-file="deploy.ps1"]').click();
+    await expect(detail(page).locator('.fav-file-choices + webui-alert.action-note[show]')).toHaveText('deploy.ps1 could not be read.');
+    await detail(page).locator('.fav-choice[data-block="0"]').click();
+    await expect(manage(page).locator('.fav-manage-head + webui-alert.action-note[show]')).toHaveText('Added Install the tools to your favorites.');
+    await manage(page).locator('webui-button.fav-done').click();
+    await bar(page).getByRole('button', { name: 'Manage favorite scripts' }).click();
+    await expect(manage(page)).toBeVisible();
+    await expect(manage(page).locator('.fav-manage-head + webui-alert.action-note[show]')).toHaveCount(0);
+});
+
 test('Done closes the manager back to one row of icons', async ({ page }) => {
     await openApp(page, state([favorite('a')]));
     await bar(page).getByRole('button', { name: 'Manage favorite scripts' }).click();
@@ -187,4 +244,23 @@ test('a favorite from another project, shown in every project, runs in its own p
     await expect.poll(async () => (await calls(page, 'run_favorite'))[0]?.favorite.project).toBe('/other');
     // The open project is a different one, so it is not asked about.
     await expect(openDialog(page)).toHaveCount(0);
+});
+
+test('what adding a favorite said goes on picking another favorite, or Add Script again', async ({ page }) => {
+    await openPage(page, PAGE, { ...state([favorite('a')]), pageId: 'steps' });
+    await bar(page).getByRole('button', { name: 'Manage favorite scripts' }).click();
+    const added = manage(page).locator('.fav-manage-head + webui-alert.action-note[show]');
+    const addBuild = async () => {
+        await manage(page).locator('webui-button.fav-add').click();
+        await detail(page).locator('.fav-choice[data-block="1"]').click();
+        await expect(added).toHaveText('Added Build it to your favorites.');
+    };
+    await addBuild();
+    await manage(page).locator('.fav-row[data-id="a"]').click();
+    await expect(detail(page).locator('.fav-editor[data-id="a"]')).toBeVisible();
+    await expect(added).toHaveCount(0);
+    await addBuild();
+    await manage(page).locator('webui-button.fav-add').click();
+    await expect(detail(page).locator('.fav-choice[data-block]')).toHaveCount(2);
+    await expect(added).toHaveCount(0);
 });

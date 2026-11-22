@@ -1,4 +1,4 @@
-import { test, expect, openApp, openTool, calls } from '../../support/app.mjs';
+import { test, expect, openApp, openTool, calls, goToPage } from '../../support/app.mjs';
 
 // The Theme tab of Tools (webui-theme-selector in index.html, with its themes in css/app.css). The theme and any
 // adjusted colors are app state, saved with the app's data.
@@ -79,4 +79,68 @@ test('in a remote browser the theme is the browser\'s own, and never replaces th
     // Everything waiting to be sent goes now, so nothing about the theme is still on its way.
     await page.evaluate(() => webui.proxy.syncAppData());
     expect(await sent(page, 'session-theme')).toEqual([]);
+});
+
+// An accessibility check (WCAG AA, 4.5:1): the current page's nav link draws its name and icon on Web UI's shade, and
+// its icon once took the colors meant for the active color around it, which hid it in most themes.
+test('in every theme, the current page\'s nav link has a readable name and icon', async ({ page }) => {
+    await openApp(page, { navigation: [{ name: 'Setup', icon: 'gear', url: '/setup', children: null }] });
+    await goToPage(page, '/setup');
+    const link = page.locator('webui-nav-link.theme-active', { hasText: 'Setup' }).locator('a');
+    await expect(link.locator('webui-icon')).toBeVisible();
+    const themes = await page.evaluate(() => [...document.querySelectorAll('webui-theme-selector option')].map(option => option.value));
+    expect(themes.length).toBeGreaterThan(40);
+    const faint = [];
+    for (const theme of themes) {
+        // Colors ease from the last theme's into this one's, so the transitions are finished before any is read.
+        // Reading the animations brings the styles up to date first, which starts them.
+        await page.evaluate(value => {
+            document.documentElement.setAttribute('data-theme', value);
+            document.getAnimations().filter(animation => animation instanceof CSSTransition).forEach(animation => animation.finish());
+        }, theme);
+        const [text, icon] = await link.evaluate(a => {
+            const icon = a.querySelector('webui-icon');
+            const probe = document.createElement('span');
+            a.append(probe);
+            // Each color is drawn on a 1x1 canvas and read back as sRGB, so oklch, lab and display-p3 colors are
+            // converted rather than read as if their numbers were RGB, and alpha is kept.
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = 1;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            const rgba = color => {
+                probe.style.color = '';
+                probe.style.color = color;
+                context.clearRect(0, 0, 1, 1);
+                context.fillStyle = '#000';
+                context.fillStyle = getComputedStyle(probe).color;
+                context.fillRect(0, 0, 1, 1);
+                const [r, g, b, alpha] = context.getImageData(0, 0, 1, 1).data;
+                return [r / 255, g / 255, b / 255, alpha / 255];
+            };
+            /** A color with alpha drawn over a solid one. */
+            const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+            // A background that is not solid shows what is behind it: its ancestors' backgrounds, out to the
+            // nearest solid one (through shadow roots), or the white of a page with none.
+            const layers = [];
+            for (let node = a; node; node = node.parentElement || node.getRootNode().host) {
+                const color = rgba(getComputedStyle(node).backgroundColor);
+                if (color[3] > 0) layers.push(color);
+                if (color[3] >= 1) break;
+            }
+            const background = layers.reduceRight((under, layer) => over(layer, under), [1, 1, 1, 1]);
+            const luminance = solid => solid.slice(0, 3)
+                .map(c => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+                .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+            // A color with alpha is read as it shows, over the background.
+            const ratio = color => {
+                const [hi, lo] = [luminance(over(rgba(color), background)), luminance(background)].sort((p, q) => q - p);
+                return (hi + 0.05) / (lo + 0.05);
+            };
+            const result = [ratio(getComputedStyle(a).color), ratio(getComputedStyle(icon).getPropertyValue('--ico-color-primary').trim())];
+            probe.remove();
+            return result;
+        });
+        if (text < 4.5 || icon < 4.5) faint.push(`${theme || 'default'}: text ${text.toFixed(2)}, icon ${icon.toFixed(2)}`);
+    }
+    expect(faint).toEqual([]);
 });

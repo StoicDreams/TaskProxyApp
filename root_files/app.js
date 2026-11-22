@@ -106,7 +106,8 @@
     let remoteStartPage = remote ? `${location.pathname}${location.search}` : null;
     let firstLoad = true;
     let isLoading = {};
-    const defaultErrHandler = msg => webui.alert(msg);
+    // For a call with no button to say it by, such as one the app makes on its own. Calls from a button pass their own.
+    const defaultErrHandler = msg => appAlert(msg);
     const cache = {};
     let isLoadingDialog = null;
     async function showLoading(msg, during) {
@@ -447,6 +448,110 @@
             deleteFile: (repo, file, err) => invokeGit('git_delete_file', { repo, file }, err),
         }
         /**
+         * AI drafts (services/ai.rs): providers set up in Settings under AI write commit messages, code reviews, page
+         * segments, scripts, and import suggestions for the user to review. API keys stay in Rust.
+         *
+         * Integrations are turned on in app data `app-ai-integrations`. Instructions and default models are kept at two
+         * scopes: global in app data (`app-ai-instructions`, `app-ai-models`), and the project's own in its data, as
+         * `_ai: {instructions, models}`. Each holds `shared` (or `default` for models) and one entry per integration.
+         */
+        ai = {
+            integrations: ['git', 'review', 'pages', 'scripts', 'markdown'],
+            /** Providers, without keys, their models, and each integration's built-in instructions. */
+            settings: (err) => tauri.core.invoke('ai_settings').catch(err ?? defaultErrHandler),
+            /** Saves providers. A provider's `apiKey` left out keeps it, and an empty one removes it. */
+            saveSettings: (settings, err) => tauri.core.invoke('ai_save_settings', { settings }).catch(err ?? defaultErrHandler),
+            /** Reads a provider's models from its server again. Rejects with why it couldn't. */
+            refreshModels: (providerId) => tauri.core.invoke('ai_models', { providerId }),
+            /** Sends a short prompt to a model, resolving to its reply. Rejects with why it failed. */
+            test: (model) => tauri.core.invoke('ai_test', { model }),
+            /** A draft: `{integration, model, request, context, repo, files, requestId}`. Rejects with why it failed. */
+            write: async (request) => {
+                await this.ai.confirmTrust(request.model);
+                return tauri.core.invoke('ai_write', { request: { ...request, instructions: this.ai.instructionsFor(request.integration) } });
+            },
+            /** A code review: `{repo, scope: 'changes'|'project', files, focus, model, requestId}`. */
+            review: async (request) => {
+                await this.ai.confirmTrust(request.model);
+                return tauri.core.invoke('ai_review', { request: { ...request, instructions: this.ai.instructionsFor('review') } });
+            },
+            /**
+             * A command provider, such as Claude Code, runs in the project's folder, where the project's own files can
+             * set what it does, so Rust only runs one in a trusted project. This asks first, as a page script does,
+             * and rejects with 'Cancelled.' when the user doesn't trust it. Providers that can't be read reject with why,
+             * since whether to ask can't be known, and asking nothing would only end in Rust refusing.
+             */
+            confirmTrust: async (model) => {
+                let failed = null;
+                const view = await this.ai.settings(err => { failed = err ?? 'no reason was given'; return null; });
+                if (!view) throw `Your AI providers couldn't be read, so nothing was sent: ${failed ?? 'no settings came back'}`;
+                const provider = view?.providers?.find(p => p.id === model?.provider);
+                if (provider?.kind !== 'command') return;
+                const trusted = await this.confirmTrustProject({
+                    title: `Let ${provider.name} Work in This Project?`,
+                    about: `${provider.name} runs as a command in this project's folder, where the project's own files, such as its settings for that tool, can change what it does, with everything your user account can do. Only continue if you trust this project.`,
+                    confirm: 'Trust Project & Continue',
+                });
+                if (!trusted) throw 'Cancelled.';
+            },
+            cancel: (requestId) => tauri.core.invoke('ai_cancel', { requestId }).catch(() => false),
+            onProgress: (callback) => tauri.event.listen('ai-progress', event => callback(event.payload ?? {})),
+            onSettingsChanged: (callback) => tauri.event.listen('ai-settings-changed', event => callback(event.payload ?? {})),
+            newRequestId: () => `ai-${crypto.randomUUID()}`,
+            /** Whether an integration is turned on in Settings. */
+            isOn: (integration) => !!(webui.getData('app-ai-integrations') || {})[integration],
+            /** Instructions and default models at one scope, `global` or `project`: `{instructions: {}, models: {}}`. */
+            scope(scope) {
+                if (scope === 'project') {
+                    const own = webui.projectData?.data?._ai || {};
+                    return { instructions: { ...(own.instructions || {}) }, models: { ...(own.models || {}) } };
+                }
+                return {
+                    instructions: { ...(webui.getData('app-ai-instructions') || {}) },
+                    models: { ...(webui.getData('app-ai-models') || {}) },
+                };
+            },
+            /** Sets one instruction block or default model at a scope. Empty text, or a null model, clears it. */
+            setScope(scope, kind, key, value) {
+                const empty = value === null || value === undefined || (typeof value === 'string' && !value.trim());
+                if (scope === 'project') {
+                    if (!webui.projectData?.id) return;
+                    const own = (webui.projectData.data ??= {})._ai ??= {};
+                    const part = own[kind] ??= {};
+                    if (empty) delete part[key];
+                    else part[key] = value;
+                    webui.proxy.syncProjectData();
+                    // A project's own default moves every model picker showing it.
+                    if (kind === 'models') document.dispatchEvent(new CustomEvent('app-ai-defaults-changed'));
+                    return;
+                }
+                const dataKey = kind === 'models' ? 'app-ai-models' : 'app-ai-instructions';
+                const part = { ...(webui.getData(dataKey) || {}) };
+                if (empty) delete part[key];
+                else part[key] = value;
+                webui.setData(dataKey, part);
+            },
+            /**
+             * The instructions sent with an integration's request, after the built-in ones: the shared instructions, then
+             * the integration's. For each, the project's are used when it has any, in place of the global ones, as a
+             * project's Git token is; otherwise the global ones are.
+             */
+            instructionsFor(integration) {
+                const ai = webui.proxy.ai;
+                const global = ai.scope('global').instructions;
+                const project = ai.scope('project').instructions;
+                const has = text => typeof text === 'string' && !!text.trim();
+                return ['shared', integration].map(block => has(project[block]) ? project[block] : global[block]).filter(has);
+            },
+            /** The model an integration starts on: the project's for it, the project's default, then the same globally. */
+            defaultModel(integration) {
+                const ai = webui.proxy.ai;
+                const global = ai.scope('global').models;
+                const project = ai.scope('project').models;
+                return [project[integration], project.default, global[integration], global.default].find(model => model?.provider && model?.model) || null;
+            },
+        };
+        /**
          * Installed WebAssembly plugins, such as Jira. Plugins describe their screens as data, which app-plugin-page
          * draws, so no plugin code runs in this window. A plugin only reaches what its plugin.json declares.
          */
@@ -488,15 +593,38 @@
         projects = {
             isLoaded: false,
             waiting: [],
+            /** Called each time a project has loaded, for as long as the page using it lasts. */
+            loaded: new Set(),
             setLoaded(isLoaded) {
                 this.isLoaded = isLoaded;
                 if (isLoaded) {
-                    this.waiting.splice(0).forEach(handler => handler());
+                    this.waiting.splice(0).forEach(handler => this.call(handler));
+                    [...this.loaded].forEach(handler => this.call(handler));
+                }
+            },
+            /** Calls `handler` each time a project has loaded. Returns what stops it. */
+            onLoaded(handler) {
+                this.loaded.add(handler);
+                return () => this.loaded.delete(handler);
+            },
+            /**
+             * Runs what waits for a loaded project. One that fails, at once or later, is reported alone: the project
+             * still loaded, and the others still run. Said in the app's alerts, since nothing on screen asked for it.
+             */
+            call(handler) {
+                const report = ex => {
+                    console.error(ex);
+                    appAlert(`${ex?.message ?? ex}`, 'danger');
+                };
+                try {
+                    Promise.resolve(handler()).catch(report);
+                } catch (ex) {
+                    report(ex);
                 }
             },
             runWhenLoaded(handler) {
                 if (this.isLoaded) {
-                    handler();
+                    this.call(handler);
                 } else {
                     this.waiting.push(handler);
                 }
@@ -606,20 +734,38 @@
             errHandler ??= defaultErrHandler;
             return tauri.core.invoke('install_update', {}).catch(errHandler);
         }
-        async renameProject(path, newName, errHandler) {
+        /**
+         * Renames a saved project, then reloads the project list. A rename that fails goes to `errHandler`; a list that
+         * couldn't be reloaded after it worked goes to `reloadErrHandler` (default `errHandler`), keeps the list it had,
+         * and still resolves to the rename's result.
+         */
+        async renameProject(path, newName, errHandler, reloadErrHandler) {
             errHandler ??= defaultErrHandler;
+            reloadErrHandler ??= errHandler;
             let result = await tauri.core.invoke('rename_project', { path: path, newName: newName }).catch(errHandler);
             if (!result) return;
-            let projects = await webui.proxy.getProjects().catch(errHandler) || [];
-            webui.setData('app-projects', projects);
+            let reloadFailed = false;
+            // Said on its own, so it says the rename worked as well.
+            let projects = await webui.proxy.getProjects(err => {
+                reloadFailed = true;
+                reloadErrHandler(`The project was renamed, but the project list couldn't be reloaded: ${err}`);
+            });
+            if (!reloadFailed && Array.isArray(projects)) webui.setData('app-projects', projects);
             return result;
         }
-        async removeProject(path, errHandler) {
+        /** Removes a saved project, then reloads the project list, with errors handled as renameProject does. */
+        async removeProject(path, errHandler, reloadErrHandler) {
             errHandler ??= defaultErrHandler;
+            reloadErrHandler ??= errHandler;
             let result = await tauri.core.invoke('remove_project', { path: path }).catch(errHandler);
             if (!result) return;
-            let projects = await webui.proxy.getProjects().catch(errHandler) || [];
-            webui.setData('app-projects', projects);
+            let reloadFailed = false;
+            // Said on its own, so it says the project was removed as well.
+            let projects = await webui.proxy.getProjects(err => {
+                reloadFailed = true;
+                reloadErrHandler(`The project was removed, but the project list couldn't be reloaded: ${err}`);
+            });
+            if (!reloadFailed && Array.isArray(projects)) webui.setData('app-projects', projects);
             return result;
         }
         deleteSecurityKey(errHandler) {
@@ -669,19 +815,30 @@
         /**
          * Imports a folder of the open project's markdown files as pages, under a new folder named `parent` or at the top
          * of the navigation (services/page_import.rs), then saves the navigation with them. Resolves to
-         * `{navigation, pages, skipped}`.
+         * `{navigation, pages, skipped}`. `overrides`, by file, give a page its own `{title, subtitle, navPath}`.
          */
-        async importPageFolder(folder, parent, errHandler) {
+        async importPageFolder(folder, parent, errHandler, overrides) {
             errHandler ??= defaultErrHandler;
             if (!webui.projectData?.id) return;
             const projectId = webui.projectData.id;
             const result = await tauri.core.invoke('import_page_folder', {
                 folder: folder || '', parent: parent || null, navigation: webui.projectData.navigation || [],
+                // Sent only with AI suggestions to use, so an import without them asks just what it did before.
+                ...(overrides ? { overrides } : {}),
             }).catch(errHandler);
             if (!result || webui.projectData?.id !== projectId) return;
             webui.projectData.navigation = result.navigation;
-            await this.saveProjectData(errHandler);
+            // A navigation that couldn't be saved is not an import: errHandler has said why. Saved, the backend
+            // answers with text; whatever errHandler returns, such as an alert's own result, is not a save.
+            let saveFailed = false;
+            const saved = await this.saveProjectData(err => { saveFailed = true; return errHandler(err); });
+            if (saveFailed || typeof saved !== 'string') return;
             return result;
+        }
+        /** What importing a folder would make, page by page, without writing anything: `[{file, title, subtitle, navPath, excerpt}]`. */
+        planPageFolder(folder, errHandler) {
+            errHandler ??= defaultErrHandler;
+            return tauri.core.invoke('plan_page_folder', { folder: folder || '' }).catch(errHandler);
         }
         /** One of the open project's markdown files as page segments, with its links rewritten for a page. */
         importPageFile(file, errHandler) {
@@ -810,16 +967,28 @@
         /** Page scripts come from the repository, so ask before running any from a new project. */
         confirmProjectScript(script) {
             const path = webui.projectData?.path;
+            return this.confirmTrustProject({
+                title: 'Run Script From This Project?',
+                content: `
+                    <p>This script comes from the files in <strong>${webui.escapeForHTML(path ?? '')}</strong> and can do anything your user account can do. Only continue if you trust this project.</p>
+                    <pre style="max-height:40vh;overflow:auto;">${webui.escapeForHTML(script)}</pre>
+                `,
+                confirm: 'Trust Project & Run',
+            });
+        }
+        /**
+         * Resolves true when the open project is trusted, asking first when it isn't: `{title, about (text) or content
+         * (HTML), confirm}`. Trusting it lets page scripts and command providers run in it.
+         */
+        confirmTrustProject({ title, about, content, confirm }) {
+            const path = webui.projectData?.path;
             const trusted = webui.getData('app-trusted-projects') || [];
             if (!path || trusted.includes(path)) return Promise.resolve(true);
             return new Promise(resolve => {
                 webui.dialog({
-                    title: 'Run Script From This Project?',
-                    content: `
-                        <p>This script comes from the files in <strong>${webui.escapeForHTML(path)}</strong> and can do anything your user account can do. Only continue if you trust this project.</p>
-                        <pre style="max-height:40vh;overflow:auto;">${webui.escapeForHTML(script)}</pre>
-                    `,
-                    confirm: 'Trust Project & Run',
+                    title,
+                    content: content ?? `<p>${webui.escapeForHTML(about ?? '')}</p><p><strong>${webui.escapeForHTML(path)}</strong></p>`,
+                    confirm,
                     cancel: 'Cancel',
                     onconfirm: () => {
                         const nowTrusted = [...trusted, path];
@@ -958,11 +1127,14 @@
                     term._catchingUp = false;
                 }
             },
-            /** Asks Rust to stop a run: Ctrl+C for a script in a terminal, forced after a few seconds if it keeps running. */
-            async stopScript(id, projectId) {
+            /**
+             * Asks Rust to stop a run: Ctrl+C for a script in a terminal, forced after a few seconds if it keeps running.
+             * `errHandler` says why it couldn't, such as by the Stop button pressed.
+             */
+            async stopScript(id, projectId, errHandler) {
                 const term = this.getState(projectId).terminals[id];
                 if (!term || term.status !== 'Running') return;
-                await webui.proxy.terminal.stop(id, this.otherProject(projectId)).catch(err => webui.alert(err));
+                await webui.proxy.terminal.stop(id, this.otherProject(projectId)).catch(errHandler || (err => appAlert(err)));
             },
             /**
              * Runs a script in a terminal of the open project, resolving with Started, or Queued when `useQueue` has it
@@ -1194,6 +1366,11 @@
         }
         refreshPluginNav();
         pluginAlerts.start();
+        // AI commit messages kept from before a restart are saved by the Git Controller's code as their projects open,
+        // so it loads now when any are waiting, rather than only once a Git Controller is drawn.
+        if (Object.keys(webui.taskProxyData.data['app-ai-pending-commit-messages'] || {}).length) {
+            document.querySelector('webui-app')?.setAttribute('preload', 'app:git-manager');
+        }
         webui.projectData = { navigation: [], data: {} };
         webui.projectData.data ??= {};
         webui.projectData.navigation ??= [];
@@ -1280,6 +1457,7 @@
             if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
             webui.taskProxyData.variables = webui.taskProxyData.variables.filter(v => v.split('|')[0] !== key);
         }
+        renameThemes(data.data);
         Object.entries(data.data).forEach(([key, value]) => {
             if (ignoreAppDataFields.indexOf(key) !== -1 || patKeys.includes(key)) return;
             // Global variables are read from webui.taskProxyData. Copying them into page data would hide a
@@ -1342,11 +1520,15 @@
                 break;
             case 'app-current-project':
                 if (changes.newValue && changes.newValue.value) {
+                    // Until the new project loads, what waits for a loaded project waits for it, not the last one.
+                    if (changes.newValue.value.replace(/\\/g, '/') !== cache.currentProjectPath) webui.proxy.projects.setLoaded(false);
+                    cache.wantedProjectPath = changes.newValue.value.replace(/\\/g, '/');
                     await queueProjectChange(() => loadProject({
                         name: changes.newValue.display,
                         path: changes.newValue.value.replace(/\\/g, '/')
                     }));
                 } else {
+                    cache.wantedProjectPath = null;
                     await queueProjectChange(closeProject);
                 }
                 break;
@@ -1367,6 +1549,8 @@
         webui.setData('app-nav-routes', []);
         await webui.proxy.closeProject();
         refreshPluginNav();
+        // Only the global AI defaults and instructions apply now.
+        document.dispatchEvent(new CustomEvent('app-ai-defaults-changed'));
         handlePagePath('/', true);
     }
     async function loadProject(project) {
@@ -1375,6 +1559,7 @@
         }
         if (cache.currentProjectPath === project.path) return;
         cache.currentProjectPath = project.path;
+        webui.proxy.projects.setLoaded(false);
         showLoading('Saving Project!');
         try {
             await webui.proxy.saveProjectData();
@@ -1389,10 +1574,14 @@
             if (webui.projectData && webui.projectData.path) {
                 webui.projectData.path = webui.projectData.path.replace(/\\/g, '/');
             }
-            webui.proxy.projects.setLoaded(!!webui.projectData.id);
+            // With another project asked for meanwhile, what waits for a loaded project waits for that one.
+            const newest = cache.wantedProjectPath === undefined || cache.wantedProjectPath === project.path;
+            webui.proxy.projects.setLoaded(newest && !!webui.projectData.id);
             // Plugins' settings belong to projects, so their pages and notifications change with the project.
             refreshPluginNav();
             webui.setData('app-nav-routes', webui.projectData.navigation);
+            // The project's own default AI models now apply.
+            document.dispatchEvent(new CustomEvent('app-ai-defaults-changed'));
             // A remote browser opens the route the frame restored the first time, and a project's home after that.
             let startPage = remote ? (remoteStartPage || '/') : (webui.projectData.currentPage || '/');
             remoteStartPage = null;
@@ -1401,7 +1590,12 @@
             }, 300);
         } catch (ex) {
             cache.currentProjectPath = null;
-            webui.alert(ex);
+            // What waits for a loaded project runs for the one still open, rather than piling up, unless another project
+            // was asked for meanwhile, whose own load runs it.
+            const newest = cache.wantedProjectPath === undefined || cache.wantedProjectPath === project.path;
+            webui.proxy.projects.setLoaded(newest && !!webui.projectData?.id);
+            // Opening a project redraws the whole app, so why it failed goes in the app's alerts.
+            appAlert(ex);
             handlePagePath('/', true);
         } finally {
             hideLoading();
@@ -1603,7 +1797,8 @@
         }
     }
     async function syncAppData() {
-        if (webui.taskProxyData) await sendPatch('app', webui.taskProxyData, msg => webui.alert(msg));
+        // Syncing happens on its own, so a failure goes in the app's alerts.
+        if (webui.taskProxyData) await sendPatch('app', webui.taskProxyData, msg => appAlert(msg));
     }
     async function runWhenWebUIReady(action) {
         // Only waiting for the framework retries. Repeating the action would stack up its side effects.
@@ -1621,7 +1816,8 @@
             await action();
         } catch (ex) {
             console.error('Task Proxy failed to start', ex);
-            webui.alert(`Task Proxy failed to start: ${ex}`);
+            // Starting up, nothing else is on screen yet.
+            appAlert(`Task Proxy failed to start: ${ex}`);
         } finally {
             hideLoading();
         }
@@ -1745,6 +1941,90 @@ function showTool(target, header, body, ready) {
         ready?.();
     }, 100);
 }
+/** Themes renamed so their names are Task Proxy's own, with the name each had before. */
+const renamedThemes = { mocha: 'velvet', latte: 'meringue', 'rose-dawn': 'blush', owl: 'nightjar' };
+/** Saved app data with a renamed theme, and the colors adjusted for it, following the rename. */
+function renameThemes(saved) {
+    if (!saved || typeof saved !== 'object') return;
+    if (renamedThemes[saved['session-theme']]) saved['session-theme'] = renamedThemes[saved['session-theme']];
+    const colors = saved['session-theme-colors'];
+    if (!colors || typeof colors !== 'object') return;
+    Object.entries(renamedThemes).forEach(([before, after]) => {
+        if (!(before in colors)) return;
+        colors[after] ??= colors[before];
+        delete colors[before];
+    });
+}
+/**
+ * Says what an action did, or why it failed, in a webui-alert by what started it, such as the button pressed. The
+ * alert goes after the row the button is in: its nearest ancestor marked data-action-row, or else its parent. One
+ * alert is kept per row and reused, so pressing the button again replaces what it says. `text` is plain text.
+ * When what started it is no longer in the page, such as a dialog that closed or a list drawn again, the message goes
+ * to the app's alerts instead. It returns nothing, so it can be an error handler: a `.catch(err => actionNote(...))`
+ * resolves to undefined, which callers read as failed.
+ */
+function actionNote(anchor, text, variant = 'info') {
+    if (!anchor?.isConnected) {
+        appAlert(text, variant);
+        return;
+    }
+    const row = anchor.closest?.('[data-action-row]') || anchor.parentElement || anchor;
+    // Buttons straight in the page each keep their own alert, rather than sharing the page's.
+    const holder = row === document.body || row === document.documentElement ? anchor : row;
+    let note = holder._actionNote;
+    if (!note?.isConnected) {
+        if (!text) return;
+        // Styled here, since it can be inside a component whose own styles the app's CSS doesn't reach. In a row of
+        // buttons it takes a line of its own.
+        note = webui.create('webui-alert', { class: 'action-note', style: 'flex-basis:100%;margin-top:calc(0.5 * var(--padding, 8px));' });
+        holder._actionNote = note;
+        // Nothing can sit between a table's cells or rows, so in a table the alert goes at the end of the cell.
+        const inTable = /^(TR|THEAD|TBODY|TFOOT|TABLE)$/.test(row.tagName);
+        const cell = /^(TD|TH)$/.test(row.tagName) ? row : inTable ? anchor.closest('td, th') : null;
+        if (cell) cell.append(note);
+        // Anchored on the table's own rows, it goes after the table.
+        else if (inTable) (anchor.closest('table') || row).after(note);
+        // A row at the top of a shadow root, or the page itself, has the alert straight after the button instead.
+        else holder.after(note);
+    }
+    setNote(note, text, variant);
+}
+/**
+ * Shows plain text in the app's alerts, for a message with nothing on screen near what it is about, such as an action
+ * whose dialog has closed, or something the app did on its own. The text is escaped, since it can hold anything, such
+ * as file names from a repo in an error. It returns nothing, so it can be an error handler.
+ */
+function appAlert(text, variant) {
+    if (text === undefined || text === null || text === '') return;
+    webui.alert(webui.escapeForHTML(`${text}`), variant);
+}
+/**
+ * Shows plain text in a webui-alert with a variant (success, info, warning, or danger), or hides it with no text. For
+ * a component that draws itself again after an action, and keeps one alert to show what the action did. It returns
+ * nothing, so it can be an error handler.
+ */
+function setNote(note, text, variant = 'info') {
+    if (!note) return;
+    if (!text) {
+        note.removeAttribute('show');
+        note.textContent = '';
+        return;
+    }
+    note.setAttribute('variant', variant);
+    note.textContent = `${text}`;
+    note.setAttribute('show', 'true');
+}
+/** Clears what actionNote said by this button, as when it runs again. */
+function clearActionNote(anchor) {
+    if (anchor?.isConnected) actionNote(anchor, '');
+}
+/**
+ * Text as a PowerShell single-quoted string, which nothing inside can end early or expand. PowerShell reads curly
+ * single quotes as quotes too, so they are doubled as well.
+ */
+function quotePowerShell(text) {
+    return `'${`${text ?? ''}`.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`;
+}
 /**
  * Lets keyboard and screen reader users use an element that responds to clicks: it is announced as a button,
  * Tab reaches it, and Enter or Space clicks it. Its title, or the label given here, names it.
@@ -1805,7 +2085,8 @@ async function imageForClipboard(blob) {
         copy.textContent = 'Copy image';
         copy.addEventListener('click', async () => {
             close();
-            if (await webui.proxy.copyImage(img)) webui.alert('Copied the image.', 'success');
+            // The menu has closed, so this goes in the app's alerts.
+            if (await webui.proxy.copyImage(img)) appAlert('Copied the image.', 'success');
         });
         menu.append(copy);
         menu.style.left = `${Math.min(ev.clientX, window.innerWidth - 160)}px`;

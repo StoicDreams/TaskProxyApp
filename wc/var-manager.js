@@ -98,6 +98,8 @@
         return `${chars.slice(0, 3).join('')}***${chars.slice(-3).join('')}`;
     }
     function renderVariableList(container, scope, variables, isReadOnly, refreshCallback) {
+        // What was said under the list was about the rows drawn before. Each row's own notes go with it.
+        clearActionNote(container);
         container.innerHTML = '';
         if (!variables || variables.length === 0) {
             container.appendChild(webui.create('webui-alert', { theme: 'info', html: `No ${scope} variables defined.` }));
@@ -105,9 +107,12 @@
         }
         variables.forEach(v => {
             const wrap = webui.create('webui-grid', { columns: '1fr 2fr max-content', gap: 'var(--padding)', style: 'margin-bottom: 0.5rem; align-items: center;' });
+            // What a row's icons say without drawing the list again goes under that row.
+            wrap.setAttribute('data-action-row', '');
             wrap.appendChild(webui.create('span', { text: v.key }));
             // The key beside it is plain text, so the input is named for screen readers.
-            const kept = isKeptSecret(v.value);
+            // A value kept on the desktop stays kept until it is cleared, which empties it there too.
+            let kept = isKeptSecret(v.value);
             // The field shows the value masked, and the value itself while it is being edited.
             let actual = kept ? '' : `${v.value ?? ''}`;
             const input = webui.create('webui-input-text', { value: maskValue(actual), 'aria-label': `${scope} value of ${v.key}` });
@@ -118,6 +123,7 @@
                 input.value = actual;
             });
             input.addEventListener('focusout', () => {
+                if (!isReadOnly) replaceKept();
                 input.dataset.masked = 'true';
                 input.value = maskValue(actual);
             });
@@ -129,31 +135,62 @@
             }
             // Setting this attribute to false would still disable the input.
             if (isReadOnly) input.setAttribute('disabled', 'true');
+            /** Writes a value for this variable to its scope, as it is: text, or the marker of a value kept on the desktop. */
+            const writeScopeValue = value => {
+                if (scope === 'Global') {
+                    webui.setGlobalData(v.key, value);
+                    webui.setData(v.key, value);
+                    saveAppDataSoon();
+                } else if (scope === 'Project') {
+                    webui.setProjectData(v.key, value);
+                    webui.setData(v.key, value);
+                    const envs = getEnvironments();
+                    const activeEnvName = getActiveEnvName();
+                    if (activeEnvName && envs) {
+                        const activeEnv = envs.find(e => e.name === activeEnvName);
+                        if (activeEnv) {
+                            if (!activeEnv.variables) activeEnv.variables = {};
+                            activeEnv.variables[v.key] = value;
+                        }
+                    }
+                    webui.proxy.syncProjectData();
+                } else if (scope === 'Page') {
+                    webui.setData(v.key, value);
+                }
+            };
+            /** Saves a new value for this variable in its scope, which replaces one kept on the desktop. */
+            const saveValue = value => {
+                actual = `${value ?? ''}`;
+                if (kept) {
+                    // Replaced or cleared, so nothing is kept on the desktop any more.
+                    kept = false;
+                    // Emptied, not removed: Web UI's loader throws removing an attribute a component defines a property for.
+                    input.setAttribute('placeholder', '');
+                    input.removeAttribute('title');
+                    delete input.dataset.kept;
+                }
+                writeScopeValue(actual);
+            };
+            /**
+             * A value kept on the desktop is replaced only once its field is left with text in it, or Enter is pressed.
+             * Saved as it was typed, its first character would replace the secret on the desktop at once, and erasing
+             * the text could not bring it back.
+             */
+            const replaceKept = () => {
+                if (!kept || input.dataset.masked === 'true') return;
+                const typed = `${input.value ?? ''}`;
+                if (typed !== '') saveValue(typed);
+            };
             if (!isReadOnly) {
-                input.addEventListener('input', (ev) => {
+                input.addEventListener('input', () => {
                     // Only what is typed is a value. The masked copy is never saved.
                     if (input.dataset.masked === 'true') return;
-                    actual = `${ev.target.value ?? ''}`;
-                    if (scope === 'Global') {
-                        webui.setGlobalData(v.key, ev.target.value);
-                        webui.setData(v.key, ev.target.value);
-                        saveAppDataSoon();
-                    } else if (scope === 'Project') {
-                        webui.setProjectData(v.key, ev.target.value);
-                        webui.setData(v.key, ev.target.value);
-                        const envs = getEnvironments();
-                        const activeEnvName = getActiveEnvName();
-                        if (activeEnvName && envs) {
-                            const activeEnv = envs.find(e => e.name === activeEnvName);
-                            if (activeEnv) {
-                                if (!activeEnv.variables) activeEnv.variables = {};
-                                activeEnv.variables[v.key] = ev.target.value;
-                            }
-                        }
-                        webui.proxy.syncProjectData();
-                    } else if (scope === 'Page') {
-                        webui.setData(v.key, ev.target.value);
-                    }
+                    // What is typed over a kept value is saved when the field is left.
+                    if (kept) return;
+                    saveValue(input.value);
+                });
+                input.addEventListener('keydown', ev => {
+                    if (ev.key === 'Enter') replaceKept();
                 });
             }
             wrap.appendChild(input);
@@ -163,20 +200,28 @@
                     icon: `circle_${iconName}|backing|theme:${theme}`,
                     title: title
                 });
-                iconEl.addEventListener('click', onClick);
+                iconEl.addEventListener('click', () => onClick(iconEl));
                 makeButton(iconEl, `${title}: ${v.key}`);
                 actionsFlex.appendChild(iconEl);
             };
             // A value kept on the desktop can only be copied there.
-            const keptHere = () => {
-                if (!kept || input.value) return false;
-                webui.alert(`${v.key} is kept on the desktop, so copy it there.`, 'info');
+            const keptHere = icon => {
+                if (!kept || actual) return false;
+                // Said under this row, by the icon clicked.
+                actionNote(icon, `${v.key} is kept on the desktop, so copy it there.`, 'info');
                 return true;
             };
-            const copyToProj = () => {
-                if (keptHere()) return;
-                webui.setProjectData(v.key, input.value);
-                webui.setData(v.key, input.value);
+            /** Clears what an earlier action said, under the list and under this row. */
+            const clearNotes = icon => {
+                clearActionNote(container);
+                clearActionNote(icon);
+            };
+            const copyToProj = icon => {
+                clearNotes(icon);
+                if (keptHere(icon)) return;
+                // The field shows the value masked once it loses focus, so the value itself is copied.
+                webui.setProjectData(v.key, actual);
+                webui.setData(v.key, actual);
                 if (!webui.projectData.variables) webui.projectData.variables = [];
                 if (!webui.projectData.variables.some(def => def.split('|')[0] === v.key)) {
                     webui.projectData.variables.push(`${v.key}|text|`);
@@ -187,41 +232,45 @@
                     const activeEnv = envs.find(e => e.name === activeEnvName);
                     if (activeEnv) {
                         if (!activeEnv.variables) activeEnv.variables = {};
-                        activeEnv.variables[v.key] = input.value;
+                        activeEnv.variables[v.key] = actual;
                     }
                 }
                 webui.projectData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 webui.proxy.syncProjectData();
-                webui.alert('Copied to Project Scope', 'success');
                 if (refreshCallback) refreshCallback();
+                actionNote(container, `Copied ${v.key} to the project's variables.`, 'success');
             };
-            const copyToGlob = () => {
-                if (keptHere()) return;
-                webui.setGlobalData(v.key, input.value);
-                webui.setData(v.key, input.value);
+            const copyToGlob = icon => {
+                clearNotes(icon);
+                if (keptHere(icon)) return;
+                webui.setGlobalData(v.key, actual);
+                webui.setData(v.key, actual);
                 if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
                 if (!webui.taskProxyData.variables.some(def => def.split('|')[0] === v.key)) {
                     webui.taskProxyData.variables.push(`${v.key}|text|`);
                 }
                 webui.taskProxyData.variables.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 webui.proxy.saveAppData();
-                webui.alert('Copied to Global Scope', 'success');
                 if (refreshCallback) refreshCallback();
+                actionNote(container, `Copied ${v.key} to the global variables.`, 'success');
             };
-            const clearValue = () => {
+            const clearValue = icon => {
+                clearNotes(icon);
                 webui.dialog({
                     title: 'Clear Variable',
                     content: `<p>Are you sure you want to clear the value of <strong>${webui.escapeForHTML(v.key)}</strong>?</p>`,
                     confirm: 'Clear',
                     cancel: 'Cancel',
                     onconfirm: () => {
+                        // The field is masked once the dialog has its focus, so the value is saved here, not by its input.
+                        saveValue('');
                         input.value = '';
-                        input.triggerChange(true);
                         return true;
                     }
                 });
             };
-            const deleteVar = () => {
+            const deleteVar = icon => {
+                clearNotes(icon);
                 webui.dialog({
                     title: 'Delete Variable',
                     content: `<p>Are you sure you want to delete the variable <strong>${webui.escapeForHTML(v.key)}</strong>?</p><p style="background: var(--color-danger); color: var(--color-danger-offset); padding: 0.25em 0.5em; border-radius: var(--corners);">This action cannot be undone.</p>`,
@@ -250,9 +299,10 @@
                     }
                 });
             };
-            const copyToClip = () => {
-                if (keptHere()) return;
-                webui.copyToClipboard(input.value);
+            const copyToClip = icon => {
+                clearNotes(icon);
+                if (keptHere(icon)) return;
+                webui.copyToClipboard(actual);
             };
             if (scope === 'Page') {
                 createIconBtn('folder', 'Copy Value to Project Scope', 'info', copyToProj);
@@ -286,7 +336,7 @@
 <webui-tabs theme="secondary" index="1" transition-timing="200">
     <webui-button slot="tabs">Page</webui-button>
     <webui-content slot="content" nodetach>
-        <div id="var-page-list"></div>
+        <div id="var-page-list" data-action-row></div>
     </webui-content>
     <webui-button slot="tabs">Project</webui-button>
     <webui-content slot="content" nodetach>
@@ -299,7 +349,7 @@
             <webui-input-text id="input-proj-var" data-bind="proj-var-name" label="Key"></webui-input-text>
             <webui-button id="btn-add-proj" label="Add" theme="success"></webui-button>
         </webui-flex>
-        <div id="var-project-list" style="margin-top: 1rem;"></div>
+        <div id="var-project-list" data-action-row style="margin-top: 1rem;"></div>
     </webui-content>
     <webui-button slot="tabs">Global</webui-button>
     <webui-content slot="content" nodetach>
@@ -307,7 +357,7 @@
             <webui-input-text id="input-glob-var" data-bind="glob-var-name" label="Key"></webui-input-text>
             <webui-button id="btn-add-glob" label="Add" theme="success"></webui-button>
         </webui-flex>
-        <div id="var-global-list" style="margin-top: 1rem;"></div>
+        <div id="var-global-list" data-action-row style="margin-top: 1rem;"></div>
     </webui-content>
 </webui-tabs>
 <webui-content src="d/help/variable_management.md" style="margin-top: var(--padding);"></webui-content>
@@ -428,10 +478,14 @@
                             let input = grid.querySelector('webui-input-text');
                             if (!input) return;
                             let newName = input.value.trim();
-                            if (!newName || newName === oldName) return;
+                            // Nothing to rename, so what was said about an earlier try goes.
+                            if (!newName || newName === oldName) {
+                                clearActionNote(saveBtn);
+                                return;
+                            }
                             let envs = getEnvironments();
                             if (envs.some(e => e.name.toLowerCase() === newName.toLowerCase())) {
-                                webui.dialog.alert('Environment name already exists', 'warning');
+                                actionNote(saveBtn, 'Environment name already exists', 'warning');
                                 return;
                             }
                             let env = envs.find(e => e.name === oldName);
@@ -441,7 +495,7 @@
                                     setActiveEnvName(newName);
                                 }
                                 webui.proxy.syncProjectData();
-                                webui.alert('Environment renamed', 'success');
+                                actionNote(saveBtn, 'Environment renamed', 'success');
                                 saveBtn.setAttribute('data-env', newName);
                                 let delBtn = grid.querySelector('.env-del-btn');
                                 if (delBtn) delBtn.setAttribute('data-env', newName);
@@ -454,7 +508,7 @@
                             let envName = delBtn.getAttribute('data-env');
                             let envs = getEnvironments();
                             if (envs.length <= 1) {
-                                webui.dialog.alert('You must have at least one environment.', 'warning');
+                                actionNote(delBtn, 'You must have at least one environment.', 'warning');
                                 return;
                             }
                             webui.projectData.data._environments = envs.filter(e => e.name !== envName);
@@ -465,8 +519,11 @@
                             }
                             webui.proxy.syncProjectData();
                             let grid = webui.closest(delBtn, 'webui-grid');
-                            if (grid) grid.remove();
-                            webui.dialog.alert('Environment deleted', 'success');
+                            // What was said by its buttons goes with it.
+                            grid?._actionNote?.remove();
+                            grid?.remove();
+                            // Its row is gone, so this is said by Add New.
+                            actionNote(manageContainer.querySelector(`#btn-add-env-${dialogId}`), `Environment ${envName} deleted`, 'success');
                             renderAllLists();
                             return;
                         }
@@ -475,16 +532,19 @@
                             let input = webui.querySelector(`#new-env-input-${dialogId}`);
                             if (!input) return;
                             let envName = input.value.trim();
-                            if (!envName) return;
+                            if (!envName) {
+                                clearActionNote(addBtn);
+                                return;
+                            }
                             let envs = getEnvironments();
                             if (envs.some(e => e.name.toLowerCase() === envName.toLowerCase())) {
-                                webui.dialog.alert('Environment already exists', 'warning');
+                                actionNote(addBtn, 'Environment already exists', 'warning');
                                 return;
                             }
                             envs.push({ name: envName, variables: {} });
                             webui.proxy.syncProjectData();
                             input.value = '';
-                            webui.dialog.alert('Environment added', 'success');
+                            actionNote(addBtn, 'Environment added', 'success');
                             let newGrid = webui.createFromHTML(envRowHtml(envName).trim());
                             let flex = manageContainer.querySelector('webui-flex');
                             if (flex) flex.appendChild(newGrid);
@@ -507,6 +567,8 @@
                     let input = container.querySelector('#input-proj-var');
                     let key = webui.getData('proj-var-name') || (input ? input.value : '');
                     key = key.trim();
+                    // What was said about an earlier name goes, whatever happens with this one.
+                    clearActionNote(btnAddProj);
                     if (!key) return;
                     if (!webui.projectData.variables) webui.projectData.variables = [];
                     if (!webui.projectData.variables.some(v => v.split('|')[0] === key)) {
@@ -517,7 +579,7 @@
                         if (input) input.value = '';
                         renderAllLists();
                     } else {
-                        webui.alert('Project variable already exists', 'warning');
+                        actionNote(btnAddProj, 'Project variable already exists', 'warning');
                     }
                     return;
                 }
@@ -526,6 +588,7 @@
                     let input = container.querySelector('#input-glob-var');
                     let key = webui.getData('glob-var-name') || (input ? input.value : '');
                     key = key.trim();
+                    clearActionNote(btnAddGlob);
                     if (!key) return;
                     if (!webui.taskProxyData.variables) webui.taskProxyData.variables = [];
                     if (!webui.taskProxyData.variables.some(v => v.split('|')[0] === key)) {
@@ -536,7 +599,7 @@
                         if (input) input.value = '';
                         renderAllLists();
                     } else {
-                        webui.alert('Global variable already exists', 'warning');
+                        actionNote(btnAddGlob, 'Global variable already exists', 'warning');
                     }
                     return;
                 }
@@ -555,7 +618,8 @@
     function openDrawer(target) {
         const el = typeof target === 'string' ? document.querySelector(target) : target;
         if (!el) {
-            webui.alert('Drawer not found!');
+            // The app's own setup is wrong, and nothing on screen is near enough to say it by.
+            appAlert('Drawer not found!');
             return;
         }
         showTool(el, getHeaderContent(), getBodyContent(el));

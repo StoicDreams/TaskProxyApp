@@ -98,7 +98,7 @@ pub(crate) struct PowerShellStatus {
 }
 
 /// Find PowerShell, remembering a positive result because each check starts a new process.
-fn resolve_pwsh() -> (bool, String) {
+pub(crate) fn resolve_pwsh() -> (bool, String) {
     if let Ok(cached) = PWSH_EXECUTABLE.lock()
         && let Some(executable) = cached.as_ref()
     {

@@ -29,6 +29,10 @@
 <webui-content slot="content" nodetach class="settings-performance">
 <app-script-performance></app-script-performance>
 </webui-content>
+<webui-button align="left" slot="tabs" start-icon="robot" class="settings-tab-ai">AI</webui-button>
+<webui-content slot="content" nodetach class="settings-ai">
+<app-ai-settings></app-ai-settings>
+</webui-content>
 <webui-button align="left" slot="tabs" start-icon="exclamation" theme="danger" class="settings-tab-danger">Danger</webui-button>
 <webui-content slot="content" nodetach class="settings-danger">
 <app-project-remove></app-project-remove>

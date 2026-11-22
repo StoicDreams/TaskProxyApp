@@ -19,7 +19,7 @@
         removeProject() {
             const currentProject = webui.getData('app-current-project');
             if (!currentProject || !currentProject.value) {
-                webui.alert('No project is currently selected.', 'warning');
+                actionNote(this._button, 'No project is currently selected.', 'warning');
                 return;
             }
             webui.dialog({
@@ -31,9 +31,12 @@
                 confirm: 'Remove',
                 cancel: 'Cancel',
                 onconfirm: async (data, content) => {
-                    let result = await webui.proxy.removeProject(currentProject.value, msg => content.alert(msg));
+                    // The dialog's alert shows HTML, and errors can name the project's files. A list that couldn't be
+                    // reloaded after the project was removed is said in the app's alerts, as the dialog closes.
+                    let result = await webui.proxy.removeProject(currentProject.value, msg => content.alert(webui.escapeForHTML(`${msg}`), 'danger'), msg => appAlert(msg, 'warning'));
                     if (result) {
-                        webui.alert(result, 'success');
+                        // The dialog closes and the project's screen goes, so this is said in the app's alerts.
+                        appAlert(result, 'success');
                         webui.setData('app-current-project', null);
                         return true;
                     }

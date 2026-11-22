@@ -76,3 +76,11 @@ test('global variables are not copied into page data at startup, where they woul
     await expect.poll(() => page.evaluate(() => webui.getNestedData('shared', window.appData))).toBeUndefined();
     await expect.poll(() => page.evaluate(() => webui.getData('global.shared'))).toBe('global');
 });
+test('an AI setting saves to a project whose data has never held anything', async ({ page }) => {
+    await openApp(page);
+    await page.evaluate(() => {
+        delete webui.projectData.data;
+        webui.proxy.ai.setScope('project', 'instructions', 'git', 'Project git');
+    });
+    await expect.poll(() => page.evaluate(() => webui.projectData.data?._ai?.instructions?.git)).toBe('Project git');
+});

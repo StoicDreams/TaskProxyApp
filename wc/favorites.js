@@ -108,7 +108,8 @@
         },
         build() {
             const t = this;
-            t._bar = el('div', { class: 'fav-bar' });
+            // What running an icon said goes on a line of its own after the bar, by the icon that ran it.
+            t._bar = el('div', { class: 'fav-bar', 'data-action-row': '' });
             t._edit = el('button', { type: 'button', class: 'fav-edit', title: 'Manage favorite scripts', 'aria-label': 'Manage favorite scripts' });
             t._edit.appendChild(el('webui-icon', { icon: 'pencil', 'aria-hidden': 'true' }));
             t._edit.addEventListener('click', () => t.setMode(t.getAttribute('mode') === 'manage' ? 'bar' : 'manage'));
@@ -127,17 +128,27 @@
         setMode(mode) {
             const t = this;
             t.setAttribute('mode', mode);
+            // What was said in another mode is about what was on screen then.
+            clearActionNote(t._head);
+            t.clearBarNote();
             t._edit.setAttribute('aria-pressed', mode === 'manage' ? 'true' : 'false');
             t._more.setAttribute('aria-expanded', mode === 'all' ? 'true' : 'false');
             t._more.title = mode === 'all' ? 'Show one row' : 'Show every favorite';
             if (mode === 'manage' && !t._chosen) t._chosen = allFavorites()[0]?.id || null;
             t.render();
         },
+        /** Clears what running an icon on the bar said. */
+        clearBarNote() {
+            clearActionNote(this._edit);
+        },
         render() {
             const t = this;
             if (!t._bar) return;
             const mode = t.getAttribute('mode') || 'bar';
             const project = openProject();
+            // What an icon said is about the project it ran from.
+            if (t._project !== undefined && normalize(t._project) !== normalize(project)) t.clearBarNote();
+            t._project = project;
             const shown = allFavorites().filter(favorite => isShown(favorite, project));
             t._icons.replaceChildren(...shown.map(favorite => t.iconButton(favorite)));
             t._empty.hidden = shown.length > 0;
@@ -152,7 +163,7 @@
             const tip = favorite.preview ? `${name}: ${favorite.preview}` : name;
             const btn = el('button', { type: 'button', class: 'fav-icon', 'data-id': favorite.id, 'aria-label': tip });
             btn.appendChild(iconFor(favorite));
-            btn.addEventListener('click', () => t.run(favorite.id));
+            btn.addEventListener('click', () => t.run(favorite.id, btn));
             // The script may have changed since it was added, so its tooltip is read again as the pointer reaches it.
             btn.addEventListener('mouseenter', async () => {
                 const text = await webui.proxy.favorites.script(favorite.project, favorite.source);
@@ -186,11 +197,18 @@
             const list = allFavorites().map(favorite => favorite.id === id ? { ...favorite, ...changes } : favorite);
             saveFavorites(list);
         },
-        /** Runs a favorite in its project, asking first when it is the open project and it is not trusted yet. */
-        async run(id) {
+        /**
+         * Runs a favorite in its project, asking first when it is the open project and it is not trusted yet. Why it
+         * couldn't run is said by `trigger`, the Run button or the bar's icon pressed, or in the app's alerts when
+         * that is no longer on screen.
+         */
+        async run(id, trigger = null) {
             const favorite = allFavorites().find(item => item.id === id);
             if (!favorite) return;
-            const text = await webui.proxy.favorites.script(favorite.project, favorite.source, err => webui.alert(webui.escapeForHTML(`${err}`), 'warning'));
+            clearActionNote(trigger);
+            // actionNote says it in the app's alerts when the button is gone, as after the bar is drawn again.
+            const problem = err => actionNote(trigger, `${err}`, 'warning');
+            const text = await webui.proxy.favorites.script(favorite.project, favorite.source, problem);
             if (typeof text !== 'string') return;
             if (normalize(favorite.project) === normalize(openProject()) && !await webui.proxy.confirmProjectScript(text)) return;
             // The page's values for what the script uses, when the favorite may use the page's data. Rust adds the
@@ -207,7 +225,7 @@
             const run = await webui.proxy.favorites.run({
                 id: favorite.id, name: favorite.name || '', project: favorite.project, source: favorite.source,
                 params: favorite.params || [], scopes: favorite.scopes || {}, pageValues,
-            }, err => webui.alert(webui.escapeForHTML(`${err}`), 'warning'));
+            }, problem);
             if (!run) return;
             webui.proxy.terminalHelpers.applyRun(run);
             document.querySelector('app-terminals')?.openDrawer({ run: true, terminalId: run.id, projectId: run.projectId });
@@ -221,6 +239,8 @@
                 head.appendChild(el('h3', {}, 'Favorite Scripts'));
                 const add = button('Add Script', 'primary', 'plus', { class: 'fav-add' });
                 add.addEventListener('click', () => {
+                    // What adding the last favorite said is about the one shown before.
+                    clearActionNote(t._head);
                     t._chosen = 'add';
                     t.renderManage();
                     t._split.showPane?.('end');
@@ -228,6 +248,9 @@
                 const done = button('Done', 'secondary', 'check', { class: 'fav-done' });
                 done.addEventListener('click', () => t.setMode('bar'));
                 head.append(add, done);
+                // What adding a favorite did is said under these buttons, since the panes below are drawn again.
+                head.setAttribute('data-action-row', '');
+                t._head = head;
                 t._split = el('webui-split-panes', { class: 'fav-split', min: '240', ratio: '0.3', show: 'end', 'start-label': 'Favorites', 'end-label': 'Details' });
                 t._list = el('webui-reorder', { slot: 'start', class: 'fav-list', role: 'listbox', 'aria-label': 'Favorite scripts', items: ':scope > .fav-row', handle: '.fav-row' });
                 t._list.addEventListener('reorder', () => t.saveOrder([...t._list.querySelectorAll(':scope > .fav-row')].map(row => row.dataset.id)));
@@ -243,6 +266,7 @@
                 text.appendChild(el('span', { class: 'fav-muted' }, favorite.projects?.length ? `In ${favorite.projects.map(projectName).join(', ')}` : 'In every project'));
                 row.appendChild(text);
                 row.addEventListener('click', () => {
+                    clearActionNote(t._head);
                     t._chosen = favorite.id;
                     t.renderManage();
                     t._split.showPane?.('end');
@@ -281,8 +305,12 @@
             }, block.label || `Script ${index + 1}`, block.text), { 'data-block': index })));
             box.appendChild(el('h5', {}, 'Script files'));
             if (!found.files.length) box.appendChild(el('p', { class: 'fav-muted' }, 'This project has no .ps1 files.'));
-            found.files.forEach(path => box.appendChild(choice(path, '', async () => {
-                const text = await webui.proxy.favorites.script(found.project, { kind: 'file', path }, err => webui.alert(webui.escapeForHTML(`${err}`), 'warning'));
+            // Why a file couldn't be added is said under the files, not under the whole list.
+            const files = el('div', { class: 'fav-file-choices', 'data-action-row': '' });
+            box.appendChild(files);
+            found.files.forEach(path => files.appendChild(choice(path, '', async ev => {
+                const picked = ev.currentTarget;
+                const text = await webui.proxy.favorites.script(found.project, { kind: 'file', path }, err => actionNote(picked, `${err}`, 'warning'));
                 if (typeof text === 'string') t.addFavorite(found.project, { kind: 'file', path }, path.split('/').pop().replace(/\.ps1$/i, ''), text);
             }, { 'data-file': path })));
             t._detail.replaceChildren(box);
@@ -298,7 +326,7 @@
             saveFavorites([...allFavorites(), favorite]);
             t._chosen = favorite.id;
             t.renderManage();
-            webui.alert(`Added ${webui.escapeForHTML(name)} to your favorites.`, 'success');
+            actionNote(t._head, `Added ${name} to your favorites.`, 'success');
         },
         async renderEditor(favorite) {
             const t = this;
@@ -319,7 +347,7 @@
             const pick = button('Icon or Emoji', 'secondary', 'icons', { class: 'fav-pick-icon' });
             pick.addEventListener('click', () => t.pickIcon(favorite));
             const image = button('Project Image', 'secondary', 'image', { class: 'fav-pick-image' });
-            image.addEventListener('click', () => t.pickImage(favorite));
+            image.addEventListener('click', () => t.pickImage(favorite, image));
             iconRow.append(el('strong', {}, 'Icon'), preview, pick, image);
             if (favorite.icon) {
                 const clear = button('Default', 'secondary', 'xmark', { class: 'fav-clear-icon' });
@@ -381,12 +409,14 @@
             // Actions
             const actions = el('div', { class: 'fav-actions' });
             const run = button('Run', 'success', 'play', { class: 'fav-run' });
-            run.addEventListener('click', () => t.run(favorite.id));
+            run.addEventListener('click', () => t.run(favorite.id, run));
             const remove = button('Remove', 'danger', 'trash', { class: 'fav-remove' });
             remove.addEventListener('click', () => {
                 webui.dialog.confirm(`Remove ${webui.escapeForHTML(favorite.name || 'this favorite')} from your favorites? The script itself stays as it is.`, () => {
                     saveFavorites(allFavorites().filter(item => item.id !== favorite.id));
                     t._chosen = null;
+                    // What it said on the bar may be about the favorite now gone.
+                    t.clearBarNote();
                     return true;
                 });
             });
@@ -464,13 +494,14 @@
             }).catch(() => { });
         },
         /** One of the project's images, or SVGs, chosen as a project's icon is (services/project_icons.rs). */
-        async pickImage(favorite) {
+        async pickImage(favorite, trigger) {
             const t = this;
-            const found = await webui.proxy.projectIcons.images(err => webui.alert(webui.escapeForHTML(`${err}`), 'warning'), favorite.project);
+            clearActionNote(trigger);
+            const found = await webui.proxy.projectIcons.images(err => actionNote(trigger, `${err}`, 'warning'), favorite.project);
             if (!found) return;
             const images = found.images || [];
             if (!images.length) {
-                webui.alert(`${webui.escapeForHTML(projectName(favorite.project))} has no images small enough to use as an icon.`, 'info');
+                actionNote(trigger, `${projectName(favorite.project)} has no images small enough to use as an icon.`, 'info');
                 return;
             }
             const grid = el('div', { class: 'fav-image-grid' });

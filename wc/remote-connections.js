@@ -64,7 +64,8 @@
         listening = true;
         // whenProxyReady waits however long the app takes to start, where webui.wait gives up after about 10 seconds.
         whenProxyReady().then(proxy => proxy.remoteConnections.onChanged(({ notice }) => {
-            if (notice?.text) webui.alert(webui.escapeHtml(notice.text), notice.severity || 'info');
+            // A notice from the remote service arrives on its own, not from a button, so it goes in the app's alerts.
+            if (notice?.text) appAlert(notice.text, notice.severity || 'info');
             panels.forEach(panel => panel.load());
         }));
     }

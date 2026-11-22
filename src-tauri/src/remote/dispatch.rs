@@ -70,6 +70,11 @@ pub(crate) const DESKTOP_ONLY: &[&str] = &[
     "plugin_inspect_folder",
     "plugin_remove",
     "plugin_set_enabled",
+    // Where AI drafts send a project's text, and the keys to do it, are set on the computer only. Testing a provider
+    // and refreshing its models are part of setting it up.
+    "ai_save_settings",
+    "ai_models",
+    "ai_test",
 ];
 
 /// App data a browser may never change: which projects may run scripts.
@@ -131,6 +136,8 @@ remote_commands! {
     View get_project_file => projects::get_project_file(app.state(), a.get("filePath")?).await;
     View get_project_file_size => projects::get_project_file_size(app.state(), a.get("filePath")?).await;
     View import_page_file => crate::services::page_import::import_page_file(app.state(), a.get("file")?).await;
+    View ai_settings => crate::services::ai::ai_settings(app.clone()).await.map(crate::services::ai::for_browser);
+    View plan_page_folder => crate::services::page_import::plan_page_folder(app.state(), a.get("folder")?).await;
     View search_project_files => projects::search_project_files(app.state(), a.get("filter")?, a.get("display")?).await;
     View get_scripts => script_controller::get_scripts(app.state()).await;
     View get_runs => runs::get_runs(app.state());
@@ -188,8 +195,13 @@ remote_commands! {
         app.state(), app.state(), a.get("project")?, a.get("icon")?,
     ).await;
     Work save_project_file => projects::save_project_file(app.state(), a.get("filePath")?, a.get("contents")?).await;
+    // AI drafts read the project and send it to the provider set up on the computer. A command provider runs a program
+    // in the project's folder, which can do anything a script there can, so these stay at Work level.
+    Work ai_write => crate::services::ai::ai_write(app.clone(), app.state(), a.get("request")?).await;
+    Work ai_review => crate::services::ai::ai_review(app.clone(), app.state(), a.get("request")?).await;
+    Work ai_cancel => crate::services::ai::ai_cancel(a.get("requestId")?).await;
     Work import_page_folder => crate::services::page_import::import_page_folder(
-        app.state(), a.get("folder")?, a.get("parent")?, a.get("navigation")?,
+        app.state(), a.get("folder")?, a.get("parent")?, a.get("navigation")?, a.get("overrides")?,
     ).await;
     Work rename_project => projects::rename_project(
         app.clone(), app.state(), &a.get::<String>("path")?, &a.get::<String>("newName")?,
@@ -542,6 +554,12 @@ mod tests {
     /// Commands that never return a variable's value. Page script previews and runs show the masked copy. Plugin
     /// settings never send their secrets. A script's output is what the script printed, as on the desktop.
     const NO_VALUES: &[&str] = &[
+        // AI settings hold no variable, and a browser gets only each provider's name and models, never a key,
+        // address or command. Drafts are written from the project's files.
+        "ai_settings",
+        "ai_write",
+        "ai_review",
+        "ai_cancel",
         // A favorite's script is read as its file holds it, and runs as page scripts do, showing the masked copy.
         "favorite_candidates",
         "favorite_script",
@@ -554,6 +572,7 @@ mod tests {
         "remote_browser_remove",
         "import_page_file",
         "import_page_folder",
+        "plan_page_folder",
         "get_version",
         "has_securitykey",
         "get_projects",

@@ -1,5 +1,5 @@
-import { test, expect, openPage, openApp, calls, onCommand, dialogButton, openDialog } from '../support/app.mjs';
-import { alertPopup } from '../../support/wait.mjs';
+import { test, expect, openPage, openApp, calls, onCommand, dialogButton, openDialog, goToPage } from '../support/app.mjs';
+import { actionNote, alertPopup } from '../../support/wait.mjs';
 
 const save = page => page.locator('app-page-handler webui-button[title="Save Page"]').first().click();
 const saved = async page => {
@@ -97,6 +97,36 @@ test.describe('saving', () => {
         expect(contents).toContain('data-page-title="New &quot;Title&quot;"');
         expect(contents).toContain('# Heading');
     });
+    test('a title that could not be saved says why in the dialog, which stays open, and the title is kept', async ({ page }) => {
+        await openPage(page, '<webui-data data-page-title="Old" data-page-subtitle=""></webui-data>\n\n# Heading');
+        const title = page.locator('header h1');
+        await expect(title).toHaveText('Old');
+        await page.evaluate(() => { window.__backend.handlers.save_project_file = () => { throw 'The disk is full.'; }; });
+        await title.click();
+        await page.locator('webui-input-text[name="pageTitle"] input').fill('New');
+        await dialogButton(page, 'Save').click();
+        await expect(openDialog(page)).toContainText('The disk is full.');
+        await expect(title).toHaveText('Old');
+    });
+    test('a title saved after its page was left still goes to that page, says so, and the dialog closes', async ({ page }) => {
+        await openPage(page, '<webui-data data-page-title="Old" data-page-subtitle=""></webui-data>\n\n# Heading', { pageId: 'first', files: { '.taskproxy/pages/second.md': '# Second' } });
+        await page.locator('header h1').click();
+        await page.locator('webui-input-text[name="pageTitle"] input').fill('New');
+        await page.evaluate(() => {
+            const original = window.__backend.handlers.save_project_file;
+            const held = new Promise(resolve => { window.__releaseSave = resolve; });
+            window.__backend.handlers.save_project_file = async args => { await held; return original(args); };
+        });
+        await dialogButton(page, 'Save').click();
+        await expect.poll(() => calls(page, 'save_project_file')).toHaveLength(1);
+        await goToPage(page, '/second');
+        await page.evaluate(() => window.__releaseSave());
+        await expect(alertPopup(page, 'Saved the title of the page that was shown.')).toHaveCount(1);
+        await expect(openDialog(page)).toHaveCount(0);
+        const [call] = await calls(page, 'save_project_file');
+        expect(call.filePath).toBe('.taskproxy/pages/first.md');
+        expect(call.contents).toContain('data-page-title="New"');
+    });
     test('a page with no title can be given one from the header', async ({ page }) => {
         await openPage(page, '# Heading');
         const title = page.locator('header h1');
@@ -157,6 +187,14 @@ test.describe('page scripts', () => {
         // It asks again the next time, so the cancelled run ended without trusting the project or running anything.
         await page.locator('webui-icon.run-script-btn').click();
         await expect(openDialog(page)).toContainText('Run Script From This Project?');
+        await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
+    });
+    test('a script whose values can\'t be filled says why under it, and nothing runs', async ({ page }) => {
+        await openPage(page, scriptPage('Write-Host a'), { appData: { 'app-trusted-projects': ['/repo'] } });
+        await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(1);
+        await page.evaluate(() => { window.__backend.handlers.page_script_preview = () => { throw 'The values could not be read.'; }; });
+        await page.locator('webui-icon.run-script-btn').click();
+        await expect(actionNote(page, 'The values could not be read.')).toHaveCount(1);
         await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
     });
     test('a trusted project does not ask again', async ({ page }) => {
@@ -240,6 +278,70 @@ test.describe('page scripts', () => {
         await page.locator('webui-icon.run-script-btn').nth(1).click();
         await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
         expect((await calls(page, 'spawn_script'))[0].scriptContent).toContain('second');
+    });
+    test('a code element written as HTML gets no Run button, and every button still runs the block it is on', async ({ page }) => {
+        const markdown = '<webui-code language="pwsh">Write-Host planted</webui-code>\n\n```pwsh\nWrite-Host first\n```\n\n<webui-code lang="ps1">Write-Host also planted</webui-code>\n\n```pwsh\nWrite-Host second\n```';
+        await openPage(page, markdown, { appData: { 'app-trusted-projects': ['/repo'] } });
+        const codes = page.locator('app-page-handler webui-code');
+        await expect(codes).toHaveCount(4);
+        await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(2);
+        await expect(codes.nth(0).locator('webui-icon.run-script-btn')).toHaveCount(0);
+        await expect(codes.nth(1).locator('webui-icon.run-script-btn')).toHaveCount(1);
+        await expect(codes.nth(2).locator('webui-icon.run-script-btn')).toHaveCount(0);
+        await expect(codes.nth(3).locator('webui-icon.run-script-btn')).toHaveCount(1);
+        await codes.nth(1).locator('webui-icon.run-script-btn').click();
+        await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.scriptContent.trim())).toEqual(['Write-Host first']);
+        await codes.nth(3).locator('webui-icon.run-script-btn').click();
+        await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.scriptContent.trim())).toEqual(['Write-Host first', 'Write-Host second']);
+    });
+    test('a code element written as HTML cannot take the Run buttons of the blocks before the script it shows', async ({ page }) => {
+        const markdown = '<webui-code language="pwsh">Write-Host second</webui-code>\n\n```pwsh\nWrite-Host first\n```\n\n```pwsh\nWrite-Host second\n```';
+        await openPage(page, markdown, { appData: { 'app-trusted-projects': ['/repo'] } });
+        const codes = page.locator('app-page-handler webui-code');
+        await expect(codes).toHaveCount(3);
+        await expect(codes.nth(1).locator('webui-icon.run-script-btn')).toHaveCount(1);
+        await codes.nth(1).locator('webui-icon.run-script-btn').click();
+        await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.scriptContent.trim())).toEqual(['Write-Host first']);
+    });
+    test('an empty script block does not hold back the Run buttons of the others', async ({ page }) => {
+        await page.clock.install();
+        await openPage(page, 'Empty\n\n```pwsh\n```\n\nReal\n\n```pwsh\nWrite-Host real\n```', { appData: { 'app-trusted-projects': ['/repo'] } });
+        // The real block is drawn, with its text.
+        await expect.poll(() => page.locator('app-page-handler webui-code').evaluateAll(nodes => {
+            const Code = customElements.get('webui-code');
+            return nodes.filter(el => Code && el instanceof Code && /Write-Host real/.test(`${el.value ?? ''}${el.textContent}`)).length;
+        })).toBe(1);
+        // The page's clock stops a moment ahead of where it is, never behind, since the page's time moves on until
+        // then. A second is far less than giving up on the empty block would take.
+        await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 100);
+        await page.clock.runFor(1000);
+        await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(1);
+        // Running waits a moment before it starts, so time flows again.
+        await page.clock.resume();
+        await page.locator('webui-icon.run-script-btn').click();
+        await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.scriptContent.trim())).toEqual(['Write-Host real']);
+    });
+    test('a block indented under a list item gets a Run button, and runs as written', async ({ page }) => {
+        const script = '    $name = \'a & <b>\'\n    if ($name) {\n        Write-Host $name\n    }';
+        await openPage(page, `1. Set it up\n\n    \`\`\`pwsh\n${script}\n    \`\`\``, { appData: { 'app-trusted-projects': ['/repo'] } });
+        await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(1);
+        await page.locator('webui-icon.run-script-btn').click();
+        await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
+        expect((await calls(page, 'spawn_script'))[0].scriptContent).toContain("if ($name) {\n        Write-Host $name");
+    });
+    test('a script no block shows leaves the other blocks their Run buttons', async ({ page }) => {
+        // An example of a page, shown as markdown, holds a fenced script that is never drawn as a script block.
+        const markdown = '````md\n```pwsh\nWrite-Host example\n```\n````\n\n```pwsh\nWrite-Host real\n```';
+        await openPage(page, markdown, { appData: { 'app-trusted-projects': ['/repo'] } });
+        await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(1);
+        await page.locator('webui-icon.run-script-btn').click();
+        await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.scriptContent.trim())).toEqual(['Write-Host real']);
+    });
+    test('a script with a {VARIABLE} placeholder gets a Run button', async ({ page }) => {
+        await openPage(page, scriptPage("Write-Host '{MY_VAR}'"), { data: { my_var: 'shown' }, variables: ['my_var|text|'], appData: { 'app-trusted-projects': ['/repo'] } });
+        await expect(page.locator('webui-icon.run-script-btn')).toHaveCount(1);
+        await page.locator('webui-icon.run-script-btn').click();
+        await expect.poll(async () => (await calls(page, 'run_page_script')).map(call => call.script.trim())).toEqual(["Write-Host '{MY_VAR}'"]);
     });
     test('variables set by page data apply', async ({ page }) => {
         await openPage(page, '<webui-data data-page-title="T" data-page-subtitle="" data-target="prod"></webui-data>\n\n' + scriptPage("$target = 'dev'"));
@@ -439,6 +541,7 @@ test.describe('importing a markdown file', () => {
         ].join('\n\n'));
         await expect(page.locator('app-page-handler > webui-reorder > app-markdown-segment')).toHaveText([/Existing/, /Body/, /Imported/, /From the file/]);
         await expect(openDialog(page)).toHaveCount(0);
+        await expect(actionNote(page.locator('app-page-handler'), 'Imported the file into this page.')).toHaveCount(1);
     });
 
     test('can add the file before the page\'s content, choosing which file', async ({ page }) => {
@@ -474,10 +577,46 @@ test.describe('importing a markdown file', () => {
         await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
     });
 
+    test('a page that could not be saved says why in the dialog, which stays open', async ({ page }) => {
+        await openPage(page, `${data}\n\n# Existing`, state);
+        await openImport(page);
+        await page.evaluate(() => { window.__backend.handlers.save_project_file = () => { throw 'The disk is full.'; }; });
+        await dialogButton(page, 'Import').click();
+        await expect(openDialog(page)).toContainText('The disk is full.');
+        await expect(page.locator('app-page-handler > webui-reorder > app-markdown-segment')).toHaveText([/Existing/]);
+    });
+
+    test('a page left while it saves still gets the file, says so, and the dialog closes', async ({ page }) => {
+        await openPage(page, `${data}\n\n# Existing`, state);
+        await openImport(page);
+        await page.evaluate(() => {
+            const original = window.__backend.handlers.save_project_file;
+            const held = new Promise(resolve => { window.__releaseSave = resolve; });
+            window.__backend.handlers.save_project_file = async args => { await held; return original(args); };
+        });
+        await dialogButton(page, 'Import').click();
+        await expect.poll(() => calls(page, 'save_project_file')).toHaveLength(1);
+        await goToPage(page, '/');
+        await page.evaluate(() => window.__releaseSave());
+        await expect(alertPopup(page, 'Imported docs/guide.md into the page that was shown.')).toHaveCount(1);
+        await expect(openDialog(page)).toHaveCount(0);
+        await expect.poll(async () => (await calls(page, 'save_project_file'))[0].contents).toContain('From the file');
+    });
+
+    test('why a file could not be imported is shown as text, never as markup', async ({ page }) => {
+        const name = '<img src=q onerror="window.__xss=1">.md';
+        await openPage(page, `${data}\n\n# Existing`, { docs: [name], fileImports: {} });
+        await importButton(page).click();
+        await dialogButton(page, 'Import').click();
+        await expect(openDialog(page).locator('webui-alert')).toContainText(`Import Failed: The project has no file '${name}'.`);
+        await expect(openDialog(page).locator('webui-alert img')).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
+    });
+
     test('a project with no markdown files says so', async ({ page }) => {
         await openPage(page, '# Existing', { docs: [] });
         await importButton(page).click();
-        await expect(alertPopup(page, 'This project has no markdown files to import.')).toHaveCount(1);
+        await expect(actionNote(page, 'This project has no markdown files to import.')).toHaveCount(1);
         await expect(openDialog(page)).toHaveCount(0);
     });
 });
@@ -493,7 +632,7 @@ test.describe('copying the page', () => {
         await segment.locator('#btn-edit').click();
         await segment.locator('webui-input-message textarea').fill('Not saved yet');
         await copyButton(page).click();
-        await expect(alertPopup(page, "Copied this page's markdown.")).toHaveCount(1);
+        await expect(actionNote(page, "Copied this page's markdown.")).toHaveCount(1);
         await expect.poll(() => clipboard(page)).toEqual({ text: md });
         await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
     });
@@ -502,7 +641,7 @@ test.describe('copying the page', () => {
         await openPage(page, '# Existing');
         await page.evaluate(() => { window.__backend.handlers.get_project_file = () => { throw 'Failed to load file: denied'; }; });
         await copyButton(page).click();
-        await expect(alertPopup(page, "This page's file could not be read. Failed to load file: denied")).toHaveCount(1);
+        await expect(actionNote(page, "This page's file could not be read. Failed to load file: denied")).toHaveCount(1);
         await expect.poll(() => clipboard(page)).toBeUndefined();
     });
 });

@@ -57,22 +57,24 @@
             </webui-flex>`,
             confirm: 'Save',
             cancel: 'Cancel',
-            onconfirm: (data) => {
+            onconfirm: async (data, content) => {
                 let form = Object.fromEntries(data);
+                const dataComponent = `<webui-data data-page-title="${webui.escapeForHTML(form.pageTitle || '')}" data-page-subtitle="${webui.escapeForHTML(form.pageSubtitle || '')}"></webui-data>`;
+                const file = myFile;
+                if (file) {
+                    // Why it couldn't be saved is said in the dialog, which stays open, and the title is left as it was.
+                    const saved = await webui.proxy.saveProjectFile(file, [dataComponent, ...currentSegmentsMarkdown()].join('\n\n').trim(), msg => content.alert(webui.escapeForHTML(`${msg}`), 'danger'));
+                    if (!saved) return false;
+                    // Saved to the page it was opened on, so another page shown since keeps its own title. The
+                    // dialog closes and that page's title is gone, so nothing is left near to say it by.
+                    if (myFile !== file) {
+                        appAlert('Saved the title of the page that was shown.', 'success');
+                        return true;
+                    }
+                }
                 webui.setData('page-title', form.pageTitle || '');
                 webui.setData('page-subtitle', form.pageSubtitle || '');
-                pageDataComponent = `<webui-data data-page-title="${webui.escapeForHTML(form.pageTitle || '')}" data-page-subtitle="${webui.escapeForHTML(form.pageSubtitle || '')}"></webui-data>`;
-                if (myFile) {
-                    let md = [pageDataComponent];
-                    comp.querySelectorAll('app-markdown-segment').forEach(segment => {
-                        if (segment.parentNode !== segmentList) return;
-                        let markdown = segment.getMarkdown();
-                        if (markdown) {
-                            md.push(markdown);
-                        }
-                    });
-                    webui.proxy.saveProjectFile(myFile, md.join('\n\n').trim());
-                }
+                pageDataComponent = dataComponent;
                 return true;
             }
         });
@@ -112,11 +114,12 @@
      * Adds one of the project's markdown files to this page and saves it (services/page_import.rs). The file is only
      * read. Before or after only matters when the page has content, so it can't be chosen on an empty page.
      */
-    function openImport() {
+    function openImport(button) {
         if (!myFile) return;
         const docs = webui.projectData?.docs || [];
+        clearActionNote(button);
         if (!docs.length) {
-            webui.alert('This project has no markdown files to import.', 'warning');
+            actionNote(button, 'This project has no markdown files to import.', 'warning');
             return;
         }
         const hasContent = currentSegmentsMarkdown().length > 0;
@@ -136,36 +139,52 @@
                 const file = content.querySelector('.import-file')?.value;
                 if (!file) return false;
                 const before = content.querySelector('.import-position')?.value === PREPEND;
-                const imported = await webui.proxy.importPageFile(file, msg => content.alert(msg));
+                // The dialog's alert shows HTML, and errors can name the project's files.
+                const problem = msg => content.alert(webui.escapeForHTML(`${msg}`), 'danger');
+                const imported = await webui.proxy.importPageFile(file, problem);
                 if (imported === undefined) return false;
-                return await addToPage(imported, before);
+                return await addToPage(imported, before, problem, button, file);
             }
         });
     }
-    /** Puts imported markdown before or after the page's segments, saves the page, and shows it. */
-    async function addToPage(imported, before) {
+    /**
+     * Puts imported markdown before or after the page's segments, saves the page, and shows it. Why it couldn't be
+     * saved goes to `problem`, the import dialog's alert, and the dialog stays open. That it was imported is said by
+     * `button`, the Import button, or, when another page is shown by the time it is saved, in the app's alerts, naming
+     * `name`, the file imported.
+     */
+    async function addToPage(imported, before, problem, button, name) {
         const file = myFile;
         if (!file) return false;
         const current = currentSegmentsMarkdown();
         const body = imported ? (before ? [imported, ...current] : [...current, imported]) : current;
         const md = [pageDataComponent, ...body].filter(Boolean).join('\n\n').trim();
-        const saved = await webui.proxy.saveProjectFile(file, md);
-        if (!saved || myFile !== file) return false;
+        const saved = await webui.proxy.saveProjectFile(file, md, problem);
+        if (!saved) return false;
+        if (myFile !== file) {
+            // Saved, so the dialog closes, but the page it went into is no longer shown, nor its Import button.
+            appAlert(`Imported ${name || 'the file'} into the page that was shown.`, 'success');
+            return true;
+        }
         setMarkdown(md);
-        webui.alert('Imported the file into this page.', 'success');
+        // The page is drawn again, keeping its top bar, so the Import button is still there to say it by.
+        actionNote(button, 'Imported the file into this page.', 'success');
         return true;
     }
     /** Copies the page's markdown file as it is saved, not the segments being edited. */
-    async function copyPageFile() {
+    async function copyPageFile(button) {
         const file = myFile;
         if (!file) return;
+        clearActionNote(button);
         let error = null;
         const md = await webui.proxy.getProjectFile(file, err => { error = `${err}`; });
         if (error && !error.includes('File not found')) {
-            webui.alert(`This page's file could not be read. ${error}`, 'danger');
+            actionNote(button, `This page's file could not be read. ${error}`, 'danger');
             return;
         }
-        if (await webui.proxy.copyText(md || '')) webui.alert("Copied this page's markdown.", 'success');
+        if (await webui.proxy.copyText(md || '', err => actionNote(button, `This page's markdown could not be copied: ${err}`, 'danger'))) {
+            actionNote(button, "Copied this page's markdown.", 'success');
+        }
     }
     function setupBar(isEnd) {
         let wrap = webui.create('webui-flex', { column: true, gap: 0 });
@@ -192,10 +211,9 @@
                     md.push(markdown);
                 }
             });
-            let result = await webui.proxy.saveProjectFile(myFile, md.join('\n\n').trim());
-            if (result) {
-                webui.alert(result, 'success');
-            }
+            clearActionNote(btnSave);
+            let result = await webui.proxy.saveProjectFile(myFile, md.join('\n\n').trim(), err => actionNote(btnSave, err, 'danger'));
+            if (result) actionNote(btnSave, result, 'success');
         });
         let btnAdd = webui.create('webui-button', {
             html: 'Add', title: 'Add Segment', 'start-icon': 'star', theme: 'secondary'
@@ -214,12 +232,12 @@
             let btnImport = webui.create('webui-button', {
                 html: 'Import', title: 'Import a markdown file into this page', 'start-icon': 'download', theme: 'secondary', class: 'page-import'
             });
-            btnImport.addEventListener('click', () => openImport());
+            btnImport.addEventListener('click', () => openImport(btnImport));
             bar.appendChild(btnImport);
             let btnCopy = webui.create('webui-button', {
                 html: 'Copy', title: "Copy this page's markdown file", 'start-icon': 'copy', theme: 'secondary', class: 'page-copy'
             });
-            btnCopy.addEventListener('click', () => copyPageFile());
+            btnCopy.addEventListener('click', () => copyPageFile(btnCopy));
             bar.appendChild(btnCopy);
         }
         bar.appendChild(webui.create('webui-flex', { 'grow': true }));
@@ -359,6 +377,8 @@
         let scriptIndex = 1;
         while ((scriptMatch = scriptRegex.exec(fullMd)) !== null) {
             const scriptContent = scriptMatch[1];
+            // An empty block has nothing to run, and its element never shows text to wait for.
+            if (!sameScript(scriptContent)) continue;
             let vars = [];
             let varMatch;
             while ((varMatch = varRegex.exec(scriptContent)) !== null) {
@@ -450,11 +470,17 @@
             setTimeout(() => syncBoundElements(attempt + 1, subscribedKey), 50);
         }
     }
-    function applyScriptUI(attempt = 0) {
-        if (attempt > 50) return;
-        let codes = findAllWebuiCodes();
-        if (codes.length < pageScripts.length) {
-            setTimeout(() => applyScriptUI(attempt + 1), 100);
+    /**
+     * Gives the page's script blocks their previews and Run buttons. While blocks are still being drawn it tries again,
+     * and once they are drawn, or it has waited long enough, the blocks that match a script get them, even when another
+     * block matches none.
+     */
+    let scriptUIRound = 0;
+    function applyScriptUI(attempt = 0, round = ++scriptUIRound) {
+        // A newer call has started its own tries, so this one stops.
+        if (round !== scriptUIRound) return;
+        if (findAllWebuiCodes().length < pageScripts.length && scriptBlocksPending() && attempt < 50) {
+            setTimeout(() => applyScriptUI(attempt + 1, round), 100);
             return;
         }
         updateScriptPreviews();
@@ -473,35 +499,83 @@
         return values;
     }
     const scriptLanguages = ['powershell', 'pwsh', 'ps1'];
-    function findAllWebuiCodes() {
-        let codes = [];
+    /**
+     * A script's text as a code block shows it, to compare one with the other. Drawing a block changes only the
+     * whitespace at the ends of its lines: tabs become spaces, the block is trimmed, and the lines after the first lose
+     * the indentation they share, as a block indented under a list item does. So this does the same to both, and
+     * anything else that differs, differs.
+     */
+    function sameScript(text) {
+        const lines = `${text ?? ''}`.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n').map(line => line.trimEnd());
+        while (lines.length && !lines[0]) lines.shift();
+        while (lines.length && !lines[lines.length - 1]) lines.pop();
+        if (!lines.length) return '';
+        const rest = lines.slice(1);
+        const indent = Math.min(...rest.filter(Boolean).map(line => line.match(/^ */)[0].length));
+        return [lines[0].trimStart(), ...rest.map(line => Number.isFinite(indent) ? line.substring(indent) : line)].join('\n');
+    }
+    /**
+     * A fenced script as its block shows it. A segment is drawn with its {VARIABLE} placeholders filled in, so the
+     * block shows their values. Rust runs the script as written, which the preview then shows, so that form matches too.
+     */
+    const shownScripts = meta => [sameScript(webui.replaceAppData(meta.content)), sameScript(meta.content)];
+    /** The page's code elements in a script language. */
+    function scriptCodeElements() {
+        const list = [];
         segments.forEach(seg => {
             webui.querySelectorAll('webui-code', seg).forEach(el => {
-                // Scripts are only collected from PowerShell blocks, so only those line up with them.
                 // The markdown parser writes language, and wrote lang before Web UI changed it.
                 const language = el.getAttribute('language') || el.getAttribute('lang') || '';
-                if (scriptLanguages.includes(language.toLowerCase())) {
-                    codes.push(el);
-                }
+                if (scriptLanguages.includes(language.toLowerCase())) list.push(el);
             });
         });
-        return codes;
+        return list;
+    }
+    /** The text a code element shows, read once, before a preview fills in its values. Nothing is kept while it is empty. */
+    function codeText(el) {
+        if (el._scriptText) return el._scriptText;
+        const text = sameScript(typeof el.value === 'string' ? el.value : el.textContent);
+        if (text) el._scriptText = text;
+        return text;
+    }
+    /** Whether the page's script blocks are still being drawn: fewer than its scripts, not upgraded, or with no text yet. */
+    function scriptBlocksPending() {
+        const codes = scriptCodeElements();
+        const Code = customElements.get('webui-code');
+        return codes.length < pageScripts.length || codes.some(el => !Code || !(el instanceof Code) || !codeText(el));
+    }
+    /**
+     * Each PowerShell code element on the page with the script it shows, as `{codeEl, scriptMeta}`. Scripts are
+     * collected from the page's fenced blocks, and a page can also hold code elements written as HTML, so each element
+     * is matched to the first script with the same text no other element has taken, never by its place: a Run button
+     * only ever runs the script its block shows, an element with no script has none, and an element written as HTML
+     * can't take the scripts of the blocks before it.
+     */
+    function findAllWebuiCodes() {
+        const found = [];
+        const shown = pageScripts.map(shownScripts);
+        const used = new Set();
+        scriptCodeElements().forEach(el => {
+            const text = codeText(el);
+            if (!text) return;
+            const at = shown.findIndex((forms, index) => !used.has(index) && forms.includes(text));
+            if (at < 0) return;
+            used.add(at);
+            found.push({ codeEl: el, scriptMeta: pageScripts[at] });
+        });
+        return found;
     }
     /** Shows each script with its values filled in and masked, as Rust fills them. */
     function updateScriptPreviews() {
         const round = ++previewRound;
-        findAllWebuiCodes().forEach(async (codeEl, index) => {
-            const scriptMeta = pageScripts[index];
-            if (!scriptMeta) return;
+        findAllWebuiCodes().forEach(async ({ codeEl, scriptMeta }) => {
             const masked = await webui.proxy.pageScriptPreview(scriptMeta.content, pageValuesFor(scriptMeta), () => { });
             if (round === previewRound && typeof masked === 'string') codeEl.value = masked;
         });
     }
     function injectPlayButtons() {
         let codes = findAllWebuiCodes();
-        codes.forEach((codeEl, index) => {
-            let scriptMeta = pageScripts[index];
-            if (!scriptMeta) return;
+        codes.forEach(({ codeEl, scriptMeta }) => {
             customElements.whenDefined('webui-code').then(async () => {
                 let root = codeEl.shadowRoot || codeEl;
                 const inject = () => {
@@ -515,7 +589,7 @@
                         style: 'cursor: pointer; margin-left: 8px;',
                         title: 'Run Script'
                     });
-                    playBtn.addEventListener('click', () => runPageScript(scriptMeta));
+                    playBtn.addEventListener('click', () => runPageScript(scriptMeta, codeEl));
                     makeButton(playBtn, `Run script: ${scriptMeta.lastText || `#${scriptMeta.scriptIndex}`}`);
                     if (copyBtn) {
                         copyBtn.after(playBtn);
@@ -531,9 +605,13 @@
             });
         });
     }
-    async function runPageScript(scriptMeta) {
+    /** Runs a page's script. Why it couldn't run is said under its code block, `codeEl`. */
+    async function runPageScript(scriptMeta, codeEl) {
+        // Its own row, so its alert goes straight after this block, not after the element holding every block.
+        codeEl?.setAttribute('data-action-row', '');
+        clearActionNote(codeEl);
         const pageValues = pageValuesFor(scriptMeta);
-        const maskedContent = await webui.proxy.pageScriptPreview(scriptMeta.content, pageValues);
+        const maskedContent = await webui.proxy.pageScriptPreview(scriptMeta.content, pageValues, err => actionNote(codeEl, err, 'danger'));
         if (typeof maskedContent !== 'string') return;
         if (!await webui.proxy.confirmProjectScript(maskedContent)) return;
         let projProject = webui.getData('app-current-project');
@@ -557,7 +635,7 @@
         webui.proxy.terminalHelpers.ensureListeners();
         await new Promise(r => setTimeout(r, 200));
         // Rust fills in the values and runs it, showing the masked copy in the Terminal Manager.
-        const run = await webui.proxy.runPageScript(totalName, scriptMeta.content, pageValues, err => webui.alert(err, 'warning'));
+        const run = await webui.proxy.runPageScript(totalName, scriptMeta.content, pageValues, err => actionNote(codeEl, err, 'warning'));
         if (!run) return;
         webui.proxy.terminalHelpers.applyRun(run);
         // Opened on a running view, so the script that just started is listed.

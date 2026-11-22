@@ -37,4 +37,12 @@
         - **Scoping**: Choose **Project Level** to apply the token only to the current project, or **Global Level** to use it across all Task Proxy projects.
         </webui-page-segment>
     </webui-content>
+    <webui-button slot="tabs">AI</webui-button>
+    <webui-content slot="content" nodetach>
+        <webui-page-segment>
+        - **Write with AI**: With AI on for Git commit messages (Settings, **AI**), **Write with AI** under the message writes it from the files you include, following your instructions. Change it as you like before committing.
+        - **Review**: With AI on for code reviews, a **Review** tab sits beside Commit. Review the changes included for the next commit, or the entire project, and add what to look for this time. A large review is done in parts and joined into one report. It keeps going while you work on other pages or projects, and the tab shows it still working when you come back.
+        - **The report**: Kept with the project, through other pages, projects, and restarts, until you **Clear** it or review that repo again. Copy it, or **Save as Page** to keep it in the project's navigation under **Reviews**.
+        </webui-page-segment>
+    </webui-content>
 </webui-tabs>

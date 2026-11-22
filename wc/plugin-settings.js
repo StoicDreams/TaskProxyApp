@@ -37,7 +37,12 @@
         },
         connected() {
             this.classList.add('plugin-ui', 'plugin-settings');
+            // Settings belong to the open project, so another project's are shown when it opens.
+            this.dataset.subscribe = 'app-current-project:projectChanged';
             this.load();
+        },
+        projectChanged() {
+            if (this.isConnected) this.load();
         },
         disconnected() {
             this._load++;
@@ -51,7 +56,52 @@
             await whenProxyReady();
             const view = await webui.proxy.plugins.settings(id);
             if (load !== t._load || !view) return;
+            // What was said about another plugin's settings, or another project's, goes when this shows different ones.
+            const noteFor = t.noteKey();
+            if (t._noteFor !== noteFor) {
+                setNote(t.note());
+                t._noteAt = null;
+            }
+            t._noteFor = noteFor;
             t.render(id, view);
+        },
+        /** Which settings are shown: the open project's, for this plugin. */
+        noteKey() {
+            return `${webui.getData('app-current-project')?.value ?? ''}\n${this.getAttribute('plugin') ?? ''}`;
+        },
+        /**
+         * The alert that says what saving or choosing settings did. It is kept as the settings are drawn again after
+         * a change, so what it says stays, and sits after the row of the button that acted (`data-note-at`), or at
+         * the top when that button is gone.
+         */
+        note() {
+            return this._note ??= webui.create('webui-alert', { class: 'plugin-settings-note' });
+        },
+        /** Puts the alert after the row of the button that acted, or at the top. */
+        placeNote() {
+            const note = this.note();
+            const row = this._noteAt && this.querySelector(`[data-note-at="${this._noteAt}"]`);
+            if (row) {
+                if (row.nextElementSibling !== note) row.after(note);
+            } else if (this.firstElementChild !== note) this.prepend(note);
+        },
+        /** Says how an action went, by the row named `at`. */
+        say(text, variant, at) {
+            if (at !== undefined) this._noteAt = at;
+            setNote(this.note(), text, variant);
+            this.placeNote();
+        },
+        /**
+         * Starts an action run from the row named `at`: clears what was said, and returns how to say how it went,
+         * which says nothing once another project's or plugin's settings are shown, since it is not about them.
+         */
+        report(at) {
+            const t = this;
+            const forWhat = t.noteKey();
+            t.say('', undefined, at);
+            return (text, variant) => {
+                if (t.isConnected && t.noteKey() === forWhat) t.say(text, variant, at);
+            };
         },
         /** Tells the app the settings changed, so the nav, notifications, and plugin pages catch up. */
         async changed() {
@@ -65,7 +115,7 @@
             const project = webui.getData('app-current-project')?.display || 'this project';
             if (!view.hasProject) {
                 box.appendChild(el('p', { class: 'plugin-empty' }, 'Settings belong to a project. Open one to set this plugin up for it.'));
-                t.replaceChildren(box);
+                t.show(box);
                 return;
             }
             const settings = Array.isArray(view.settings) ? view.settings : [];
@@ -77,11 +127,16 @@
                     : `This plugin is off for ${project}, so it stays out of its menu. Turn it on to use it here.`));
                 const turn = button(view.used ? 'Stop using it in this project' : 'Use in this project', view.used ? 'secondary' : 'primary', view.used ? 'xmark' : 'link');
                 turn.dataset.role = 'use-in-project';
+                turn.dataset.noteAt = 'use-in-project';
                 turn.addEventListener('click', async () => {
-                    if (await webui.proxy.plugins.useInProject(id, !view.used)) t.changed();
+                    const say = t.report('use-in-project');
+                    if (await webui.proxy.plugins.useInProject(id, !view.used, err => say(`${err}`, 'danger'))) {
+                        say(`Turned ${view.used ? 'off' : 'on'} for ${project}.`, 'success');
+                        t.changed();
+                    }
                 });
                 box.appendChild(turn);
-                t.replaceChildren(box);
+                t.show(box);
                 return;
             }
             if (view.signIn) {
@@ -93,9 +148,14 @@
                 t.fields(box, id, settings, 'Save settings');
                 const stop = button('Stop using them in this project', 'secondary', 'xmark');
                 stop.dataset.role = 'stop-using';
+                stop.dataset.noteAt = 'stop-using';
                 stop.addEventListener('click', () => {
                     webui.dialog.confirm(`Stop using these settings in ${escape(project)}? ${others ? 'The other projects keep them.' : 'They are forgotten, since no other project uses them.'}`, async () => {
-                        if (await webui.proxy.plugins.useSignIn(id, null)) t.changed();
+                        const say = t.report('stop-using');
+                        if (await webui.proxy.plugins.useSignIn(id, null, err => say(`${err}`, 'danger'))) {
+                            say(`${project} no longer uses those settings.`, 'success');
+                            t.changed();
+                        }
                         return true;
                     });
                 });
@@ -103,7 +163,7 @@
             } else {
                 if (signIns.length) {
                     box.appendChild(el('strong', {}, 'Use settings from another project'));
-                    const row = el('webui-flex', { wrap: true, gap: 'var(--padding)', align: 'center', 'data-role': 'sign-in-choice' });
+                    const row = el('webui-flex', { wrap: true, gap: 'var(--padding)', align: 'center', 'data-role': 'sign-in-choice', 'data-note-at': 'sign-in-choice' });
                     const choose = el('webui-select', { label: 'Settings', style: 'flex: 1 1 16em;' });
                     choose.setAttribute('options', JSON.stringify(signIns.map(choice => ({
                         id: choice.id, value: choice.id,
@@ -114,8 +174,9 @@
                     const use = button('Use these', 'primary', 'link');
                     use.addEventListener('click', async () => {
                         const chosen = choose.value || signIns[0].id;
-                        if (await webui.proxy.plugins.useSignIn(id, chosen)) {
-                            webui.alert(`${escape(project)} now uses those settings.`, 'success');
+                        const say = t.report('sign-in-choice');
+                        if (await webui.proxy.plugins.useSignIn(id, chosen, err => say(`${err}`, 'danger'))) {
+                            say(`${project} now uses those settings.`, 'success');
                             t.changed();
                         }
                     });
@@ -129,7 +190,11 @@
             }
             box.appendChild(el('small', { class: 'plugin-muted' },
                 'Saved encrypted, for this plugin only. A project variable with the same name takes its place.'));
-            t.replaceChildren(box);
+            t.show(box);
+        },
+        show(box) {
+            this.replaceChildren(box);
+            this.placeNote();
         },
         /** The settings' inputs, and buttons to save them and to clear saved secrets. */
         fields(box, id, settings, saveLabel) {
@@ -144,7 +209,7 @@
                 if (setting.help) box.appendChild(el('small', { class: 'plugin-muted' }, setting.help));
                 return { setting, input };
             });
-            const row = el('webui-flex', { wrap: true, gap: 'var(--padding)' });
+            const row = el('webui-flex', { wrap: true, gap: 'var(--padding)', 'data-note-at': 'save' });
             const save = button(saveLabel, 'primary', 'save');
             save.addEventListener('click', async () => {
                 const values = {};
@@ -154,8 +219,9 @@
                     if (setting.secret && !value) return;
                     values[setting.key] = value;
                 });
-                if (await webui.proxy.plugins.saveSettings(id, values)) {
-                    webui.alert('Settings saved.', 'success');
+                const say = t.report('save');
+                if (await webui.proxy.plugins.saveSettings(id, values, err => say(`Settings weren't saved: ${err}`, 'danger'))) {
+                    say('Settings saved.', 'success');
                     t.changed();
                 }
             });
@@ -164,7 +230,11 @@
                 const clear = button(`Clear ${setting.label}`, 'secondary', 'eraser');
                 clear.addEventListener('click', () => {
                     webui.dialog.confirm(`Clear the saved ${escape(setting.label)}?`, async () => {
-                        if (await webui.proxy.plugins.saveSettings(id, { [setting.key]: '' })) t.changed();
+                        const say = t.report('save');
+                        if (await webui.proxy.plugins.saveSettings(id, { [setting.key]: '' }, err => say(`${setting.label} wasn't cleared: ${err}`, 'danger'))) {
+                            say(`Cleared the saved ${setting.label}.`, 'success');
+                            t.changed();
+                        }
                         return true;
                     });
                 });

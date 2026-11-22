@@ -24,14 +24,17 @@
      */
     function signInContent(started) {
         const box = webui.create('div', { class: 'myfi-sign-in' });
-        const status = webui.create('p', { class: 'myfi-copied', 'aria-live': 'polite' });
+        // What a copy did, in an alert under the code.
+        // Screen readers hear it as it changes.
+        const status = webui.create('webui-alert', { class: 'myfi-copied', 'aria-live': 'polite' });
+        const say = (variant, text) => setNote(status, text, variant);
         const copyButton = (label, text, done, attrs = {}) => {
             const button = webui.create('button', { type: 'button', ...attrs });
             button.textContent = label;
             button.addEventListener('click', async ev => {
                 ev.preventDefault();
                 ev.stopPropagation();
-                if (await webui.proxy.copyText(text, err => { status.textContent = `${err}`; })) status.textContent = done;
+                if (await webui.proxy.copyText(text, err => say('danger', `${err}`))) say('success', done);
             });
             return button;
         };
@@ -120,7 +123,8 @@ ${offline}
                 onconfirm: async () => {
                     if (!await webui.proxy.myfi.signOut()) return false;
                     setAccount(null);
-                    webui.alert('Task Proxy is signed out of your Stoic Dreams account.', 'info');
+                    // The dialog closes as this is said, so it goes in the app's alerts.
+                    appAlert('Task Proxy is signed out of your Stoic Dreams account.', 'info');
                     return true;
                 },
             });
@@ -159,13 +163,15 @@ ${offline}
                     dialog.close?.();
                     if (result) {
                         setAccount(result);
-                        webui.alert(`Signed in as ${esc(result.displayName)}.`, 'success');
+                        // The sign-in dialog has closed, so this goes in the app's alerts.
+                        appAlert(`Signed in as ${result.displayName}.`, 'success');
                     }
                 } catch (err) {
                     if (done) return;
                     done = true;
                     dialog.close?.();
-                    webui.alert(esc(err), 'warning');
+                    // The sign-in dialog has closed, so why it failed goes in the app's alerts.
+                    appAlert(err, 'warning');
                 }
             } finally {
                 signingIn = false;

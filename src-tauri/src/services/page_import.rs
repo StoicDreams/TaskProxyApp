@@ -31,6 +31,34 @@ pub(crate) struct FolderImport {
     pub skipped: Vec<String>,
 }
 
+/// What the user chose for one file before importing it, such as from AI suggestions: its title, its subtitle, and
+/// the navigation folders it goes in, from the top of the import. Anything left out is decided as usual.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportOverride {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    #[serde(default)]
+    pub nav_path: Option<Vec<String>>,
+}
+
+/// A page an import would make, without making it: its file, title, subtitle, navigation folders, and how it
+/// starts, for suggestions to be made from.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PlannedPage {
+    pub file: String,
+    pub title: String,
+    pub subtitle: String,
+    pub nav_path: Vec<String>,
+    pub excerpt: String,
+}
+
+/// How much of each file a plan shows, for suggestions to be made from.
+const EXCERPT_CHARS: usize = 600;
+
 // Segments, as the page editor splits them.
 
 static HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^#{1,6}[ \t]+\S").unwrap());
@@ -396,14 +424,68 @@ fn page_body(content: &str, links: &Links) -> String {
     split_segments(&links.rewrite_markdown(content)).join("\n\n")
 }
 
-fn page_markdown(name: &str, content: &str, links: &Links) -> String {
+fn page_data(title: &str, subtitle: &str) -> String {
+    format!(
+        r#"<webui-data data-page-title="{}" data-page-subtitle="{}"></webui-data>"#,
+        escape_attribute(title),
+        escape_attribute(subtitle)
+    )
+}
+
+/// A chosen title or subtitle, when one was given that isn't blank.
+fn chosen_text(text: Option<&str>) -> Option<&str> {
+    text.map(str::trim).filter(|text| !text.is_empty())
+}
+
+/// The title and subtitle a file's page gets unless the user chooses others: a Task Proxy page's own, or else its
+/// first heading or its file name, with no subtitle. Both a plan and an import name pages with it.
+fn default_title(file: &str, content: &str) -> (String, String) {
+    let (data, body) = split_page_data(content);
+    let (title, subtitle) = data
+        .as_deref()
+        .map(|data| {
+            (
+                attribute(data, "data-page-title"),
+                attribute(data, "data-page-subtitle"),
+            )
+        })
+        .unwrap_or_default();
+    let title = chosen_text(Some(&title))
+        .map(str::to_string)
+        .unwrap_or_else(|| first_heading(&body).unwrap_or_else(|| name_from_file(file)));
+    (title, subtitle.trim().to_string())
+}
+
+/// A file's page: its own title line when it has one, with only the title or subtitle that `chosen` gives replaced.
+/// `name` is the title when the file has none of its own.
+fn page_markdown(
+    name: &str,
+    content: &str,
+    links: &Links,
+    chosen: Option<&ImportOverride>,
+) -> String {
     let (data, content) = split_page_data(content);
-    let data = data.unwrap_or_else(|| {
-        format!(
-            r#"<webui-data data-page-title="{}" data-page-subtitle=""></webui-data>"#,
-            escape_attribute(name)
-        )
-    });
+    let chosen_title = chosen_text(chosen.and_then(|c| c.title.as_deref()));
+    let chosen_subtitle = chosen_text(chosen.and_then(|c| c.subtitle.as_deref()));
+    // The navigation names the page `name` unless a title is chosen, so the page's own title matches it.
+    let title = chosen_title.unwrap_or(name);
+    let data = match data {
+        // The file's own page data keeps its other attributes, and is left as it is unless a title is chosen or its
+        // own is blank, so importing a page again never escapes its title twice.
+        Some(data) => {
+            let own_blank = chosen_text(Some(&attribute(&data, "data-page-title"))).is_none();
+            let data = if chosen_title.is_some() || own_blank {
+                set_attribute(&data, "data-page-title", title)
+            } else {
+                data
+            };
+            match chosen_subtitle {
+                Some(subtitle) => set_attribute(&data, "data-page-subtitle", subtitle),
+                None => data,
+            }
+        }
+        None => page_data(title, chosen_subtitle.unwrap_or("")),
+    };
     let body = page_body(&content, links);
     if body.is_empty() {
         data
@@ -412,6 +494,7 @@ fn page_markdown(name: &str, content: &str, links: &Links) -> String {
     }
 }
 
+/// Text as an attribute value in double quotes. `unescape_attribute` reads it back exactly.
 fn escape_attribute(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('"', "&quot;")
@@ -443,12 +526,16 @@ fn sort_key(name: &str, is_folder: bool) -> (bool, bool, String) {
 fn add_file(tree: &mut BTreeMap<String, Node>, parts: &[&str], file: &str) {
     match parts {
         [] => {}
-        [name] => {
-            tree.insert(name.to_string(), Node::Page(file.to_string()));
+        [_] => {
+            // Keyed by the whole path, so files with the same name moved into one folder are all kept. Folders' keys
+            // start with a slash, which a file's never does.
+            tree.insert(file.to_string(), Node::Page(file.to_string()));
         }
         [folder, rest @ ..] => {
+            // Folders differing only in case or spaces around them are one, named as it was first spelled, as
+            // `merge_navigation` does with folders already in the navigation.
             let entry = tree
-                .entry(format!("/{}", folder))
+                .entry(format!("/{}", folder.trim().to_lowercase()))
                 .or_insert_with(|| Node::Folder(folder.to_string(), BTreeMap::new()));
             if let Node::Folder(_, children) = entry {
                 add_file(children, rest, file);
@@ -516,14 +603,13 @@ fn checked_folder(folder: &str) -> Result<String, String> {
     Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
-/// Imports every markdown file in `folder` (relative to `root`, with "" the whole project) as pages, nested as the
-/// files are in its subfolders, under a folder named `parent` or at the top of the navigation.
-fn import_folder(
-    root: &Path,
-    folder: &str,
-    parent: Option<&str>,
-    mut navigation: Vec<ProjectNavItem>,
-) -> Result<FolderImport, String> {
+/// The markdown files an import takes: the prefix they share, each one's content by file, and the files left out
+/// with why.
+/// Files by path, in order, so a folder named in two spellings is always named as the first file spells it.
+type FolderContents = (String, BTreeMap<String, String>, Vec<String>);
+
+/// The markdown files an import of `folder` (relative to `root`, with "" the whole project) takes.
+fn folder_contents(root: &Path, folder: &str) -> Result<FolderContents, String> {
     let folder = checked_folder(folder)?;
     ensure_inside_root(root, &root.join(&folder))?;
     let prefix = if folder.is_empty() {
@@ -559,7 +645,7 @@ fn import_folder(
         ));
     }
     let mut skipped = Vec::new();
-    let mut contents = HashMap::new();
+    let mut contents = BTreeMap::new();
     for file in &files {
         let path = root.join(safe_relative_path(file)?);
         let read = ensure_inside_root(root, &path).and_then(|_| {
@@ -576,13 +662,217 @@ fn import_folder(
             Err(err) => skipped.push(format!("{} ({})", file, err)),
         }
     }
+    Ok((prefix, contents, skipped))
+}
+
+/// The navigation folders a file goes in by default: its subfolders below the folder imported.
+fn default_nav_path(prefix: &str, file: &str) -> Vec<String> {
+    let mut parts: Vec<String> = file[prefix.len()..].split('/').map(String::from).collect();
+    parts.pop();
+    parts
+}
+
+/// What importing `folder` would make, page by page, without writing anything.
+fn plan_folder(root: &Path, folder: &str) -> Result<Vec<PlannedPage>, String> {
+    let (prefix, contents, _) = folder_contents(root, folder)?;
+    let mut planned: Vec<PlannedPage> = contents
+        .iter()
+        .map(|(file, content)| {
+            let (_, body) = split_page_data(content);
+            let (title, subtitle) = default_title(file, content);
+            PlannedPage {
+                file: file.clone(),
+                title,
+                subtitle,
+                nav_path: default_nav_path(&prefix, file),
+                excerpt: body.chars().take(EXCERPT_CHARS).collect(),
+            }
+        })
+        .collect();
+    planned.sort_by(|a, b| a.file.cmp(&b.file));
+    Ok(planned)
+}
+
+/// An attribute of a tag: where all of it is in the tag, and where its name and value are, the value without its
+/// quotes.
+struct TagAttribute {
+    span: std::ops::Range<usize>,
+    name: std::ops::Range<usize>,
+    value: std::ops::Range<usize>,
+}
+
+/// The attributes of the opening tag `data` starts with, read as HTML reads them: a value in double or single quotes
+/// or unquoted, so a `>` or another attribute's name inside a quoted value is part of that value. Also where the tag's
+/// closing `>`, or `/>`, starts, or None when the tag doesn't end.
+fn tag_attributes(data: &str) -> (Vec<TagAttribute>, Option<usize>) {
+    let bytes = data.as_bytes();
+    let len = bytes.len();
+    let mut attributes = Vec::new();
+    let Some(start) = data.find('<') else {
+        return (attributes, None);
+    };
+    let mut i = start + 1;
+    // The tag's name.
+    while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' && bytes[i] != b'/' {
+        i += 1;
+    }
+    loop {
+        while i < len && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= len {
+            return (attributes, None);
+        }
+        match bytes[i] {
+            b'>' => return (attributes, Some(i)),
+            b'/' if bytes.get(i + 1) == Some(&b'>') => return (attributes, Some(i)),
+            b'/' => {
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        let name_start = i;
+        while i < len && !bytes[i].is_ascii_whitespace() && !matches!(bytes[i], b'=' | b'>' | b'/')
+        {
+            i += 1;
+        }
+        let name = name_start..i;
+        let mut j = i;
+        while j < len && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if bytes.get(j) != Some(&b'=') {
+            attributes.push(TagAttribute {
+                span: name.clone(),
+                name,
+                value: i..i,
+            });
+            continue;
+        }
+        j += 1;
+        while j < len && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        let value = match bytes.get(j) {
+            Some(&quote) if quote == b'"' || quote == b'\'' => {
+                let Some(close) = data[j + 1..].find(quote as char) else {
+                    return (attributes, None);
+                };
+                i = j + 1 + close + 1;
+                j + 1..j + 1 + close
+            }
+            _ => {
+                i = j;
+                while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+                    i += 1;
+                }
+                j..i
+            }
+        };
+        attributes.push(TagAttribute {
+            span: name_start..i,
+            name,
+            value,
+        });
+    }
+}
+
+/// Attribute `name` of the opening tag `data` starts with. It is matched by its whole name, so `x-data-page-title`
+/// isn't taken for `data-page-title`.
+fn find_attribute(data: &str, name: &str) -> Option<TagAttribute> {
+    tag_attributes(data)
+        .0
+        .into_iter()
+        .find(|attribute| data[attribute.name.clone()].eq_ignore_ascii_case(name))
+}
+
+/// `data`, a `<webui-data>` tag, with attribute `name` set to `value`, in place when it has it, or else added at the
+/// end of its opening tag. The value is always written in double quotes.
+fn set_attribute(data: &str, name: &str, value: &str) -> String {
+    let value = escape_attribute(value);
+    if let Some(found) = find_attribute(data, name) {
+        return format!(
+            r#"{}{}="{}"{}"#,
+            &data[..found.span.start],
+            name,
+            value,
+            &data[found.span.end..]
+        );
+    }
+    match tag_attributes(data).1 {
+        Some(end) => {
+            let open = data[..end].trim_end();
+            format!(r#"{} {}="{}"{}"#, open, name, value, &data[open.len()..])
+        }
+        None => data.to_string(),
+    }
+}
+
+/// Attribute `name`'s value in `data`, a `<webui-data>` tag, with its character references read, or "" when it has
+/// none.
+fn attribute(data: &str, name: &str) -> String {
+    find_attribute(data, name)
+        .map(|found| unescape_attribute(&data[found.value]))
+        .unwrap_or_default()
+}
+
+static CHARACTER_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|quot|lt|gt|apos|nbsp));").unwrap()
+});
+
+/// An attribute value with its character references read in one pass, the exact inverse of `escape_attribute`:
+/// numeric ones and the named ones pages commonly hold. Any other `&` is kept as it is.
+fn unescape_attribute(text: &str) -> String {
+    CHARACTER_REFERENCE
+        .replace_all(text, |caps: &regex::Captures| {
+            let code = match (caps.get(1), caps.get(2), caps.get(3)) {
+                (Some(decimal), _, _) => decimal.as_str().parse::<u32>().ok(),
+                (_, Some(hex), _) => u32::from_str_radix(hex.as_str(), 16).ok(),
+                (_, _, Some(named)) => Some(match named.as_str() {
+                    "amp" => '&',
+                    "quot" => '"',
+                    "lt" => '<',
+                    "gt" => '>',
+                    "apos" => '\'',
+                    _ => '\u{a0}',
+                } as u32),
+                _ => None,
+            };
+            code.and_then(char::from_u32)
+                .filter(|c| *c != '\0')
+                .map_or_else(|| caps[0].to_string(), String::from)
+        })
+        .into_owned()
+}
+
+/// Imports every markdown file in `folder` (relative to `root`, with "" the whole project) as pages, nested as the
+/// files are in its subfolders, under a folder named `parent` or at the top of the navigation. `overrides` give a
+/// file its own title, subtitle, or navigation folders.
+fn import_folder(
+    root: &Path,
+    folder: &str,
+    parent: Option<&str>,
+    mut navigation: Vec<ProjectNavItem>,
+    overrides: &HashMap<String, ImportOverride>,
+) -> Result<FolderImport, String> {
+    let (prefix, contents, skipped) = folder_contents(root, folder)?;
     let pages: HashMap<String, String> = contents
         .keys()
         .map(|file| (file.clone(), format!("/{}", Uuid::now_v7())))
         .collect();
     let mut tree = BTreeMap::new();
     for file in contents.keys() {
-        let parts: Vec<&str> = file[prefix.len()..].split('/').collect();
+        let mut parts: Vec<String> = match overrides.get(file).and_then(|o| o.nav_path.clone()) {
+            Some(path) => path
+                .into_iter()
+                .map(|name| name.trim().to_string())
+                .filter(|n| !n.is_empty())
+                .collect(),
+            None => default_nav_path(&prefix, file),
+        };
+        parts.push(file.rsplit('/').next().unwrap_or(file).to_string());
+        let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
         add_file(&mut tree, &parts, file);
     }
     let mut written: Vec<PathBuf> = Vec::new();
@@ -592,14 +882,17 @@ fn import_folder(
             return None;
         }
         let content = &contents[file];
-        let name = first_heading(content).unwrap_or_else(|| name_from_file(file));
+        let chosen = overrides.get(file);
+        let name = chosen_text(chosen.and_then(|c| c.title.as_deref()))
+            .map(str::to_string)
+            .unwrap_or_else(|| default_title(file, content).0);
         let url = pages[file].clone();
         let links = Links {
             folder: folder_of(file),
             pages: &pages,
         };
         let page_file = root.join(PAGES_FOLDER).join(format!("{}.md", &url[1..]));
-        let mut markdown = page_markdown(&name, content, &links);
+        let mut markdown = page_markdown(&name, content, &links, chosen);
         markdown.push('\n');
         if let Err(err) = write_atomic(&page_file, markdown.as_bytes()) {
             failure = Some(format!("{}: {}", file, err));
@@ -664,9 +957,26 @@ pub(crate) async fn import_page_folder(
     folder: String,
     parent: Option<String>,
     navigation: Vec<ProjectNavItem>,
+    overrides: Option<HashMap<String, ImportOverride>>,
 ) -> Result<FolderImport, String> {
     let root = current_project_path(&state, IMPORT_CONTEXT)?;
-    task::spawn_blocking(move || import_folder(&root, &folder, parent.as_deref(), navigation))
+    let overrides = overrides.unwrap_or_default();
+    task::spawn_blocking(move || {
+        import_folder(&root, &folder, parent.as_deref(), navigation, &overrides)
+    })
+    .await
+    .map_err(|err| format!("{}", err))?
+    .map_err(|err| format!("{}: {}", IMPORT_CONTEXT, err))
+}
+
+/// What importing a folder would make, page by page, without writing anything.
+#[tauri::command]
+pub(crate) async fn plan_page_folder(
+    state: State<'_, CurrentProject>,
+    folder: String,
+) -> Result<Vec<PlannedPage>, String> {
+    let root = current_project_path(&state, IMPORT_CONTEXT)?;
+    task::spawn_blocking(move || plan_folder(&root, &folder))
         .await
         .map_err(|err| format!("{}", err))?
         .map_err(|err| format!("{}: {}", IMPORT_CONTEXT, err))
@@ -797,8 +1107,14 @@ mod tests {
             ("docs/empty/notes.txt", "not markdown"),
             ("other.md", "# Not in the folder"),
         ]);
-        let result =
-            import_folder(dir.path(), "docs", None, vec![existing_page("Existing")]).unwrap();
+        let result = import_folder(
+            dir.path(),
+            "docs",
+            None,
+            vec![existing_page("Existing")],
+            &HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(result.pages, 4);
         assert!(result.skipped.is_empty());
         let nav = &result.navigation;
@@ -838,7 +1154,14 @@ mod tests {
                 existing("Guide", vec![existing_page("Older")]),
             ],
         )];
-        let result = import_folder(dir.path(), "docs/", Some(" docs "), navigation).unwrap();
+        let result = import_folder(
+            dir.path(),
+            "docs/",
+            Some(" docs "),
+            navigation,
+            &HashMap::new(),
+        )
+        .unwrap();
         let nav = &result.navigation;
         assert_eq!(names(nav), vec!["Docs"]);
         let docs = nav[0].children.as_ref().unwrap();
@@ -848,7 +1171,14 @@ mod tests {
             vec!["Older", "B"]
         );
         // Pages are always added, even when one has the same name.
-        let again = import_folder(dir.path(), "docs", Some("Docs"), result.navigation).unwrap();
+        let again = import_folder(
+            dir.path(),
+            "docs",
+            Some("Docs"),
+            result.navigation,
+            &HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             names(again.navigation[0].children.as_ref().unwrap()),
             vec!["Old", "Guide", "A", "A"]
@@ -862,17 +1192,17 @@ mod tests {
             (".taskproxy/pages/123.md", "# A page"),
             ("node_modules/x/README.md", "# Dependency"),
         ]);
-        let result = import_folder(dir.path(), "", None, vec![]).unwrap();
+        let result = import_folder(dir.path(), "", None, vec![], &HashMap::new()).unwrap();
         assert_eq!(names(&result.navigation), vec!["Read Me"]);
     }
 
     #[test]
     fn folders_outside_the_project_or_without_markdown_are_refused() {
         let dir = project(&[("docs/notes.txt", "text")]);
-        assert!(import_folder(dir.path(), "../", None, vec![]).is_err());
-        assert!(import_folder(dir.path(), "/etc", None, vec![]).is_err());
+        assert!(import_folder(dir.path(), "../", None, vec![], &HashMap::new()).is_err());
+        assert!(import_folder(dir.path(), "/etc", None, vec![], &HashMap::new()).is_err());
         assert_eq!(
-            import_folder(dir.path(), "docs", None, vec![]).unwrap_err(),
+            import_folder(dir.path(), "docs", None, vec![], &HashMap::new()).unwrap_err(),
             "There are no markdown files in docs."
         );
         assert!(!dir.path().join(PAGES_FOLDER).exists());
@@ -882,7 +1212,7 @@ mod tests {
     fn a_file_that_is_not_text_is_skipped_and_named() {
         let dir = project(&[("docs/a.md", "# A")]);
         fs::write(dir.path().join("docs/b.md"), [0xff, 0xfe, 0x00]).unwrap();
-        let result = import_folder(dir.path(), "docs", None, vec![]).unwrap();
+        let result = import_folder(dir.path(), "docs", None, vec![], &HashMap::new()).unwrap();
         assert_eq!(result.pages, 1);
         assert_eq!(result.skipped, vec!["docs/b.md (not text)"]);
     }
@@ -907,5 +1237,323 @@ mod tests {
         );
         assert!(import_file(dir.path(), "docs/plain.txt").is_err());
         assert!(import_file(dir.path(), "../outside.md").is_err());
+    }
+
+    #[test]
+    fn a_plan_shows_each_page_an_import_would_make_and_writes_nothing() {
+        let dir = project(&[
+            ("docs/guide.md", "# Getting Started\n\nInstall it."),
+            ("docs/api/calls.md", "No heading here."),
+            (
+                "docs/kept.md",
+                "<webui-data data-page-title=\"Kept &amp; Sound\" data-page-subtitle=\"Own line\"></webui-data>\n\nBody",
+            ),
+        ]);
+        let plan = plan_folder(dir.path(), "docs").unwrap();
+        let summary: Vec<(&str, &str, &str, Vec<String>)> = plan
+            .iter()
+            .map(|p| {
+                (
+                    p.file.as_str(),
+                    p.title.as_str(),
+                    p.subtitle.as_str(),
+                    p.nav_path.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("docs/api/calls.md", "Calls", "", vec!["api".to_string()]),
+                ("docs/guide.md", "Getting Started", "", vec![]),
+                ("docs/kept.md", "Kept & Sound", "Own line", vec![]),
+            ]
+        );
+        assert!(plan[1].excerpt.contains("Install it."));
+        assert!(!dir.path().join(PAGES_FOLDER).exists());
+    }
+
+    #[test]
+    fn overrides_set_a_pages_title_subtitle_and_navigation_folders() {
+        let dir = project(&[
+            ("docs/guide.md", "# Getting Started\n\nInstall it."),
+            ("docs/api/calls.md", "Calls body"),
+        ]);
+        let overrides = HashMap::from([
+            (
+                "docs/guide.md".to_string(),
+                ImportOverride {
+                    title: Some("Install Task Proxy".into()),
+                    subtitle: Some("From download to first project".into()),
+                    nav_path: Some(vec!["Guides".into(), " Setup ".into()]),
+                },
+            ),
+            (
+                "docs/api/calls.md".to_string(),
+                ImportOverride {
+                    nav_path: Some(vec![]),
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let result = import_folder(dir.path(), "docs", None, vec![], &overrides).unwrap();
+        // The calls page moved to the top, and the guide into Guides > Setup.
+        assert_eq!(names(&result.navigation), vec!["Calls", "Guides"]);
+        let guides = &result.navigation[1];
+        let setup = &guides.children.as_ref().unwrap()[0];
+        assert_eq!(setup.name, "Setup");
+        let guide = &setup.children.as_ref().unwrap()[0];
+        assert_eq!(guide.name, "Install Task Proxy");
+        let markdown = page(dir.path(), guide);
+        assert!(
+            markdown.contains(r#"data-page-title="Install Task Proxy""#),
+            "{}",
+            markdown
+        );
+        assert!(markdown.contains(r#"data-page-subtitle="From download to first project""#));
+        assert!(markdown.contains("Install it."));
+    }
+
+    #[test]
+    fn files_with_the_same_name_moved_into_one_folder_are_all_imported() {
+        let dir = project(&[
+            ("docs/a/README.md", "# First"),
+            ("docs/b/README.md", "# Second"),
+        ]);
+        let moved = || ImportOverride {
+            nav_path: Some(vec!["Both".into()]),
+            ..Default::default()
+        };
+        let overrides = HashMap::from([
+            ("docs/a/README.md".to_string(), moved()),
+            ("docs/b/README.md".to_string(), moved()),
+        ]);
+        let result = import_folder(dir.path(), "docs", None, vec![], &overrides).unwrap();
+        assert_eq!(result.pages, 2);
+        assert!(result.skipped.is_empty());
+        assert_eq!(names(&result.navigation), vec!["Both"]);
+        let both = result.navigation[0].children.as_ref().unwrap();
+        assert_eq!(names(both), vec!["First", "Second"]);
+        assert!(page(dir.path(), &both[0]).contains("# First"));
+        assert!(page(dir.path(), &both[1]).contains("# Second"));
+    }
+
+    #[test]
+    fn a_pages_own_data_keeps_its_other_attributes_and_a_blank_title_gets_the_navigation_name() {
+        let own = "<webui-data data-page-title=\"Own\" data-theme=\"dark\" data-page-subtitle=\"Line\"></webui-data>\n\nBody";
+        let blank =
+            "<webui-data data-page-title=\"\" data-x=\"1\"></webui-data>\n\n# From Heading\n\nBody";
+        let dir = project(&[("docs/a.md", own), ("docs/b.md", blank)]);
+        let overrides = HashMap::from([(
+            "docs/a.md".to_string(),
+            ImportOverride {
+                title: Some("Chosen".into()),
+                ..Default::default()
+            },
+        )]);
+        let result = import_folder(dir.path(), "docs", None, vec![], &overrides).unwrap();
+        let a = page(dir.path(), &result.navigation[0]);
+        assert!(
+            a.contains(r#"<webui-data data-page-title="Chosen" data-theme="dark" data-page-subtitle="Line"></webui-data>"#),
+            "{}",
+            a
+        );
+        assert_eq!(result.navigation[1].name, "From Heading");
+        let b = page(dir.path(), &result.navigation[1]);
+        assert!(
+            b.contains(r#"<webui-data data-page-title="From Heading" data-x="1"></webui-data>"#),
+            "{}",
+            b
+        );
+    }
+
+    #[test]
+    fn set_attribute_changes_one_in_place_or_adds_it() {
+        let data = r#"<webui-data data-page-title="A" data-y="2"></webui-data>"#;
+        assert_eq!(
+            set_attribute(data, "data-page-title", "B & C"),
+            r#"<webui-data data-page-title="B &amp; C" data-y="2"></webui-data>"#
+        );
+        assert_eq!(
+            set_attribute(data, "data-page-subtitle", "S"),
+            r#"<webui-data data-page-title="A" data-y="2" data-page-subtitle="S"></webui-data>"#
+        );
+    }
+
+    #[test]
+    fn an_attribute_is_added_after_a_quoted_value_holding_a_closing_bracket() {
+        let data = r#"<webui-data data-page-title="Input -> Output"></webui-data>"#;
+        assert_eq!(
+            set_attribute(data, "data-page-subtitle", "S"),
+            r#"<webui-data data-page-title="Input -> Output" data-page-subtitle="S"></webui-data>"#
+        );
+        let single = "<webui-data data-x='a > b' />";
+        assert_eq!(
+            set_attribute(single, "data-page-subtitle", "S"),
+            r#"<webui-data data-x='a > b' data-page-subtitle="S" />"#
+        );
+        // A name inside another attribute's value isn't that attribute.
+        let inside = r#"<webui-data data-x="data-page-title=Wrong"></webui-data>"#;
+        assert_eq!(attribute(inside, "data-page-title"), "");
+        assert_eq!(
+            set_attribute(inside, "data-page-title", "T"),
+            r#"<webui-data data-x="data-page-title=Wrong" data-page-title="T"></webui-data>"#
+        );
+    }
+
+    #[test]
+    fn an_unquoted_attribute_is_read_and_replaced_not_added_twice() {
+        let data = r#"<webui-data data-page-title=Old data-y="2"></webui-data>"#;
+        assert_eq!(attribute(data, "data-page-title"), "Old");
+        assert_eq!(
+            set_attribute(data, "data-page-title", "New"),
+            r#"<webui-data data-page-title="New" data-y="2"></webui-data>"#
+        );
+        let last = "<webui-data data-page-title=Old></webui-data>";
+        assert_eq!(
+            set_attribute(last, "data-page-title", "New"),
+            r#"<webui-data data-page-title="New"></webui-data>"#
+        );
+    }
+
+    #[test]
+    fn attributes_are_found_by_their_whole_name_in_either_quotes() {
+        let data = r#"<webui-data x-data-page-title="Wrong" data-page-title = 'It&#39;s "here"' data-y="2"></webui-data>"#;
+        assert_eq!(attribute(data, "data-page-title"), r#"It's "here""#);
+        assert_eq!(attribute(data, "x-data-page-title"), "Wrong");
+        assert_eq!(attribute(data, "data-page-subtitle"), "");
+        assert_eq!(
+            set_attribute(data, "data-page-title", "New"),
+            r#"<webui-data x-data-page-title="Wrong" data-page-title="New" data-y="2"></webui-data>"#
+        );
+        let only_other = r#"<webui-data x-data-page-title="Wrong"></webui-data>"#;
+        assert_eq!(
+            set_attribute(only_other, "data-page-title", "Added"),
+            r#"<webui-data x-data-page-title="Wrong" data-page-title="Added"></webui-data>"#
+        );
+    }
+
+    #[test]
+    fn reading_an_attribute_undoes_escaping_it_exactly() {
+        for text in [
+            "Plain",
+            r#"A & B "quoted" <tag>"#,
+            "&amp; already escaped",
+            "&#39; and &apos; as text",
+            "&copy; & &unknown; &#0;",
+            "It's",
+        ] {
+            assert_eq!(unescape_attribute(&escape_attribute(text)), text);
+        }
+        assert_eq!(
+            unescape_attribute(
+                "It&#39;s &apos;x&apos; &#x27;y&#X27; a&nbsp;b &copy; &#0; &#1114112;"
+            ),
+            "It's 'x' 'y' a\u{a0}b &copy; &#0; &#1114112;"
+        );
+    }
+
+    #[test]
+    fn importing_a_page_again_keeps_its_title_line_as_it_is() {
+        let own = "<webui-data data-page-title=\"It&#39;s &amp; done\" data-page-subtitle=\"Line\"></webui-data>\n\nBody";
+        let dir = project(&[("docs/page.md", own)]);
+        let result = import_folder(dir.path(), "docs", None, vec![], &HashMap::new()).unwrap();
+        assert_eq!(names(&result.navigation), vec!["It's & done"]);
+        let markdown = page(dir.path(), &result.navigation[0]);
+        assert!(
+            markdown.starts_with(
+                "<webui-data data-page-title=\"It&#39;s &amp; done\" data-page-subtitle=\"Line\"></webui-data>\n"
+            ),
+            "{}",
+            markdown
+        );
+    }
+
+    #[test]
+    fn navigation_folders_differing_only_in_case_are_one() {
+        let dir = project(&[("docs/a.md", "# A"), ("docs/b.md", "# B")]);
+        let into = |folder: &str| ImportOverride {
+            nav_path: Some(vec![folder.into()]),
+            ..Default::default()
+        };
+        let overrides = HashMap::from([
+            ("docs/a.md".to_string(), into("Guides")),
+            ("docs/b.md".to_string(), into(" guides")),
+        ]);
+        let result = import_folder(dir.path(), "docs", None, vec![], &overrides).unwrap();
+        assert_eq!(names(&result.navigation), vec!["Guides"]);
+        assert_eq!(
+            names(result.navigation[0].children.as_ref().unwrap()),
+            vec!["A", "B"]
+        );
+    }
+
+    #[test]
+    fn an_override_replaces_only_what_it_sets_of_a_pages_own_title_line() {
+        let own = "<webui-data data-page-title=\"Kept &amp; Sound\" data-page-subtitle=\"Own line\"></webui-data>\n\n# Kept\n\nBody";
+        let dir = project(&[("docs/kept.md", own), ("docs/other.md", own)]);
+        let overrides = HashMap::from([
+            (
+                "docs/kept.md".to_string(),
+                ImportOverride {
+                    subtitle: Some("New line".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "docs/other.md".to_string(),
+                ImportOverride {
+                    subtitle: Some(" ".into()),
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let result = import_folder(dir.path(), "docs", None, vec![], &overrides).unwrap();
+        // The page keeps its own title, in the navigation as well, which is also what a plan shows.
+        assert_eq!(
+            names(&result.navigation),
+            vec!["Kept & Sound", "Kept & Sound"]
+        );
+        assert_eq!(
+            plan_folder(dir.path(), "docs").unwrap()[0].title,
+            "Kept & Sound"
+        );
+        let kept = page(dir.path(), &result.navigation[0]);
+        assert!(
+            kept.contains(r#"data-page-title="Kept &amp; Sound" data-page-subtitle="New line""#),
+            "{}",
+            kept
+        );
+        // A blank subtitle leaves the page's own.
+        let other = page(dir.path(), &result.navigation[1]);
+        assert!(
+            other.contains(r#"data-page-title="Kept &amp; Sound" data-page-subtitle="Own line""#),
+            "{}",
+            other
+        );
+    }
+
+    #[test]
+    fn a_plan_and_an_import_name_pages_the_same_way() {
+        let dir = project(&[
+            (
+                "docs/page.md",
+                "<webui-data data-page-title=\"Own Title\"></webui-data>\n\n# Heading",
+            ),
+            ("docs/heading.md", "# The Heading"),
+            ("docs/no-heading.md", "Text"),
+        ]);
+        let planned: Vec<String> = plan_folder(dir.path(), "docs")
+            .unwrap()
+            .into_iter()
+            .map(|p| p.title)
+            .collect();
+        let imported = import_folder(dir.path(), "docs", None, vec![], &HashMap::new()).unwrap();
+        let mut imported = names(&imported.navigation);
+        imported.sort();
+        let mut sorted = planned.clone();
+        sorted.sort();
+        assert_eq!(sorted, imported);
+        assert_eq!(planned, vec!["The Heading", "No Heading", "Own Title"]);
     }
 }

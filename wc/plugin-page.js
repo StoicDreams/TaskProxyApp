@@ -60,9 +60,10 @@
         const bytes = Uint8Array.from(atob(data || ''), char => char.charCodeAt(0));
         return new Blob([bytes], { type });
     }
-    async function copyImage(blob) {
-        const error = message => webui.alert(`The image could not be copied: ${escape(message)}`, 'danger');
-        if (await webui.proxy.copyImage(blob, error)) webui.alert('Copied the image.', 'success');
+    /** Copies an image, saying how it went by `button`, the dialog's Copy button. */
+    async function copyImage(blob, button) {
+        const error = message => actionNote(button, `The image could not be copied: ${message}`, 'danger');
+        if (await webui.proxy.copyImage(blob, error)) actionNote(button, 'Copied the image.', 'success');
     }
     /**
      * Makes a markdown image show larger while the pointer is over it, and open in a dialog when clicked, or with
@@ -87,7 +88,7 @@
             copy.append(el('webui-icon', { icon: 'copy', 'aria-hidden': 'true' }), el('span', {}, 'Copy image'));
             copy.addEventListener('click', ev => {
                 ev.preventDefault();
-                copyImage(blob);
+                copyImage(blob, copy);
             });
             box.append(full, copy);
             webui.dialog({
@@ -118,23 +119,25 @@
 
     /**
      * Disables a button and, unless it finishes at once, says it is loading. Returns what puts it back, for when it is
-     * still shown.
+     * still shown. Other controls that run actions, such as a switch, a table's rows or a select, are only disabled,
+     * since their text is the plugin's content.
      */
     function busyButton(button) {
-        const text = button.querySelector(':scope > span');
+        const text = button.localName === 'webui-button' ? button.querySelector(':scope > span') : null;
         const label = text?.textContent;
-        const icon = button.getAttribute('start-icon');
+        const icon = text ? button.getAttribute('start-icon') : null;
         button.setAttribute('disabled', '');
         button.classList.add('plugin-button-busy');
-        const say = setTimeout(() => {
-            if (text) text.textContent = 'Loading Content';
+        const say = text && setTimeout(() => {
+            text.textContent = 'Loading Content';
             button.setAttribute('start-icon', 'hourglass');
         }, BUSY_LABEL_MS);
         return () => {
             clearTimeout(say);
             button.removeAttribute('disabled');
             button.classList.remove('plugin-button-busy');
-            if (text) text.textContent = label;
+            if (!text) return;
+            text.textContent = label;
             if (icon) button.setAttribute('start-icon', icon);
             else button.removeAttribute('start-icon');
         };
@@ -456,7 +459,9 @@
             t._cachedKey = null;
             if (error) {
                 // A page showing from the cache stays, and says it could not be brought up to date.
-                if (fromCache && t._shownKey === key) webui.alert(escape(error), 'danger');
+                // Refreshing a page shown from the cache happens on its own, not from a button, so it goes in the
+                // app's alerts.
+                if (fromCache && t._shownKey === key) appAlert(error, 'danger');
                 else t.showError(error);
                 return;
             }
@@ -611,7 +616,8 @@
                     link.addEventListener('click', ev => {
                         ev.preventDefault();
                         ev.stopPropagation();
-                        t.run(node.action, undefined, ctx);
+                        // What the action says goes by the link.
+                        t.run(node.action, undefined, ctx, link);
                     });
                     return link;
                 }
@@ -752,7 +758,7 @@
             const show = () => toggle.setValue(node.on);
             if (customElements.get('webui-toggle-icon')) show();
             else customElements.whenDefined('webui-toggle-icon').then(show);
-            toggle.addEventListener('click', () => t.run(node.action, undefined, ctx));
+            toggle.addEventListener('click', () => t.run(node.action, undefined, ctx, toggle));
             return toggle;
         },
         buildTable(node, ctx) {
@@ -769,7 +775,8 @@
                 if (info.action) {
                     th.classList.add('plugin-sortable');
                     makeButton(th, info.action.label);
-                    th.addEventListener('click', () => t.run(info.action, undefined, ctx));
+                    // Said after the table, as a row's action is, rather than inside the header cell.
+                    th.addEventListener('click', () => t.run(info.action, undefined, ctx, table));
                 }
                 head.appendChild(th);
             });
@@ -783,8 +790,9 @@
                     tr.classList.add('plugin-clickable');
                     makeButton(tr, row.action.label);
                     tr.addEventListener('click', ev => {
-                        if (ev.target.closest('a, webui-button, button, [role="button"]:not(tr)')) return;
-                        t.run(row.action, undefined, ctx);
+                        // A message said in a cell is read, not a click on the row.
+                        if (ev.target.closest('a, webui-button, button, [role="button"]:not(tr), .action-note, webui-alert')) return;
+                        t.run(row.action, undefined, ctx, table);
                     });
                 }
                 body.appendChild(tr);
@@ -802,14 +810,15 @@
             button.addEventListener('click', async ev => {
                 ev.stopPropagation();
                 if (t._running) return;
-                const result = await t.ask(node.options);
+                clearActionNote(button);
+                const result = await t.ask(node.options, false, button);
                 const options = result?.options;
                 if (!Array.isArray(options)) return;
                 if (!options.length) {
-                    webui.alert('There is nothing to change it to.', 'info');
+                    actionNote(button, 'There is nothing to change it to.', 'info');
                     return;
                 }
-                showMenu(button, options, `${node.text ?? ''}`, choice => t.run(node.action, { value: `${choice.value}` }, ctx));
+                showMenu(button, options, `${node.text ?? ''}`, choice => t.run(node.action, { value: `${choice.value}` }, ctx, button));
             });
             return button;
         },
@@ -828,7 +837,7 @@
                 makeButton(span, node.action.label);
                 span.addEventListener('click', ev => {
                     ev.stopPropagation();
-                    t.run(node.action, undefined, ctx);
+                    t.run(node.action, undefined, ctx, span);
                 });
             }
             return span;
@@ -1018,7 +1027,7 @@
             if (node.cancel) {
                 const cancel = el('webui-button', { theme: 'secondary' });
                 cancel.appendChild(el('span', {}, node.cancel.label ?? 'Cancel'));
-                cancel.addEventListener('click', () => t.run(node.cancel, undefined, ctx));
+                cancel.addEventListener('click', () => t.run(node.cancel, undefined, ctx, cancel));
                 actions.appendChild(cancel);
             }
             form.appendChild(actions);
@@ -1058,9 +1067,10 @@
                 const values = Object.fromEntries(readers.map(read => read()));
                 const missing = fields.find(field => field.required && field.kind !== 'checkbox' && `${values[field.name] ?? ''}`.trim() === '');
                 if (missing) {
-                    webui.alert(`${escape(missing.label || missing.name)} is required.`, 'warning');
+                    actionNote(submit, `${missing.label || missing.name} is required.`, 'warning');
                     return;
                 }
+                clearActionNote(submit);
                 t.run(current(), values, ctx, submit);
             };
             submit.addEventListener('click', send);
@@ -1086,10 +1096,16 @@
                 t._refocus = row.dataset.id;
                 clearTimeout(timer);
                 timer = setTimeout(() => {
+                    // A move made while the last order saves is sent once it has.
+                    if (list.hasAttribute('disabled')) {
+                        changed(row);
+                        return;
+                    }
                     const now = order();
                     if (now.join('\n') === saved.join('\n')) return;
                     saved = now;
-                    t.run(node.action, { order: now }, ctx);
+                    // The list is disabled while the new order saves, and what the plugin says goes by it.
+                    t.run(node.action, { order: now }, ctx, list);
                 }, 400);
             };
             (node.items || []).forEach(item => {
@@ -1109,23 +1125,26 @@
             saved = order();
             return list;
         },
-        /** Asks the plugin for something, such as choices, and returns its answer without acting on it. */
-        async ask(action, quiet) {
+        /**
+         * Asks the plugin for something, such as choices, and returns its answer without acting on it. Why it failed
+         * is said by `anchor`, the control that asked, or in the app's alerts.
+         */
+        async ask(action, quiet, anchor = null) {
             const t = this;
             if (!action) return null;
             const request = { page: t.page || '', pageParams: t._params || {}, action: action.id, params: action.params || {}, form: {} };
             let error = null;
             const result = await webui.proxy.plugins.action(t.plugin, request, err => { error = `${err}`; });
             if (error) {
-                if (!quiet) webui.alert(escape(error), 'danger');
+                if (!quiet) actionNote(anchor, error, 'danger');
                 return null;
             }
             return result || {};
         },
-        /** Runs an action: Task Proxy's own when it names one, otherwise the plugin's. */
         /**
-         * Runs an action. The button that ran it, when given, is disabled and says Loading Content until the action
-         * and whatever it loads, such as a search's results, are done.
+         * Runs an action: Task Proxy's own when it names one, otherwise the plugin's. The button that ran it, when
+         * given, is disabled and says Loading Content until the action and whatever it loads, such as a search's
+         * results, are done.
          */
         async run(action, form, ctx = 'page', trigger = null) {
             const t = this;
@@ -1136,6 +1155,8 @@
             const done = trigger && !action.host ? busyButton(trigger) : () => { };
             t.classList.add('plugin-busy');
             t._dialog?.box.classList.add('plugin-busy');
+            // What the button's last run said goes, whichever kind of action it runs.
+            if (trigger) clearActionNote(trigger);
             try {
                 if (action.host) {
                     // A form submitted with a host action fills that action's own fields, such as a branch's name.
@@ -1143,18 +1164,18 @@
                     if (form && typeof form === 'object') {
                         Object.keys(host).filter(key => key !== 'type' && key in form).forEach(key => host[key] = form[key]);
                     }
-                    await t.runHost(host, ctx);
+                    await t.runHost(host, ctx, trigger);
                     return;
                 }
                 const request = { page: t.page || '', pageParams: t._params || {}, action: action.id, params: action.params || {}, form: form || {} };
                 let error = null;
                 const result = await webui.proxy.plugins.action(t.plugin, request, err => { error = `${err}`; });
                 if (error) {
-                    webui.alert(escape(error), 'danger');
+                    actionNote(trigger, error, 'danger');
                     return;
                 }
                 const loads = [t, t._sideOf].filter(Boolean).map(page => [page, page._load]);
-                t.apply(result || {}, ctx);
+                t.apply(result || {}, ctx, trigger);
                 t._running = false;
                 t.classList.remove('plugin-busy');
                 t._dialog?.box.classList.remove('plugin-busy');
@@ -1168,10 +1189,21 @@
                 done();
             }
         },
-        apply(result, ctx = 'page') {
+        /**
+         * Acts on what the plugin answered. Its message is said by `trigger`, the button that ran the action, unless
+         * the answer moves to another page, closes the dialog, or draws the page or dialog again, which takes the
+         * button away: then, or with no button, it goes to the app's alerts.
+         */
+        apply(result, ctx = 'page', trigger = null) {
             const t = this;
-            if (result.message?.text) webui.alert(escape(result.message.text), theme(result.message.theme) || 'info');
             const inDialog = ctx === 'dialog' && t._dialog;
+            if (result.message?.text) {
+                // An action that opens a dialog leaves its message behind the dialog, or, from a dialog, draws the
+                // dialog again and takes the button and its message away. A refresh loads the page behind a dialog,
+                // so a button in the dialog stays.
+                const leaves = result.navigate || result.closeDialog || result.ui || (result.refresh && !inDialog) || result.dialog;
+                actionNote(leaves ? null : trigger, result.message.text, theme(result.message.theme) || 'info');
+            }
             if (result.closeDialog || (result.navigate && t._dialog)) t.closeDialog();
             if (result.navigate) {
                 const target = result.navigate;
@@ -1391,7 +1423,8 @@
             t._dialog.box.remove();
             t._dialog = null;
         },
-        async runHost(host, ctx) {
+        /** Runs one of Task Proxy's own actions, saying how it went by `trigger`, the button that ran it, if any. */
+        async runHost(host, ctx, trigger = null) {
             const t = this;
             switch (host.type) {
                 case 'toggle':
@@ -1401,17 +1434,21 @@
                     document.querySelector('app-plugins-drawer')?.open(t.plugin);
                     return;
                 case 'copy':
-                    await navigator.clipboard.writeText(`${host.text ?? ''}`);
-                    webui.alert('Copied.', 'success');
+                    try {
+                        await navigator.clipboard.writeText(`${host.text ?? ''}`);
+                        actionNote(trigger, 'Copied.', 'success');
+                    } catch (err) {
+                        actionNote(trigger, `It couldn't be copied: ${err?.message ?? err}`, 'danger');
+                    }
                     return;
                 default: {
                     let error = null;
                     const message = await webui.proxy.plugins.hostAction(t.plugin, host, err => { error = `${err}`; });
                     if (error) {
-                        webui.alert(escape(error), 'danger');
+                        actionNote(trigger, error, 'danger');
                         return;
                     }
-                    if (message) webui.alert(escape(message), 'success');
+                    if (message) actionNote(trigger, message, 'success');
                 }
             }
         }

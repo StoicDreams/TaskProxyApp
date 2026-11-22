@@ -1,4 +1,6 @@
 import { test, expect, openApp as openAppOnly, openTool, calls, openDialog, dialogButton } from '../support/app.mjs';
+// Waits for webui-alerts to replace webui.alert before spying on it, which a spy put on sooner would lose.
+import { spyOnAlerts, alerts } from '../../support/wait.mjs';
 
 const ACCOUNT = { id: 1, displayName: 'Test User' };
 const SIGN_IN_URL = 'https://www.stoicdreams.com/signin?app=taskproxy&request=3160d8e4-e8dd-43c7-a397-43b17ef46cbc';
@@ -8,16 +10,6 @@ async function openApp(page, state) {
     await openAppOnly(page, state);
     await openTool(page, 'account');
 }
-
-/** Records the messages shown with webui.alert, which alerts() returns. */
-function spyOnAlerts(page) {
-    return page.evaluate(() => {
-        window.__alerts = [];
-        const original = webui.alert;
-        webui.alert = function (...args) { window.__alerts.push(`${args[0]}`); return original.apply(this, args); };
-    });
-}
-const alerts = page => page.evaluate(() => window.__alerts);
 
 async function startSignIn(page, state = {}) {
     await openApp(page, state);
@@ -71,7 +63,10 @@ test('the approval page can be opened again while it waits', async ({ page }) =>
 test('the code is a button that copies it', async ({ page }) => {
     await startSignIn(page);
     await openDialog(page).getByRole('button', { name: 'Copy the code M7A-JQF' }).click();
-    await expect(openDialog(page)).toContainText('Copied the code.');
+    await expect(openDialog(page).locator('webui-alert.myfi-copied[show]')).toHaveText('Copied the code.');
+    await expect(openDialog(page).locator('webui-alert.myfi-copied')).toHaveAttribute('variant', 'success');
+    // Screen readers hear what a copy did.
+    await expect(openDialog(page).locator('webui-alert.myfi-copied')).toHaveAttribute('aria-live', 'polite');
     await expect.poll(() => page.evaluate(() => window.__backend.clipboard)).toEqual({ text: 'M7A-JQF' });
     // Copying leaves the sign-in waiting.
     await expect(openDialog(page)).toContainText('M7A-JQF');
@@ -105,7 +100,8 @@ test('a refused or expired sign-in says why, and its reason is never markup', as
     await expect.poll(async () => (await calls(page, 'myfi_sign_in_wait')).length).toBe(1);
     await page.evaluate(() => window.__backend.myfi.end('Refused <img src=x onerror="window.__hacked=1">'));
     await expect(openDialog(page)).toHaveCount(0);
-    await expect.poll(() => alerts(page)).toContain('Refused &lt;img src=x onerror=&quot;window.__hacked=1&quot;&gt;');
+    // Shown as text: as markup, the image would leave only "Refused ".
+    await expect.poll(() => alerts(page)).toContain('Refused <img src=x onerror="window.__hacked=1">');
     await expect(button(page)).toHaveAttribute('data-state', 'signed-out');
     await expect.poll(() => page.evaluate(() => window.__hacked)).toBeUndefined();
 });

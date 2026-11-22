@@ -1,3 +1,4 @@
+import { actionNote, spyOnAlerts, alerts } from '../../support/wait.mjs';
 import { test, expect, openApp, calls, dialogButton, onCommand, openDialog } from '../support/app.mjs';
 
 const manifest = {
@@ -17,16 +18,6 @@ async function openPlugin(page, node, state = {}, path = '/plugin/test/home') {
     await expect(page.locator('app-plugin-page')).not.toContainText('Loading');
     await spyOnAlerts(page);
 }
-
-/** Records the messages shown with webui.alert, which alerts() returns. */
-function spyOnAlerts(page) {
-    return page.evaluate(() => {
-        window.__alerts = [];
-        const original = webui.alert;
-        webui.alert = function (...args) { window.__alerts.push(`${args[0]}`); return original.apply(this, args); };
-    });
-}
-const alerts = page => page.evaluate(() => window.__alerts);
 
 test('each kind of node is drawn, and plugin text is never markup', async ({ page }) => {
     await openPlugin(page, {
@@ -394,13 +385,15 @@ test('a form sends its values, and a required field must be filled first', async
     }, { pluginActions: { 'test/create': { message: { text: 'Created P-9.', theme: 'success' } } } });
     const form = page.locator('app-plugin-page form');
     await form.locator('webui-button', { hasText: 'Create' }).click();
-    await expect.poll(() => alerts(page)).toContainEqual('Summary is required.');
+    // Said by the button pressed, rather than in a popup.
+    await expect(actionNote(form, 'Summary is required.')).toHaveCount(1);
     await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
     await form.locator('webui-input-text input').fill('New thing');
     await form.getByLabel('Web').check();
     await form.getByLabel('Assign to me').uncheck();
     await form.locator('webui-button', { hasText: 'Create' }).click();
-    await expect.poll(() => alerts(page)).toContainEqual('Created P-9.');
+    await expect(actionNote(form, 'Created P-9.')).toHaveCount(1);
+    await expect(actionNote(form, 'Summary is required.')).toHaveCount(0);
     const [{ request }] = await calls(page, 'plugin_action');
     expect(request.form).toEqual({ summary: 'New thing', body: 'Hello', kind: 'task', mine: false, labels: ['web', 'api'], project: 'P' });
 });
@@ -418,7 +411,7 @@ test('an action can replace the page, refresh it, or show an error', async ({ pa
     await view.locator('webui-button', { hasText: 'Again' }).click();
     await expect.poll(async () => (await calls(page, 'plugin_render')).length).toBe(renders + 1);
     await view.locator('webui-button', { hasText: 'Broken' }).click();
-    await expect.poll(() => alerts(page)).toContainEqual('test does not know the action broken.');
+    await expect(actionNote(view, 'test does not know the action broken.')).toHaveCount(1);
     await view.locator('webui-button', { hasText: 'Swap' }).click();
     await expect(view).toHaveText('Swapped in');
 });
@@ -466,13 +459,35 @@ test('host actions run in Task Proxy, not the plugin', async ({ page }) => {
     });
     const view = page.locator('app-plugin-page');
     await view.locator('webui-button', { hasText: 'Create branch' }).click();
-    // Alerts are drawn as HTML, so the backend's message is escaped.
-    await expect.poll(() => alerts(page)).toContainEqual('Branch &#39;P-1-fix&#39; created.');
+    // Said as text by the button, so the backend's message is shown as it is.
+    await expect(actionNote(view, "Branch 'P-1-fix' created.")).toHaveCount(1);
     await expect.poll(() => calls(page, 'plugin_host_action')).toEqual([{ id: 'test', action: { type: 'git.createBranch', name: 'P-1-fix' } }]);
     await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
     await view.locator('webui-button', { hasText: 'Settings' }).click();
     // The Plugins drawer opens on this plugin.
     await expect(page.locator('webui-drawer.shared app-plugin-manager [data-plugin="test"]')).toHaveClass(/plugin-highlight/);
+});
+
+test('a host action that failed and then works, saying nothing, no longer shows why it failed', async ({ page }) => {
+    await openPlugin(page, {
+        type: 'toolbar', children: [
+            { type: 'button', action: { id: '', label: 'Switch branch', host: { type: 'git.switchBranch', name: 'P-1-fix' } } },
+        ],
+    });
+    await page.evaluate(() => {
+        const original = window.__backend.handlers.plugin_host_action;
+        window.__backend.handlers.plugin_host_action = args => {
+            window.__backend.handlers.plugin_host_action = original;
+            throw 'The branch could not be switched to.';
+        };
+    });
+    const view = page.locator('app-plugin-page');
+    const button = view.locator('webui-button', { hasText: 'Switch branch' });
+    await button.click();
+    await expect(actionNote(view, 'The branch could not be switched to.')).toHaveCount(1);
+    await button.click();
+    await expect.poll(() => calls(page, 'plugin_host_action')).toHaveLength(2);
+    await expect(actionNote(view, 'The branch could not be switched to.')).toHaveCount(0);
 });
 
 test('sections remember whether they were opened or closed', async ({ page }) => {
@@ -601,6 +616,13 @@ test.describe('editable tables', () => {
         await expect(menu).toHaveCount(0);
         await expect.poll(() => lastAction(page)).toMatchObject({ action: 'cell.set', params: { key: 'P-1' }, form: { value: '31' } });
         await expect.poll(() => alerts(page)).toContain('Status changed on P-1.');
+    });
+
+    test('what a cell\'s button says goes inside its cell, keeping the table whole', async ({ page }) => {
+        await openPlugin(page, table, { pluginActions: { 'test/cell.options': { options: [] } } });
+        await page.locator('app-plugin-page .plugin-select').click();
+        await expect(actionNote(page.locator('app-plugin-page td'), 'There is nothing to change it to.')).toHaveCount(1);
+        await expect(page.locator('app-plugin-page tr > webui-alert')).toHaveCount(0);
     });
 
     test('a long list of choices can be filtered, and Escape closes it', async ({ page }) => {
@@ -825,4 +847,144 @@ test.describe('spec 0.1.3', () => {
         await expect.poll(() => calls(page, 'plugin_host_action')).toEqual([{ id: 'test', action: { type: 'git.createBranch', name: 'feature/PROJ-1_fix-login' } }]);
         await expect.poll(() => calls(page, 'plugin_action')).toEqual([]);
     });
+});
+
+test('a message with an answer that draws the page again goes to the app\'s alerts, since its button is gone', async ({ page }) => {
+    await openPlugin(page, { type: 'button', action: action('go', 'Go') }, {
+        pluginActions: { 'test/go': { ui: text('Drawn again'), message: { text: 'Went there.', theme: 'success' } } },
+    });
+    await page.locator('app-plugin-page').getByText('Go').click();
+    await expect(page.locator('app-plugin-page')).toContainText('Drawn again');
+    await expect.poll(() => alerts(page)).toContain('Went there.');
+});
+
+test('what a row, a sortable header, a switch or a clipped text\'s action said is shown by it, not in the app\'s alerts', async ({ page }) => {
+    await openPlugin(page, {
+        type: 'stack', children: [
+            {
+                type: 'table', columns: [{ label: 'Key', action: action('sort', 'Sort by key') }],
+                rows: [{ cells: [text('P-1')], action: action('open', 'Open P-1') }],
+            },
+            { type: 'button', on: false, action: action('flip', 'Watch') },
+            { type: 'clip', text: 'A summary long enough to be cut short here', max: 10, action: action('more', 'Read all') },
+        ],
+    }, {
+        pluginActions: {
+            'test/open': { message: { text: 'Row ran.' } },
+            'test/sort': { message: { text: 'Header ran.' } },
+            'test/flip': { message: { text: 'Switch ran.' } },
+            'test/more': { message: { text: 'Clip ran.' } },
+        },
+    });
+    const view = page.locator('app-plugin-page');
+    await view.locator('tr.plugin-clickable').click();
+    await expect(actionNote(view, 'Row ran.')).toHaveCount(1);
+    // Said after the table, never inside a header cell.
+    await view.locator('th.plugin-sortable').click();
+    await expect(actionNote(view, 'Header ran.')).toHaveCount(1);
+    await expect(view.locator('table webui-alert')).toHaveCount(0);
+    await view.locator('webui-toggle-icon.plugin-switch').click();
+    await expect(actionNote(view, 'Switch ran.')).toHaveCount(1);
+    await view.locator('.plugin-clip-open').click();
+    await expect(actionNote(view, 'Clip ran.')).toHaveCount(1);
+    await expect.poll(() => alerts(page)).toEqual([]);
+});
+
+test('what a link\'s or a form\'s Cancel action said is shown by it, not in the app\'s alerts', async ({ page }) => {
+    await openPlugin(page, {
+        type: 'stack', children: [
+            { type: 'link', text: 'P-1', action: action('open', 'Open P-1') },
+            { type: 'form', fields: [], submit: action('save', 'Save'), cancel: action('stop', 'Cancel') },
+        ],
+    }, {
+        pluginActions: {
+            'test/open': { message: { text: 'Link ran.' } },
+            'test/stop': { message: { text: 'Cancel ran.' } },
+        },
+    });
+    const view = page.locator('app-plugin-page');
+    await view.locator('.plugin-link').click();
+    await expect(actionNote(view, 'Link ran.')).toHaveCount(1);
+    await view.locator('form webui-button', { hasText: 'Cancel' }).click();
+    await expect(actionNote(view.locator('form'), 'Cancel ran.')).toHaveCount(1);
+    await expect.poll(() => alerts(page)).toEqual([]);
+});
+
+test('a reordered list is disabled while its new order saves, and what the plugin said is shown by it', async ({ page }) => {
+    await page.clock.install();
+    const items = ['First', 'Second'].map((label, index) => ({ id: `id-${index}`, children: [text(label)] }));
+    await openPlugin(page, { type: 'stack', children: [{ type: 'reorder', items, action: action('order', 'Reorder') }] }, {
+        pluginActions: { 'test/order': { message: { text: 'Order saved.', theme: 'success' } } },
+    });
+    await page.evaluate(() => {
+        const original = window.__backend.handlers.plugin_action;
+        window.__backend.handlers.plugin_action = args => new Promise(resolve => { window.__release = () => resolve(original(args)); });
+    });
+    const list = page.locator('app-plugin-page webui-reorder.plugin-reorder');
+    await page.locator('app-plugin-page .plugin-reorder-item[data-id="id-0"] .plugin-reorder-handle').focus();
+    await page.keyboard.press('Alt+ArrowDown');
+    await page.clock.runFor(1000);
+    await expect.poll(() => page.evaluate(() => typeof window.__release)).toBe('function');
+    await expect(list).toHaveAttribute('disabled', '');
+    await page.evaluate(() => window.__release());
+    await expect(list).not.toHaveAttribute('disabled', /.*/);
+    await expect(actionNote(page.locator('app-plugin-page'), 'Order saved.')).toHaveCount(1);
+    await expect.poll(() => alerts(page)).toEqual([]);
+});
+
+test('a message from a dialog\'s action that refreshes the page is shown by its button, which stays', async ({ page }) => {
+    await openPlugin(page, { type: 'button', action: action('show', 'Show') }, {
+        pluginActions: {
+            'test/show': { dialog: { title: 'Details', ui: { type: 'button', action: action('save', 'Save it') } } },
+            'test/save': { refresh: true, message: { text: 'Saved it.', theme: 'success' } },
+        },
+    });
+    await page.locator('app-plugin-page').getByText('Show').click();
+    const dialog = page.locator('dialog.plugin-dialog');
+    await dialog.getByText('Save it').click();
+    await expect(actionNote(dialog, 'Saved it.')).toHaveCount(1);
+    await expect.poll(() => alerts(page)).toEqual([]);
+});
+
+test('a message from an action that opens a dialog goes to the app\'s alerts, not behind the dialog', async ({ page }) => {
+    await openPlugin(page, { type: 'button', action: action('show', 'Show') }, {
+        pluginActions: { 'test/show': { dialog: { title: 'Details', ui: text('In the dialog') }, message: { text: 'Opened it.' } } },
+    });
+    await page.locator('app-plugin-page').getByText('Show').click();
+    await expect(page.getByText('In the dialog')).toBeVisible();
+    await expect.poll(() => alerts(page)).toContain('Opened it.');
+    await expect(actionNote(page.locator('app-plugin-page'), 'Opened it.')).toHaveCount(0);
+});
+
+test('a message from a dialog\'s action that opens another dialog goes to the app\'s alerts, since the dialog is drawn again', async ({ page }) => {
+    await openPlugin(page, { type: 'button', action: action('show', 'Show') }, {
+        pluginActions: {
+            'test/show': { dialog: { title: 'First', ui: { type: 'button', action: action('next', 'Next') } } },
+            'test/next': { dialog: { title: 'Second', ui: text('The second dialog') }, message: { text: 'Moved on.' } },
+        },
+    });
+    await page.locator('app-plugin-page').getByText('Show').click();
+    const dialog = page.locator('dialog.plugin-dialog');
+    await dialog.getByText('Next').click();
+    await expect(dialog).toContainText('The second dialog');
+    await expect.poll(() => alerts(page)).toContain('Moved on.');
+});
+
+test('clicking what a row\'s action said, in its cell, does not run the row\'s action again', async ({ page }) => {
+    await openPlugin(page, {
+        type: 'table', columns: ['Key', 'Status'],
+        rows: [{
+            cells: [text('P-1'), { type: 'select', text: 'To Do', options: action('cell.options', 'Change Status'), action: action('cell.set', 'Change Status') }],
+            action: action('open', 'Open P-1'),
+        }],
+    }, { pluginActions: { 'test/cell.options': { options: [] }, 'test/open': {} } });
+    const view = page.locator('app-plugin-page');
+    await view.locator('.plugin-select').click();
+    const note = actionNote(view.locator('td'), 'There is nothing to change it to.');
+    await expect(note).toHaveCount(1);
+    await note.click();
+    await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.action)).toEqual(['cell.options']);
+    // The row itself still runs its action, so a click that would have reached it is seen.
+    await view.locator('td').first().click();
+    await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.action)).toEqual(['cell.options', 'open']);
 });

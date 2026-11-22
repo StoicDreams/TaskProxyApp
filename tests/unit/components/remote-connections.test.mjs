@@ -1,18 +1,10 @@
 import { test, expect, openApp, mount, calls, openDialog, dialogButton } from '../support/app.mjs';
+import { spyOnAlerts, alerts } from '../../support/wait.mjs';
 
 const ACCOUNT = { id: 12, displayName: 'Test User' };
 const PHONE = { key: 'key-phone', name: 'Firefox on Android', code: 'ABC-DEF' };
 const LAPTOP = { key: 'key-laptop', name: 'Chrome on Linux', code: 'XYZ-234' };
 
-async function spyOnAlerts(page) {
-    // The header's webui-alerts replaces webui.alert once it loads, which would drop a spy put on before it.
-    await page.waitForFunction(() => window.webuiAlert === webui.alert);
-    await page.evaluate(() => {
-        window.__alerts = [];
-        const original = webui.alert;
-        webui.alert = function (...args) { window.__alerts.push(`${args[0]}`); return original.apply(this, args); };
-    });
-}
 async function panel(page, state = {}) {
     await openApp(page, { project: null, myfi: { account: ACCOUNT }, ...state });
     await spyOnAlerts(page);
@@ -21,7 +13,6 @@ async function panel(page, state = {}) {
     await expect(el.locator('.remote-state')).toBeVisible();
     return el;
 }
-const alerts = page => page.evaluate(() => window.__alerts);
 const role = (el, name) => el.locator(`[data-role="${name}"]`);
 const browser = (el, key) => el.locator(`[data-browser="${key}"]`);
 /** Chooses an option in a webui-select by its value: opens its tiles and clicks that one. */

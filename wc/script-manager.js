@@ -32,15 +32,17 @@
             let t = this;
             if (!file) return;
             await webui.wait(() => !!t._runner.loadScript);
-            t._runner.loadScript(file);
+            // An unsaved draft was kept, so the list names the script still shown.
+            if (!await t._runner.loadScript(file)) t._fileSelector.value = t._runner._fileName;
         },
         connected() {
             const t = this;
             t._fileSelector.addEventListener('change', ev => {
                 t.loadScript(t._fileSelector.value);
             });
-            t._btnNew.addEventListener('click', () => {
-                t._runner.setScript('', '');
+            t._btnNew.addEventListener('click', async () => {
+                // Asked first whether to discard an unsaved draft, and kept, nothing new is started.
+                if (!await t._runner.setScript('', '')) return;
                 t._runner.runSaveAs();
             });
             t._runner.addEventListener('script-saved', ev => {

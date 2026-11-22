@@ -26,7 +26,11 @@
             const t = this;
             const current = project && project.value ? project : null;
             t._heading.hidden = !current;
-            if (!current) return;
+            if (!current) {
+                // With no project, the name is for none, so what its rename said goes too.
+                t._name.removeAttribute('project');
+                return;
+            }
             if (t._name.getAttribute('project') !== current.value) t._name.setAttribute('project', current.value);
             t._name.setAttribute('name', `${current.display ?? ''}`);
         },

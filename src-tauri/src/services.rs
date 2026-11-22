@@ -1,3 +1,4 @@
+pub(crate) mod ai;
 pub(crate) mod browser;
 pub(crate) mod ci_status;
 pub(crate) mod clipboard;

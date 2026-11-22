@@ -1,5 +1,5 @@
 import { test, expect, openApp, openTool, openPage, calls, dialogButton, openDialog } from '../support/app.mjs';
-import { alertPopup } from '../../support/wait.mjs';
+import { actionNote } from '../../support/wait.mjs';
 
 const open = async page => {
     await openTool(page, 'variables');
@@ -35,6 +35,64 @@ test('values show masked as page scripts show them, and in full while their fiel
     await expect(field).toHaveValue('rep***-99');
     // Leaving the field never saves the masked copy.
     await expect.poll(() => page.evaluate(() => webui.getProjectData('token'))).toBe('replaced-value-99');
+});
+test('a value shown masked is copied in full', async ({ page }) => {
+    await openApp(page, { data: { token: 'abcdef123456xyz' }, variables: ['token|text|'] });
+    await open(page);
+    await page.evaluate(() => {
+        window.__copied = [];
+        webui.copyToClipboard = text => window.__copied.push(text);
+    });
+    // The field has never had focus, so it shows the value masked.
+    await expect(page.locator('#var-project-list webui-input-text input')).toHaveValue('abc***xyz');
+    await page.locator('#var-project-list webui-icon[title="Copy Value to Clipboard"]').click();
+    await expect.poll(() => page.evaluate(() => window.__copied)).toEqual(['abcdef123456xyz']);
+    await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').click();
+    await expect(actionNote(page, 'Copied token to the global variables.')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => webui.getGlobalData('token'))).toBe('abcdef123456xyz');
+});
+test('a value typed and left is copied in full', async ({ page }) => {
+    await openApp(page, { variables: ['token|text|'] });
+    await open(page);
+    const field = page.locator('#var-project-list webui-input-text input');
+    await field.fill('typed-value-12345');
+    await field.press('Tab');
+    await expect(field).toHaveValue('typ***345');
+    await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').click();
+    await expect(actionNote(page, 'Copied token to the global variables.')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => webui.getGlobalData('token'))).toBe('typed-value-12345');
+});
+test('what was said under a list goes when a row\'s action is used or the list is drawn again', async ({ page }) => {
+    await openApp(page, { data: { token: 'abcdef123456xyz' }, variables: ['token|text|'] });
+    await open(page);
+    await page.evaluate(() => { webui.copyToClipboard = () => {}; });
+    const copied = actionNote(page, 'Copied token to the global variables.');
+    await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').click();
+    await expect(copied).toHaveCount(1);
+    await page.locator('#var-project-list webui-icon[title="Copy Value to Clipboard"]').click();
+    await expect(copied).toHaveCount(0);
+    await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').click();
+    await expect(copied).toHaveCount(1);
+    // Adding a variable draws the lists again.
+    await page.locator('input#input-proj-var').fill('another');
+    await page.locator('#btn-add-proj').click();
+    await expect(page.locator('#var-project-list webui-input-text')).toHaveCount(2);
+    await expect(copied).toHaveCount(0);
+});
+test('Clear Value clears a value shown masked, and it stays cleared', async ({ page }) => {
+    await openApp(page, { data: { token: 'abcdef123456xyz' }, variables: ['token|text|'] });
+    await open(page);
+    const field = page.locator('#var-project-list webui-input-text input');
+    await expect(field).toHaveValue('abc***xyz');
+    await page.locator('#var-project-list webui-icon[title="Clear Value"]').click();
+    await dialogButton(page, 'Clear').click();
+    await expect(openDialog(page)).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => webui.getProjectData('token'))).toBe('');
+    await expect.poll(async () => page.evaluate(() => window.__backend.savedProjects['/repo'].data.token)).toBe('');
+    await expect(field).toHaveValue('');
+    // Editing it again starts from the cleared value, not the old one.
+    await field.click();
+    await expect(field).toHaveValue('');
 });
 test('scope switches show on for a new install', async ({ page }) => {
     await openApp(page, { newInstall: true });
@@ -90,8 +148,26 @@ test('adding a variable defines it, and duplicates are refused', async ({ page }
     await expect.poll(() => page.evaluate(() => webui.projectData.variables)).toContain('new_one|text|');
     await page.locator('input#input-proj-var').fill('new_one');
     await page.locator('#btn-add-proj').click();
-    await expect(alertPopup(page, 'Project variable already exists')).toHaveCount(1);
+    await expect(actionNote(page, 'Project variable already exists')).toHaveCount(1);
     await expect.poll(() => page.evaluate(() => webui.projectData.variables.filter(v => v.startsWith('new_one')))).toHaveLength(1);
+});
+test('a refused name\'s warning goes once a name is added, or the field is emptied', async ({ page }) => {
+    await openApp(page, { variables: ['taken|text|'] });
+    await open(page);
+    const projectRefused = actionNote(page, 'Project variable already exists');
+    await page.locator('input#input-proj-var').fill('taken');
+    await page.locator('#btn-add-proj').click();
+    await expect(projectRefused).toHaveCount(1);
+    await page.locator('input#input-proj-var').fill('fresh');
+    await page.locator('#btn-add-proj').click();
+    await expect.poll(() => page.evaluate(() => webui.projectData.variables)).toContain('fresh|text|');
+    await expect(projectRefused).toHaveCount(0);
+    await page.locator('input#input-proj-var').fill('taken');
+    await page.locator('#btn-add-proj').click();
+    await expect(projectRefused).toHaveCount(1);
+    await page.locator('input#input-proj-var').fill('');
+    await page.locator('#btn-add-proj').click();
+    await expect(projectRefused).toHaveCount(0);
 });
 test('deleting a project variable lets a global value of that name show through', async ({ page }) => {
     await openApp(page, { data: { shared: 'project' }, variables: ['shared|text|'], appData: { shared: 'global' }, appVariables: ['shared|text|'] });
@@ -173,6 +249,25 @@ test.describe('environments', () => {
         await page.locator('webui-button.env-save-btn').click();
         await expect.poll(() => page.evaluate(() => [webui.projectData.data._environments[0].name, webui.projectData.data._activeEnvironment])).toEqual(['renamed', 'renamed']);
     });
+    test('a refused environment name\'s warning goes when there is nothing to add or rename', async ({ page }) => {
+        await openApp(page, { data: envData([{ name: 'dev', variables: {} }, { name: 'prod', variables: {} }]) });
+        await open(page);
+        await page.locator('#btn-manage-env').click();
+        const input = page.locator('input[id^="new-env-input"]');
+        await input.fill('DEV');
+        await page.locator('webui-button[id^="btn-add-env"]').click();
+        await expect(actionNote(openDialog(page), 'Environment already exists')).toHaveCount(1);
+        await input.fill('');
+        await page.locator('webui-button[id^="btn-add-env"]').click();
+        await expect(actionNote(openDialog(page), 'Environment already exists')).toHaveCount(0);
+        const devRow = page.locator('webui-grid:has(webui-button.env-save-btn[data-env="dev"])');
+        await devRow.locator('webui-input-text input').fill('prod');
+        await devRow.locator('webui-button.env-save-btn').click();
+        await expect(actionNote(openDialog(page), 'Environment name already exists')).toHaveCount(1);
+        await devRow.locator('webui-input-text input').fill('dev');
+        await devRow.locator('webui-button.env-save-btn').click();
+        await expect(actionNote(openDialog(page), 'Environment name already exists')).toHaveCount(0);
+    });
     test('the last environment cannot be deleted', async ({ page }) => {
         await openApp(page, { data: envData([{ name: 'dev', variables: {} }]) });
         await open(page);
@@ -188,6 +283,18 @@ test.describe('environments', () => {
         await page.locator('webui-button.env-del-btn[data-env="dev"]').click();
         await expect.poll(() => page.evaluate(() => webui.projectData.data._activeEnvironment)).toBe('prod');
         await expect.poll(() => page.evaluate(() => webui.getProjectData('key'))).toBe('prod value');
+    });
+    test('a deleted environment takes what was said by its row with it', async ({ page }) => {
+        await openApp(page, { data: envData([{ name: 'dev', variables: {} }, { name: 'prod', variables: {} }]) });
+        await open(page);
+        await page.locator('#btn-manage-env').click();
+        const devRow = page.locator('webui-grid:has(webui-button.env-save-btn[data-env="dev"])');
+        await devRow.locator('webui-input-text input').fill('old');
+        await devRow.locator('webui-button.env-save-btn').click();
+        await expect(actionNote(openDialog(page), 'Environment renamed')).toHaveCount(1);
+        await page.locator('webui-button.env-del-btn[data-env="old"]').click();
+        await expect(actionNote(openDialog(page), 'Environment old deleted')).toHaveCount(1);
+        await expect(actionNote(openDialog(page), 'Environment renamed')).toHaveCount(0);
     });
     test('environment names are escaped in markup', async ({ page }) => {
         await openApp(page, { data: envData([{ name: '"><img src=x onerror="window.__xss=1">', variables: {} }]) });
@@ -211,6 +318,16 @@ test.describe('values kept on the desktop', () => {
         }
         await expect.poll(() => page.locator('app-var-manager, webui-drawer.shared').first().evaluate(() => document.body.innerText)).not.toContain('[object Object]');
         await page.locator('#var-project-list webui-input-text input').fill('new password');
+        await page.locator('#var-project-list webui-input-text input').press('Tab');
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('db_password'))).toBe('new password');
+        await expect(page.locator('#var-project-list webui-input-text input')).not.toHaveAttribute('placeholder', /./);
+    });
+    test('Enter replaces them with what was typed', async ({ page }) => {
+        await openApp(page, { data: { db_password: kept }, variables: ['db_password|secret|'] });
+        await open(page);
+        const field = page.locator('#var-project-list webui-input-text input');
+        await field.fill('new password');
+        await field.press('Enter');
         await expect.poll(() => page.evaluate(() => webui.getProjectData('db_password'))).toBe('new password');
     });
     test('cannot be copied to another scope or the clipboard from here', async ({ page }) => {
@@ -219,18 +336,59 @@ test.describe('values kept on the desktop', () => {
         await page.evaluate(() => {
             window.__copied = [];
             webui.copyToClipboard = text => window.__copied.push(text);
-            // Each refusal says why, so the messages show both clicks were dealt with.
-            window.__alerts = [];
-            const alert = webui.alert;
-            webui.alert = function (...args) { window.__alerts.push(`${args[0]}`); return alert.apply(this, args); };
         });
-        const refused = 'db_password is kept on the desktop, so copy it there.';
+        // Each refusal says why, under its row, so clearing it between clicks shows both were dealt with.
+        const refused = actionNote(page, 'db_password is kept on the desktop, so copy it there.');
         await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').first().click();
-        await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([refused]);
+        await expect(refused).toHaveCount(1);
+        // Said in the Project tab, under the variable's row in its list.
+        await expect(page.locator('#var-project-list > webui-grid + webui-alert.action-note[show]')).toHaveText('db_password is kept on the desktop, so copy it there.');
+        await page.evaluate(() => clearActionNote(document.querySelector('#var-project-list webui-icon[title="Copy Value to Global Scope"]')));
+        await expect(refused).toHaveCount(0);
         await page.locator('#var-project-list webui-icon[title="Copy Value to Clipboard"]').first().click();
-        await expect.poll(() => page.evaluate(() => window.__alerts)).toEqual([refused, refused]);
+        await expect(refused).toHaveCount(1);
         await expect.poll(() => page.evaluate(() => webui.getGlobalData('db_password'))).toBeUndefined();
         await expect.poll(() => page.evaluate(() => window.__copied)).toEqual([]);
+    });
+    test('once replaced, the new value can be copied after the field is left', async ({ page }) => {
+        await openApp(page, { data: { db_password: kept }, variables: ['db_password|secret|'] });
+        await open(page);
+        const field = page.locator('#var-project-list webui-input-text input');
+        await field.fill('new password 99');
+        await field.press('Tab');
+        await expect(field).toHaveValue('new*** 99');
+        await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').click();
+        await expect(actionNote(page, 'Copied db_password to the global variables.')).toHaveCount(1);
+        await expect.poll(() => page.evaluate(() => webui.getGlobalData('db_password'))).toBe('new password 99');
+    });
+    test('emptying the field after typing keeps it, and only Clear empties it', async ({ page }) => {
+        await openApp(page, { data: { db_password: kept }, variables: ['db_password|secret|'] });
+        await open(page);
+        const field = page.locator('#var-project-list webui-input-text input');
+        await field.fill('abc');
+        await field.fill('');
+        await field.press('Tab');
+        await expect(field).toHaveValue('');
+        await expect(page.locator('#var-project-list webui-input-text')).toHaveAttribute('placeholder', 'Set. Type to replace it.');
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('db_password'))).toEqual(kept);
+        // The text typed and erased never reached the desktop, so the value kept there is still there.
+        await expect.poll(async () => JSON.stringify(await calls(page, 'patch_project_data'))).not.toContain('abc');
+        await expect.poll(() => page.evaluate(() => window.__backend.savedProjects['/repo'].data.db_password)).toEqual(kept);
+    });
+    test('once cleared, it is no longer kept: it shows empty and can be copied', async ({ page }) => {
+        await openApp(page, { data: { db_password: kept }, variables: ['db_password|secret|'] });
+        await open(page);
+        const field = page.locator('#var-project-list webui-input-text');
+        await expect(field).toHaveAttribute('placeholder', 'Set. Type to replace it.');
+        await page.locator('#var-project-list webui-icon[title="Clear Value"]').click();
+        await dialogButton(page, 'Clear').click();
+        await expect.poll(() => page.evaluate(() => webui.getProjectData('db_password'))).toBe('');
+        await expect(field.locator('input')).not.toHaveAttribute('placeholder', /./);
+        await expect(field).not.toHaveAttribute('title', /.*/);
+        await page.locator('#var-project-list webui-icon[title="Copy Value to Global Scope"]').click();
+        await expect(actionNote(page, 'Copied db_password to the global variables.')).toHaveCount(1);
+        await expect(actionNote(page, 'db_password is kept on the desktop, so copy it there.')).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => webui.getGlobalData('db_password'))).toBe('');
     });
 });
 test('the Variables tab counts the variables on the page shown, and none on pages without them', async ({ page }) => {

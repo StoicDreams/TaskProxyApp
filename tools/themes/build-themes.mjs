@@ -31,36 +31,38 @@ const FONTS = {
 /** Fonts drawn in capitals, spaced out. */
 const CAPS = new Set(['chiseled', 'tech']);
 
+/** An opacity written short, as 0.0585 rather than the 0.058499999999999996 multiplying can leave. */
+const op = x => +x.toFixed(4);
 /**
  * Textures behind the page, tiled. `ink` is the texture's color and `o` its strength. Each returns an SVG.
  */
 const TEXTURES = {
     noise: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 ${ink.map(c => (c / 255).toFixed(2)).join(' 0 0 0 0 ')} 0 0 0 ${(o * 1.6).toFixed(3)} 0'/></filter><rect width='100%' height='100%' filter='url(#n)'/></svg>`,
-    grid: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><path d='M28 0H0V28' fill='none' stroke='${hex(ink)}' stroke-opacity='${o}' stroke-width='1'/></svg>`,
-    blueprint: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96'><g fill='none' stroke='${hex(ink)}'><path d='M96 0H0V96' stroke-opacity='${o * 2}' stroke-width='1.2'/><path d='M24 0V96M48 0V96M72 0V96M0 24H96M0 48H96M0 72H96' stroke-opacity='${o}' stroke-width='0.6'/></g></svg>`,
-    dots: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18'><circle cx='9' cy='9' r='1.3' fill='${hex(ink)}' fill-opacity='${o * 1.5}'/></svg>`,
-    halftone: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'><circle cx='3.5' cy='3.5' r='2.2' fill='${hex(ink)}' fill-opacity='${o * 1.3}'/><circle cx='10.5' cy='10.5' r='2.2' fill='${hex(ink)}' fill-opacity='${o * 1.3}'/></svg>`,
-    iso: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='48' height='56' viewBox='0 0 48 56'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${o}' stroke-width='1'><path d='M24 4l20 12v24L24 52 4 40V16z'/><path d='M4 16l20 12 20-12M24 28v24'/></g></svg>`,
-    hatch: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'><path d='M-1 9L9 -1' stroke='${hex(ink)}' stroke-opacity='${o * 1.2}' stroke-width='0.8'/></svg>`,
-    stripes: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><path d='M-7 35L35 -7M-21 21L21 -21M7 49L49 7' stroke='${hex(ink)}' stroke-opacity='${o}' stroke-width='6'/></svg>`,
-    scan: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='1' fill='${hex(ink)}' fill-opacity='${o * 1.4}'/></svg>`,
-    waves: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='60' height='20'><path d='M0 10c10-8 20-8 30 0s20 8 30 0' fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.5}' stroke-width='1.2'/></svg>`,
-    dunes: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='48'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.3}' stroke-width='1'><path d='M0 16c40-10 80 10 160 0'/><path d='M0 38c50-12 100 8 160-2'/></g></svg>`,
-    grain: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.3}' stroke-width='0.8'><path d='M0 6c50 4 90-4 200 2'/><path d='M0 17c60-5 110 6 200-1'/><path d='M0 29c40 3 120-6 200 3'/><path d='M60 36c20-3 40-3 60 0'/></g></svg>`,
-    topo: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.3}' stroke-width='1'><path d='M80 30c30 0 50 20 46 48s-30 44-56 40-42-28-38-52 20-36 48-36z'/><path d='M80 50c18 0 30 12 28 30s-18 26-34 24-26-16-24-30 12-24 30-24z'/><path d='M0 150c30-20 60 10 100-6s50-10 60-4'/></g></svg>`,
-    circuit: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.4}' stroke-width='1.2'><path d='M0 20h24l12 12h20M56 32v28l-10 10H0M80 56H64'/><circle cx='56' cy='32' r='2.5'/><circle cx='64' cy='56' r='2.5'/></g></svg>`,
-    stars: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><g fill='${hex(ink)}' fill-opacity='${Math.min(1, o * 5)}'><circle cx='20' cy='30' r='1'/><circle cx='90' cy='12' r='0.7'/><circle cx='150' cy='60' r='1.2'/><circle cx='60' cy='100' r='0.8'/><circle cx='120' cy='140' r='1'/><circle cx='30' cy='160' r='0.6'/><circle cx='170' cy='170' r='0.7'/><circle cx='100' cy='80' r='0.5'/></g></svg>`,
-    bubbles: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.6}' stroke-width='1'><circle cx='20' cy='24' r='6'/><circle cx='80' cy='50' r='10'/><circle cx='40' cy='96' r='4'/><circle cx='104' cy='104' r='3'/></g></svg>`,
-    leaves: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='90' height='90'><g fill='${hex(ink)}' fill-opacity='${o * 1.1}'><path d='M20 30c0-12 10-20 22-20 0 12-10 20-22 20z'/><path d='M62 70c4-10 16-14 26-10-4 10-16 14-26 10z'/></g></svg>`,
-    petals: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><g fill='${hex(ink)}' fill-opacity='${o * 1.1}'><ellipse cx='24' cy='26' rx='7' ry='3.5' transform='rotate(30 24 26)'/><ellipse cx='74' cy='68' rx='6' ry='3' transform='rotate(-40 74 68)'/><ellipse cx='70' cy='18' rx='4' ry='2' transform='rotate(70 70 18)'/></g></svg>`,
-    confetti: (ink, o, colors) => `<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><g fill-opacity='${Math.min(1, o * 5)}'><rect x='14' y='18' width='8' height='3' fill='${colors[0]}' transform='rotate(25 18 20)'/><rect x='70' y='30' width='7' height='3' fill='${colors[1]}' transform='rotate(-30 74 31)'/><circle cx='100' cy='80' r='2.5' fill='${colors[2]}'/><rect x='34' y='86' width='8' height='3' fill='${colors[3]}' transform='rotate(60 38 88)'/><circle cx='50' cy='54' r='2' fill='${colors[0]}'/></g></svg>`,
-    rain: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='60'><g stroke='${hex(ink)}' stroke-opacity='${o * 1.6}' stroke-width='1' stroke-linecap='round'><path d='M8 4l-4 12M28 26l-4 12M18 46l-3 9'/></g></svg>`,
-    craters: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.5}' stroke-width='1'><circle cx='30' cy='40' r='14'/><circle cx='100' cy='90' r='22'/><circle cx='70' cy='20' r='5'/><circle cx='34' cy='112' r='8'/></g></svg>`,
-    streaks: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><g stroke='${hex(ink)}' stroke-opacity='${o * 1.5}' stroke-width='1' stroke-linecap='round'><path d='M10 70l50-30M90 150l50-30M100 30l30-18'/></g></svg>`,
-    tiles: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><path d='M20 2l18 18-18 18L2 20z' fill='none' stroke='${hex(ink)}' stroke-opacity='${o * 1.2}' stroke-width='1'/></svg>`,
-    hex: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='42' height='48' viewBox='0 0 42 48'><path d='M21 0l21 12v24L21 48 0 36V12z' fill='none' stroke='${hex(ink)}' stroke-opacity='${o}' stroke-width='1'/></svg>`,
-    ruled: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='10' height='32'><path d='M0 31.5H10' stroke='${hex(ink)}' stroke-opacity='${o * 1.6}' stroke-width='1'/></svg>`,
-    triangles: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='56' height='48'><path d='M0 48L28 0l28 48z' fill='none' stroke='${hex(ink)}' stroke-opacity='${o}' stroke-width='1'/></svg>`,
+    grid: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><path d='M28 0H0V28' fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o)}' stroke-width='1'/></svg>`,
+    blueprint: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96'><g fill='none' stroke='${hex(ink)}'><path d='M96 0H0V96' stroke-opacity='${op(o * 2)}' stroke-width='1.2'/><path d='M24 0V96M48 0V96M72 0V96M0 24H96M0 48H96M0 72H96' stroke-opacity='${op(o)}' stroke-width='0.6'/></g></svg>`,
+    dots: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18'><circle cx='9' cy='9' r='1.3' fill='${hex(ink)}' fill-opacity='${op(o * 1.5)}'/></svg>`,
+    halftone: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'><circle cx='3.5' cy='3.5' r='2.2' fill='${hex(ink)}' fill-opacity='${op(o * 1.3)}'/><circle cx='10.5' cy='10.5' r='2.2' fill='${hex(ink)}' fill-opacity='${op(o * 1.3)}'/></svg>`,
+    iso: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='48' height='56' viewBox='0 0 48 56'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o)}' stroke-width='1'><path d='M24 4l20 12v24L24 52 4 40V16z'/><path d='M4 16l20 12 20-12M24 28v24'/></g></svg>`,
+    hatch: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'><path d='M-1 9L9 -1' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.2)}' stroke-width='0.8'/></svg>`,
+    stripes: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><path d='M-7 35L35 -7M-21 21L21 -21M7 49L49 7' stroke='${hex(ink)}' stroke-opacity='${op(o)}' stroke-width='6'/></svg>`,
+    scan: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='1' fill='${hex(ink)}' fill-opacity='${op(o * 1.4)}'/></svg>`,
+    waves: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='60' height='20'><path d='M0 10c10-8 20-8 30 0s20 8 30 0' fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.5)}' stroke-width='1.2'/></svg>`,
+    dunes: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='48'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.3)}' stroke-width='1'><path d='M0 16c40-10 80 10 160 0'/><path d='M0 38c50-12 100 8 160-2'/></g></svg>`,
+    grain: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='200' height='40'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.3)}' stroke-width='0.8'><path d='M0 6c50 4 90-4 200 2'/><path d='M0 17c60-5 110 6 200-1'/><path d='M0 29c40 3 120-6 200 3'/><path d='M60 36c20-3 40-3 60 0'/></g></svg>`,
+    topo: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.3)}' stroke-width='1'><path d='M80 30c30 0 50 20 46 48s-30 44-56 40-42-28-38-52 20-36 48-36z'/><path d='M80 50c18 0 30 12 28 30s-18 26-34 24-26-16-24-30 12-24 30-24z'/><path d='M0 150c30-20 60 10 100-6s50-10 60-4'/></g></svg>`,
+    circuit: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.4)}' stroke-width='1.2'><path d='M0 20h24l12 12h20M56 32v28l-10 10H0M80 56H64'/><circle cx='56' cy='32' r='2.5'/><circle cx='64' cy='56' r='2.5'/></g></svg>`,
+    stars: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><g fill='${hex(ink)}' fill-opacity='${op(Math.min(1, o * 5))}'><circle cx='20' cy='30' r='1'/><circle cx='90' cy='12' r='0.7'/><circle cx='150' cy='60' r='1.2'/><circle cx='60' cy='100' r='0.8'/><circle cx='120' cy='140' r='1'/><circle cx='30' cy='160' r='0.6'/><circle cx='170' cy='170' r='0.7'/><circle cx='100' cy='80' r='0.5'/></g></svg>`,
+    bubbles: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.6)}' stroke-width='1'><circle cx='20' cy='24' r='6'/><circle cx='80' cy='50' r='10'/><circle cx='40' cy='96' r='4'/><circle cx='104' cy='104' r='3'/></g></svg>`,
+    leaves: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='90' height='90'><g fill='${hex(ink)}' fill-opacity='${op(o * 1.1)}'><path d='M20 30c0-12 10-20 22-20 0 12-10 20-22 20z'/><path d='M62 70c4-10 16-14 26-10-4 10-16 14-26 10z'/></g></svg>`,
+    petals: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><g fill='${hex(ink)}' fill-opacity='${op(o * 1.1)}'><ellipse cx='24' cy='26' rx='7' ry='3.5' transform='rotate(30 24 26)'/><ellipse cx='74' cy='68' rx='6' ry='3' transform='rotate(-40 74 68)'/><ellipse cx='70' cy='18' rx='4' ry='2' transform='rotate(70 70 18)'/></g></svg>`,
+    confetti: (ink, o, colors) => `<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><g fill-opacity='${op(Math.min(1, o * 5))}'><rect x='14' y='18' width='8' height='3' fill='${colors[0]}' transform='rotate(25 18 20)'/><rect x='70' y='30' width='7' height='3' fill='${colors[1]}' transform='rotate(-30 74 31)'/><circle cx='100' cy='80' r='2.5' fill='${colors[2]}'/><rect x='34' y='86' width='8' height='3' fill='${colors[3]}' transform='rotate(60 38 88)'/><circle cx='50' cy='54' r='2' fill='${colors[0]}'/></g></svg>`,
+    rain: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='60'><g stroke='${hex(ink)}' stroke-opacity='${op(o * 1.6)}' stroke-width='1' stroke-linecap='round'><path d='M8 4l-4 12M28 26l-4 12M18 46l-3 9'/></g></svg>`,
+    craters: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><g fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.5)}' stroke-width='1'><circle cx='30' cy='40' r='14'/><circle cx='100' cy='90' r='22'/><circle cx='70' cy='20' r='5'/><circle cx='34' cy='112' r='8'/></g></svg>`,
+    streaks: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><g stroke='${hex(ink)}' stroke-opacity='${op(o * 1.5)}' stroke-width='1' stroke-linecap='round'><path d='M10 70l50-30M90 150l50-30M100 30l30-18'/></g></svg>`,
+    tiles: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><path d='M20 2l18 18-18 18L2 20z' fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.2)}' stroke-width='1'/></svg>`,
+    hex: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='42' height='48' viewBox='0 0 42 48'><path d='M21 0l21 12v24L21 48 0 36V12z' fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o)}' stroke-width='1'/></svg>`,
+    ruled: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='10' height='32'><path d='M0 31.5H10' stroke='${hex(ink)}' stroke-opacity='${op(o * 1.6)}' stroke-width='1'/></svg>`,
+    triangles: (ink, o) => `<svg xmlns='http://www.w3.org/2000/svg' width='56' height='48'><path d='M0 48L28 0l28 48z' fill='none' stroke='${hex(ink)}' stroke-opacity='${op(o)}' stroke-width='1'/></svg>`,
 };
 
 /** Marks beside section headings, in the theme's accents `a` and `b`, and `c` its third. Each returns an SVG. */
@@ -129,6 +131,8 @@ const HEADINGS = {
  * The themes: value, name, scheme, category, colors (background, title, primary, secondary, tertiary, active,
  * button), font, texture, mark, heading, segment, and glows (soft lights behind the page: 'top', 'bottom', 'both').
  * The default theme (an empty value) is Web UI's own look, so only its tile is listed.
+ * Names are our own, never an editor palette's. A renamed theme keeps its saved choice through the renames that
+ * root_files/app.js applies to session-theme when it restores it (mocha, latte, rose-dawn and owl were renamed).
  */
 const THEMES = [
     // Classic
@@ -139,10 +143,10 @@ const THEMES = [
     ['porcelain', 'Porcelain', 'light', 'Classic', '#fafafa #383a42 #4078f2 #e5e5e6 #a626a4 #50a14f #0184bc', 'elegant', 'tiles', 'rule', 'solid', 'paper'],
     ['linen', 'Linen', 'light', 'Classic', '#ffffff #24292f #0969da #eaeef2 #8250df #1a7f37 #2da44e', 'serif', 'noise', 'quill', 'solid', 'paper'],
     // Colors
-    ['mocha', 'Pastel Mocha', 'dark', 'Colors', '#1e1e2e #313244 #cba6f7 #45475a #f5c2e7 #a6e3a1 #89b4fa', 'rounded', 'dots', 'circle', 'gradient', 'pill', 'both'],
+    ['velvet', 'Pastel Velvet', 'dark', 'Colors', '#1e1e2e #313244 #cba6f7 #45475a #f5c2e7 #a6e3a1 #89b4fa', 'rounded', 'dots', 'circle', 'gradient', 'pill', 'both'],
     ['nocturne', 'Nocturne', 'dark', 'Colors', '#282a36 #44475a #bd93f9 #3a3c4e #ff79c6 #50fa7b #8be9fd', 'geometric', 'iso', 'cube', 'gradient', 'glass', 'top'],
     ['prism', 'Prism', 'dark', 'Colors', '#1b1b29 #2d1b4e #ff6b6b #3b3b55 #ffd93d #6bcb77 #4d96ff', 'poster', 'triangles', 'triangle', 'gradient', 'angled', 'both'],
-    ['latte', 'Pastel Latte', 'light', 'Colors', '#eff1f5 #dce0e8 #8839ef #ccd0da #ea76cb #40a02b #1e66f5', 'rounded', 'dots', 'circle', 'gradient', 'pill', 'top'],
+    ['meringue', 'Pastel Meringue', 'light', 'Colors', '#eff1f5 #dce0e8 #8839ef #ccd0da #ea76cb #40a02b #1e66f5', 'rounded', 'dots', 'circle', 'gradient', 'pill', 'top'],
     ['sherbet', 'Sherbet', 'light', 'Colors', '#fff7f0 #ff8c69 #e85d75 #ffe3d3 #7a5cfa #2fa36b #f97316', 'rounded', 'halftone', 'drop', 'highlight', 'pill'],
     ['confetti', 'Confetti', 'light', 'Colors', '#fbfbff #5b2a86 #e63946 #e9e7f5 #2a9d8f #f4a261 #3a86ff', 'geometric', 'confetti', 'star', 'solid', 'comic'],
     // Organic
@@ -150,7 +154,7 @@ const THEMES = [
     ['moss', 'Moss', 'dark', 'Organic', '#2d353b #3d484d #a7c080 #475258 #dbbc7f #83c092 #7fbbb3', 'humanist', 'topo', 'sprout', 'gradient', 'organic'],
     ['rosewood', 'Rosewood', 'dark', 'Organic', '#191724 #26233a #ebbcba #2a273f #c4a7e7 #9ccfd8 #31748f', 'elegant', 'petals', 'flower', 'gradient', 'glass', 'both'],
     ['sage', 'Sage', 'light', 'Organic', '#fdf6e3 #6c8a24 #8da101 #efebd4 #df69ba #35a77c #3a94c5', 'humanist', 'leaves', 'leaf', 'solid', 'organic'],
-    ['rose-dawn', 'Rose Dawn', 'light', 'Organic', '#faf4ed #907aa9 #d7827e #f2e9e1 #b4637a #56949f #286983', 'elegant', 'petals', 'flower', 'solid', 'paper', 'top'],
+    ['blush', 'Blush', 'light', 'Organic', '#faf4ed #907aa9 #d7827e #f2e9e1 #b4637a #56949f #286983', 'elegant', 'petals', 'flower', 'solid', 'paper', 'top'],
     ['meadow', 'Meadow', 'light', 'Organic', '#f6faef #3f6212 #65a30d #e3eed3 #c2410c #0f766e #4d7c0f', 'rounded', 'hatch', 'sprout', 'solid', 'organic'],
     // Electric
     ['neon', 'Neon', 'dark', 'Electric', '#262335 #241b2f #ff7edb #34294f #36f9f6 #72f1b8 #fe4450', 'tech', 'grid', 'bolt', 'glow', 'neon', 'bottom'],
@@ -176,7 +180,7 @@ const THEMES = [
     // Space
     ['midnight', 'Midnight', 'dark', 'Space', '#0f1724 #1f3a5f #2563eb #334155 #7c3aed #0d9488 #0369a1', 'geometric', 'stars', 'planet', 'gradient', 'glass', 'both'],
     ['nebula', 'Nebula', 'dark', 'Space', '#292d3e #1f2233 #c792ea #34394f #82aaff #c3e88d #f07178', 'geometric', 'stars', 'sparkle', 'gradient', 'glass', 'both'],
-    ['owl', 'Night Owl', 'dark', 'Space', '#011627 #0b2942 #7fdbca #1d3b53 #c792ea #addb67 #82aaff', 'rounded', 'stars', 'moon', 'solid', 'card', 'top'],
+    ['nightjar', 'Nightjar', 'dark', 'Space', '#011627 #0b2942 #7fdbca #1d3b53 #c792ea #addb67 #82aaff', 'rounded', 'stars', 'moon', 'solid', 'card', 'top'],
     ['stardust', 'Stardust', 'light', 'Space', '#f5f3ff #4c1d95 #6d28d9 #e4defc #db2777 #059669 #4f46e5', 'geometric', 'stars', 'sparkle', 'gradient', 'card', 'both'],
     ['lunar', 'Lunar', 'light', 'Space', '#f4f5f7 #3b4252 #5e81ac #e5e9f0 #b48ead #4c8a5f #4c566a', 'tech', 'craters', 'moon', 'solid', 'carved'],
     ['comet', 'Comet', 'light', 'Space', '#f7f9fd #1e3a8a #2563eb #e0e7ff #f97316 #0d9488 #1d4ed8', 'geometric', 'streaks', 'comet', 'gradient', 'angled', 'top'],
@@ -217,6 +221,22 @@ function offset(color) {
     const c = rgb(color);
     return contrast(c, WHITE) >= contrast(c, BLACK) ? 'var(--color-white)' : 'var(--color-black)';
 }
+/**
+ * The current page's nav link draws its name and icon in the theme's active color, on Web UI's shade
+ * (--color-shade: the background mixed 80% with the title). Where the active color is too faint there, it is moved
+ * toward white on a dark shade or black on a light one, only as far as text needs to be readable (4.5:1).
+ */
+function activeText(colors) {
+    const [background, title] = [rgb(colors[0]), rgb(colors[1])];
+    const shade = background.map((c, i) => Math.round(0.8 * c + 0.2 * title[i]));
+    const toward = luminance(shade) < 0.18 ? [255, 255, 255] : [0, 0, 0];
+    const active = rgb(colors[5]);
+    for (let step = 0; step <= 20; step++) {
+        const color = active.map((c, i) => Math.round(c + (toward[i] - c) * step / 20));
+        if (contrast(color, shade) >= 4.5) return hex(color);
+    }
+    return hex(toward);
+}
 /** An SVG as an image address for CSS and HTML attributes. */
 function svgUrl(svg) {
     return `data:image/svg+xml,${svg.replace(/"/g, "'").replace(/%/g, '%25').replace(/#/g, '%23').replace(/</g, '%3C').replace(/>/g, '%3E')}`;
@@ -250,6 +270,7 @@ function themeCss(theme) {
     if (glows === 'bottom' || glows === 'both') lights.push(`radial-gradient(900px 520px at -10% 108%, ${mix(b, dark ? 13 : 11)}, transparent 60%)`);
     const vars = [`    color-scheme: ${scheme};`];
     COLOR_NAMES.forEach((key, i) => vars.push(`    --color-${key}: ${colors[i]};`, `    --color-${key}-offset: ${offset(colors[i])};`));
+    vars.push(`    --color-active-text: ${activeText(colors)};`);
     vars.push(`    --font-family-display: ${FONTS[font]};`);
     if (CAPS.has(font)) vars.push('    --heading-transform: uppercase;', '    --heading-spacing: 0.06em;');
     const headingVars = HEADINGS[heading]({ a, b, ink });
@@ -294,7 +315,9 @@ function replaceBetween(text, start, end, body, file) {
 }
 
 const cssFile = join(ROOT, 'css', 'app.css');
-const css = THEMES.filter(theme => theme[0]).map(themeCss).join('\n\n');
+// The default theme's colors are Web UI's own, so only what is worked out from them is set here.
+const defaultTheme = `/* Task Proxy, the default theme. */\n:root {\n    --color-active-text: ${activeText(THEMES.find(theme => !theme[0])[4].split(' '))};\n}`;
+const css = [defaultTheme, ...THEMES.filter(theme => theme[0]).map(themeCss)].join('\n\n');
 writeFileSync(cssFile, replaceBetween(readFileSync(cssFile, 'utf8'), '/* THEMES:START (tools/themes/build-themes.mjs) */', '/* THEMES:END */', css, cssFile));
 const htmlFile = join(ROOT, 'index.html');
 const options = THEMES.map(themeOption).join('\n');

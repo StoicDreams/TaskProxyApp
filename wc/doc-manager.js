@@ -47,8 +47,13 @@
             t._loadedFile = null;
             t._loadingFile = file;
             t._message.value = '';
+            // What Save said was about the file shown before.
+            clearActionNote(t._btnSave);
             if (!file) return;
             await whenProxyReady();
+            // A save of this file still writing could be read back before it lands, showing the old text.
+            if (t._saving && t._savingFile === file) await t._saving.catch(() => { });
+            if (t._loadingFile !== file) return;
             let fileContent = await webui.proxy.getProjectFile(file);
             await customElements.whenDefined('webui-content');
             // Another file was selected while this one loaded.
@@ -72,19 +77,41 @@
             });
             t._btnReset.addEventListener('click', async ev => {
                 let file = t._fileSelector.value;
-                if (!file) return;
+                if (!file || t._saving) return;
                 t.loadFile(file);
             });
             t._btnSave.addEventListener('click', async ev => {
                 let file = t._fileSelector.value;
-                if (!file) return;
+                if (!file || t._saving) return;
                 // Until a file has loaded, the editor is empty and saving would erase it.
                 if (t._loadedFile !== file) {
-                    webui.alert('This file has not loaded, so it was not saved.', 'warning');
+                    actionNote(t._btnSave, 'This file has not loaded, so it was not saved.', 'warning');
                     return;
                 }
-                let msg = await webui.proxy.saveProjectFile(file, t._message.value);
-                if (msg) { webui.alert(msg, 'success'); }
+                clearActionNote(t._btnSave);
+                // A save that finishes after another file was picked says nothing under that file, and a failed one
+                // says so in the app's alerts, since what is shown is no longer the file it is about.
+                const stillShown = () => t._loadingFile === file;
+                // Saving again, or resetting, before it finishes could write or show the file out of order.
+                // Loading a file waits for this, so switching away and back never reads it before the write lands.
+                t._btnSave.setAttribute('disabled', '');
+                t._btnReset.setAttribute('disabled', '');
+                const saving = (async () => {
+                    let msg = await webui.proxy.saveProjectFile(file, t._message.value, err => {
+                        if (stillShown()) actionNote(t._btnSave, err, 'danger');
+                        else appAlert(`${file} wasn't saved: ${err}`, 'danger');
+                    });
+                    if (msg && stillShown()) actionNote(t._btnSave, msg, 'success');
+                })();
+                t._saving = saving;
+                t._savingFile = file;
+                try {
+                    await saving;
+                } finally {
+                    if (t._saving === saving) { t._saving = null; t._savingFile = null; }
+                    t._btnSave.removeAttribute('disabled');
+                    t._btnReset.removeAttribute('disabled');
+                }
             });
             t.loadFiles();
         },

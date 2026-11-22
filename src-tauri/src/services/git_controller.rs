@@ -5,7 +5,11 @@ const CREDENTIALS_ERROR: &str = "Credentials Missing/Invalid";
 const LOCAL_CHANGES_ERROR: &str =
     "Local changes would be overwritten. Commit or stash them first, then try again.";
 
-fn get_repo_path(state: &State<'_, CurrentProject>, repo: &str) -> Result<PathBuf, String> {
+/// The folder of a repo in the open project. Other services, such as AI drafts, use it too.
+pub(crate) fn get_repo_path(
+    state: &State<'_, CurrentProject>,
+    repo: &str,
+) -> Result<PathBuf, String> {
     let project_state = state
         .lock()
         .map_err(|err| format!("State failure: {}", err))?;
@@ -412,7 +416,7 @@ fn restore_file(repository: &Repository, file: &str) -> Result<String, String> {
     Ok(format!("Successfully reverted {}", file))
 }
 
-fn file_diff(repository: &Repository, file: &str) -> Result<String, String> {
+pub(crate) fn file_diff(repository: &Repository, file: &str) -> Result<String, String> {
     let tree = match repository.head() {
         Ok(head) => Some(head.peel_to_tree().map_err(|e| e.to_string())?),
         Err(_) => None,
@@ -1114,7 +1118,7 @@ pub(crate) async fn get_git_change_stats(
 
 /// Line counts for every change a commit would take: staged, unstaged and untracked, compared with HEAD.
 /// Counts are per file, so the UI can total only the files it will commit.
-fn change_line_stats(repository: &Repository) -> Result<Vec<GitFileLineStats>, String> {
+pub(crate) fn change_line_stats(repository: &Repository) -> Result<Vec<GitFileLineStats>, String> {
     let head_tree = match repository.head() {
         Ok(head) => Some(head.peel_to_tree().map_err(|e| e.to_string())?),
         // A repository with no commits yet compares with nothing, so every file is added.
@@ -1144,15 +1148,16 @@ fn change_line_stats(repository: &Repository) -> Result<Vec<GitFileLineStats>, S
             .or_else(|| delta.old_file().path())
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_default();
-        // Binary is only known once the patch has read the contents.
-        let patch = git2::Patch::from_diff(&diff, index).map_err(|e| e.to_string())?;
-        let (additions, deletions, binary) = match patch {
-            Some(patch) if !patch.delta().flags().is_binary() => {
-                let (_context, additions, deletions) =
-                    patch.line_stats().map_err(|e| e.to_string())?;
-                (additions, deletions, false)
-            }
-            _ => (0, 0, true),
+        // Binary is only known once the patch has read the contents. A file that can't be read, such as one
+        // libgit2 looks for by another case of its name when `core.ignorecase` is on, counts no lines rather than
+        // failing every other file's counts.
+        let (additions, deletions, binary) = match git2::Patch::from_diff(&diff, index) {
+            Ok(Some(patch)) if !patch.delta().flags().is_binary() => patch
+                .line_stats()
+                .map(|(_context, additions, deletions)| (additions, deletions, false))
+                .unwrap_or((0, 0, false)),
+            Ok(_) => (0, 0, true),
+            Err(_) => (0, 0, false),
         };
         // The committed size from its blob, and the current size from the working copy, which holds the change.
         let saved_size = Some(delta.old_file().id())
@@ -2638,6 +2643,31 @@ mod tests {
         index.add_path(Path::new("new.txt")).unwrap();
         index.write().unwrap();
         assert_eq!(line_stats(&repo), [("new.txt".to_string(), 0, 0, false)]);
+    }
+
+    /// A repo with `core.ignorecase` on a case-sensitive file system, as one copied from Windows or macOS can be,
+    /// makes libgit2 open a renamed file by its old name, which is gone. That file can't be counted, but the
+    /// others still are, rather than the whole list failing (the Git Controller's counts and AI drafts need it).
+    #[test]
+    fn a_file_that_cannot_be_read_does_not_stop_the_others_being_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = new_repo(dir.path());
+        write(&repo, "cargo.toml", "[package]\n");
+        commit_all(&repo, "second");
+        repo.config()
+            .unwrap()
+            .set_bool("core.ignorecase", true)
+            .unwrap();
+        let repo = Repository::open(root_of(&repo)).unwrap();
+        fs::remove_file(root_of(&repo).join("cargo.toml")).unwrap();
+        write(&repo, "Cargo.toml", "[package]\nname = \"renamed\"\n");
+        write(&repo, "a.txt", "one changed\ntwo\n");
+        let stats = line_stats(&repo);
+        assert!(
+            stats.contains(&("a.txt".to_string(), 2, 1, false)),
+            "{:?}",
+            stats
+        );
     }
 
     #[test]

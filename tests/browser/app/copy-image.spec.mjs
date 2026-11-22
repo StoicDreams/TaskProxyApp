@@ -1,9 +1,8 @@
 import { test, expect, openApp, calls } from '../../support/app.mjs';
+import { spyOnAlerts, alerts } from '../../support/wait.mjs';
 
 // The webview's own Copy Image leaves nothing to paste on Wayland, so right-clicking an image offers a Copy image that
 // copies through Rust (services/clipboard.rs).
-
-const alerts = page => page.evaluate(() => window.__alerts);
 
 async function showImage(page, src) {
     await openApp(page);
@@ -14,12 +13,7 @@ async function showImage(page, src) {
         img.src = src;
         document.querySelector('webui-app').append(img);
     }, src);
-    // Records the messages shown with webui.alert, which alerts() returns.
-    await page.evaluate(() => {
-        window.__alerts = [];
-        const original = webui.alert;
-        webui.alert = function (...args) { window.__alerts.push(`${args[0]}`); return original.apply(this, args); };
-    });
+    await spyOnAlerts(page);
     const img = page.locator('#shot');
     await expect(img).toBeVisible();
     await expect.poll(() => img.evaluate(el => el.complete && el.naturalWidth)).toBeGreaterThan(0);

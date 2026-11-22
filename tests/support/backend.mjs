@@ -61,6 +61,16 @@
  *   for a test that runs the app as a remote browser. window.__backend.remote.ask(browser) adds a waiting browser, as
  *   one asking to connect would, and .changed(notice) sends remote-changed.
  *
+ * - ai: AI providers as services/ai.rs keeps them: { providers: [{ id, name, kind, baseUrl, command, apiKey, models:
+ *   [{ id, name }], hidden, lastError }], timeoutSecs, maxChars }. The window only ever gets keySet, never apiKey.
+ *   aiOs: the operating system ai_settings says Task Proxy runs on, as Rust names it (default linux).
+ *   aiReplies: { integration: text } for what ai_write and ai_review answer (default "Draft for {integration}").
+ *   aiErrors: { integration: message } to fail one, with 'test' for ai_test, noted as the provider's lastError as
+ *   services/ai.rs notes it. A provider that starts with a lastError keeps failing ai_test with it until it is saved
+ *   set up another way. aiModels: { providerId: [models] } for ai_models, or a string
+ *   to fail it. aiReviewBatches: how many ai-progress events a review sends before answering (default 1).
+ *   importPlan: what plan_page_folder returns, as [{ file, title, subtitle, navPath, excerpt }].
+ *
  * Page scripts are filled as services/page_scripts.rs fills them, from the page values the window sends, then the
  * backend's copies of the project's and global values. run_page_script refuses a project that appData does not trust.
  *
@@ -114,7 +124,89 @@ export function setup(state) {
     let openProject = projectData;
     const projectIcons = { ...(state.projectIcons || {}) };
     const iconUri = path => path ? `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" data-path="${path}"/>`)}` : null;
+    // As services/ai.rs refuses: a command provider runs in the project's folder, so only in a trusted project.
+    const aiTrusted = model => {
+        const provider = ai.providers.find(p => p.id === model?.provider);
+        if (provider?.kind !== 'command' || !openProject?.path) return;
+        if (!(appData?.data?.['app-trusted-projects'] || []).includes(openProject.path)) {
+            throw `${provider.name} runs in the project's folder, and this project is not trusted to run its scripts yet.`;
+        }
+    };
     const emitEvent = (name, payload) => (listeners[name] || []).forEach(listener => listener({ payload }));
+    // AI providers, as services/ai.rs keeps them. The window gets each provider's keySet, never its key.
+    const ai = { next: 0, providers: [], timeoutSecs: 120, maxChars: 40000, ...JSON.parse(JSON.stringify(state.ai || {})) };
+    // Claude Code's command as services/ai.rs's claude_command writes it, and the one earlier releases wrote, which it
+    // brings up to date as it reads the settings.
+    const aiClaudeCommand = reads => `claude -p --setting-sources user --strict-mcp-config --permission-mode default --model {model} --tools "${reads ? 'Read,Grep,Glob' : ''}"`;
+    const aiUpgradedCommand = command => {
+        const old = `${command}`.trim().match(/^claude\s+-p(?:\s+--setting-sources\s+user\s+--strict-mcp-config)?\s+--model\s+\{model\}(?:\s+--disallowedTools\s+"([^"]*)")?$/);
+        return old ? aiClaudeCommand(!`${old[1] || ''}`.split(',').some(tool => tool.trim() === 'Read')) : null;
+    };
+    // Providers as services/ai.rs stores them, whatever a test's fixture leaves out.
+    ai.providers = ai.providers.map(provider => {
+        const command = `${provider.command ?? ''}`.trim();
+        return {
+            ...provider,
+            baseUrl: `${provider.baseUrl ?? ''}`.trim().replace(/\/+$/, ''),
+            command: (provider.kind === 'command' && aiUpgradedCommand(command)) || command,
+            apiKey: provider.apiKey ?? null,
+            models: provider.models ?? [],
+            hidden: provider.hidden ?? [],
+            lastError: provider.lastError ?? null,
+        };
+    });
+    const aiDefaults = { shared: 'You are helping a developer inside Task Proxy.', git: 'Write a commit message.', review: 'Review the code.', pages: 'Write the page part.', scripts: 'Write the script.', markdown: 'Suggest pages.' };
+    // Providers set up in a way that fails: those that start with a lastError, until saved set up another way.
+    const aiFailing = Object.fromEntries(ai.providers.filter(p => p.lastError).map(p => [p.id, p.lastError]));
+    // What a call to a provider did, noted as services/ai.rs's note_result notes it: its error, or none.
+    const aiNote = (providerId, error) => {
+        const provider = ai.providers.find(p => p.id === providerId);
+        if (!provider || (provider.lastError ?? null) === (error ?? null)) return;
+        provider.lastError = error ?? null;
+        emitEvent('ai-settings-changed', aiView());
+    };
+    // Whether a PowerShell command has {model} inside single quotes, as model_in_single_quotes in services/ai.rs.
+    const aiModelInSingleQuotes = command => {
+        const single = c => /^['\u2018\u2019\u201a\u201b]$/.test(c ?? '');
+        const double = c => /^["\u201c\u201d\u201e]$/.test(c ?? '');
+        const chars = [...command];
+        // As in Rust: a stack of quotes, where '' is outside quotes or inside $( ) or ( ), which ) ends.
+        const stack = [''];
+        for (let i = 0; i < chars.length; i++) {
+            const c = chars[i];
+            const quote = stack[stack.length - 1];
+            if (quote === "'") {
+                if (single(c)) {
+                    if (single(chars[i + 1])) i++;
+                    else stack.pop();
+                } else if (chars.slice(i, i + 7).join('') === '{model}') return true;
+            } else if (quote === '"') {
+                if (c === '`') i++;
+                else if (c === '$' && chars[i + 1] === '(') {
+                    stack.push('');
+                    i++;
+                } else if (double(c)) {
+                    if (double(chars[i + 1])) i++;
+                    else stack.pop();
+                }
+            } else if (c === '`') {
+                i++;
+            } else if (c === '(') {
+                stack.push('');
+            } else if (c === ')' && stack.length > 1) {
+                stack.pop();
+            } else if (single(c)) {
+                stack.push("'");
+            } else if (double(c)) {
+                stack.push('"');
+            }
+        }
+        return false;
+    };
+    const aiView = () => ({
+        providers: ai.providers.map(({ apiKey, ...provider }) => ({ ...copy(provider), keySet: !!apiKey })),
+        timeoutSecs: ai.timeoutSecs, maxChars: ai.maxChars, defaults: aiDefaults, os: state.aiOs || 'linux',
+    });
     // Script runs, as services/runs.rs keeps them.
     const runs = {
         rev: 0,
@@ -270,10 +362,8 @@ export function setup(state) {
         },
         outcome: (state, text, theme) => ({ state, text, theme }),
         async run(job) {
-            let before = null;
             if (job.script) {
                 this.set(job, { state: 'script', note: { text: `Running ${job.script.path} before committing...`, theme: 'info' } });
-                before = await this.changes(job).catch(() => null);
                 const target = runs.target(job.projectPath);
                 let ended;
                 try {
@@ -293,8 +383,8 @@ export function setup(state) {
             } catch (err) {
                 return [this.outcome('Failed', `${err} Nothing was committed.`, 'danger'), false];
             }
-            const files = changed.filter(name => !job.ignored.includes(`${job.repo}/${name}`) && !job.excluded.includes(name))
-                .filter(name => job.files.includes(name) || (before && !before.includes(name)));
+            // As commit_queue.rs: every changed file but the excluded and ignored ones, listed or not.
+            const files = changed.filter(name => !job.ignored.includes(`${job.repo}/${name}`) && !job.excluded.includes(name));
             if (!files.length) return [this.outcome('Failed', 'No files are left to commit.', 'warning'), false];
             let result;
             try {
@@ -492,6 +582,8 @@ export function setup(state) {
     const backend = {
         calls: [],
         get appData() { return appData; },
+        /** How many listeners the window has for an event. */
+        listening: name => (listeners[name] || []).length,
         /** Another screen changes app or project data: `patch` is { set, remove, fields }. */
         otherScreen(scope, patch) {
             if (scope === 'app') applyDataPatch(appData, patch);
@@ -622,6 +714,94 @@ export function setup(state) {
                 const items = parent ? [{ name: parent, icon: 'folder', url: null, children: pages }] : pages;
                 return { navigation: [...(navigation || []), ...items], pages: pages.length, skipped: state.importSkipped || [] };
             },
+            plan_page_folder: () => copy(state.importPlan || []),
+            ai_settings: () => aiView(),
+            ai_save_settings: ({ settings }) => {
+                // Checked before anything is built, so a refused save uses up no ids, as in services/ai.rs.
+                const items = settings.providers || [];
+                const ids = new Set();
+                for (const item of items) {
+                    const name = item.name?.trim();
+                    if (!name) throw 'Each AI provider needs a name.';
+                    if (item.id) {
+                        if (ids.has(item.id)) throw `The AI provider ${name} is listed twice.`;
+                        ids.add(item.id);
+                    }
+                    const command = (item.command || '').trim();
+                    if (item.kind === 'openAi' && !(item.baseUrl || '').trim()) throw `${name} needs its server's address.`;
+                    if (item.kind === 'command' && !command) throw `${name} needs the command to run.`;
+                    if (item.kind === 'command' && aiModelInSingleQuotes(command)) {
+                        throw `${name}'s command has {model} in single quotes. Leave the quotes out, or use double quotes: the model is always passed as one word.`;
+                    }
+                    if (item.kind === 'command') {
+                        const saved = ai.providers.find(p => item.id && p.id === item.id);
+                        const models = (item.models ?? saved?.models ?? []).filter(model => `${model.id ?? ''}`.trim());
+                        if (!models.length) throw `${name} needs at least one model.`;
+                    }
+                }
+                ai.providers = items.map(item => {
+                    const saved = ai.providers.find(p => item.id && p.id === item.id);
+                    const baseUrl = (item.baseUrl || '').trim().replace(/\/+$/, '');
+                    const typed = (item.command || '').trim();
+                    const command = (item.kind === 'command' && aiUpgradedCommand(typed)) || typed;
+                    const sameServer = saved && saved.kind === item.kind && saved.baseUrl === baseUrl;
+                    const apiKey = item.apiKey === undefined ? (sameServer ? saved.apiKey : null) : (item.apiKey?.trim() || null);
+                    // What failed last is kept while the provider is set up the same way.
+                    const sameSetup = sameServer && saved.command === command && (saved.apiKey ?? null) === (apiKey ?? null);
+                    if (!sameSetup && saved) delete aiFailing[saved.id];
+                    return {
+                        id: item.id || `provider-${++ai.next}`, name: item.name.trim(), kind: item.kind, baseUrl,
+                        command, apiKey, models: item.models ?? saved?.models ?? [], hidden: item.hidden || [],
+                        lastError: sameSetup ? saved.lastError ?? null : null,
+                    };
+                });
+                if (settings.timeoutSecs) ai.timeoutSecs = settings.timeoutSecs;
+                if (settings.maxChars) ai.maxChars = settings.maxChars;
+                emitEvent('ai-settings-changed', aiView());
+                return aiView();
+            },
+            ai_models: ({ providerId }) => {
+                const provider = ai.providers.find(p => p.id === providerId);
+                if (!provider) throw 'That AI provider was removed.';
+                const listed = (state.aiModels || {})[providerId];
+                if (typeof listed === 'string') {
+                    aiNote(provider.id, listed);
+                    throw listed;
+                }
+                provider.models = copy(listed || provider.models);
+                // As services/ai.rs, which sends the settings whether or not its error changed.
+                provider.lastError = null;
+                emitEvent('ai-settings-changed', aiView());
+                return aiView();
+            },
+            ai_test: ({ model }) => {
+                const provider = ai.providers.find(p => p.id === model.provider);
+                if (!provider) throw "That AI provider isn't set up any more. Choose another model.";
+                const error = (state.aiErrors || {}).test ?? aiFailing[provider.id];
+                aiNote(provider.id, error);
+                if (error) throw error;
+                return 'Task Proxy can reach me.';
+            },
+            ai_write: ({ request }) => {
+                if (!ai.providers.some(p => p.id === request.model?.provider)) throw "That AI provider isn't set up any more. Choose another model.";
+                aiTrusted(request.model);
+                if (request.integration === 'git' && !request.files?.length) throw 'Include at least one file to write a commit message for.';
+                const error = (state.aiErrors || {})[request.integration];
+                aiNote(request.model.provider, error);
+                if (error) throw error;
+                return (state.aiReplies || {})[request.integration] ?? `Draft for ${request.integration}`;
+            },
+            ai_review: async ({ request }) => {
+                if (!ai.providers.some(p => p.id === request.model?.provider)) throw "That AI provider isn't set up any more. Choose another model.";
+                aiTrusted(request.model);
+                const error = (state.aiErrors || {}).review;
+                aiNote(request.model.provider, error);
+                if (error) throw error;
+                const total = state.aiReviewBatches || 1;
+                for (let done = 0; done < total; done++) emitEvent('ai-progress', { requestId: request.requestId, done, total });
+                return (state.aiReplies || {}).review ?? 'Draft for review';
+            },
+            ai_cancel: () => true,
             // The page segments page_import.rs would make of a file, from state.fileImports.
             import_page_file: ({ file }) => {
                 if (state.fileImports && file in state.fileImports) return state.fileImports[file];
@@ -980,7 +1160,13 @@ export function setup(state) {
                 return handler(args);
             },
         },
-        event: { listen: async (name, listener) => { (listeners[name] ??= []).push(listener); } },
+        // Resolves to a function that stops listening, as Tauri's does.
+        event: {
+            listen: async (name, listener) => {
+                (listeners[name] ??= []).push(listener);
+                return () => { listeners[name] = (listeners[name] || []).filter(item => item !== listener); };
+            },
+        },
         // Recorded as calls, so tests can check what the app opened in the browser.
         opener: { openUrl: async url => { backend.calls.push({ command: 'openUrl', args: { url } }); } },
         dialog: { open: async () => state.pickedFolder ?? null },

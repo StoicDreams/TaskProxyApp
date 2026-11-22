@@ -1,4 +1,5 @@
 import { test, expect, openApp, calls, dialogButton, openDialog } from '../support/app.mjs';
+import { actionNote } from '../../support/wait.mjs';
 
 const jira = {
     id: 'jira', name: 'Jira', version: '0.1.0', apiVersion: 1, description: 'Jira Cloud in Task Proxy.', category: 'issue-tracking',
@@ -128,6 +129,8 @@ test('a plugin can be turned off and removed', async ({ page }) => {
     const card = manager.locator('[data-plugin="jira"]');
     await card.locator('webui-button', { hasText: 'Turn off' }).click();
     await expect(card).toContainText('Turned off');
+    // What it did is said above the tabs, which stay as the lists are drawn again.
+    await expect(manager.locator('webui-alert.plugin-manager-note[show]')).toHaveText(/is turned off\.$/);
     await expect(list(manager, 'installed').locator('[data-pick="jira"]')).toContainText('Turned off');
     await expect.poll(() => calls(page, 'plugin_set_enabled')).toEqual([{ id: 'jira', enabled: false }]);
     await expect(page.locator('webui-nav.plugin-nav [url="/plugin/jira/issues"]')).toHaveCount(0);
@@ -136,6 +139,7 @@ test('a plugin can be turned off and removed', async ({ page }) => {
     await dialogButton(page, 'Confirm').click();
     await expect(manager.locator('[data-plugin="jira"]')).toHaveCount(0);
     await expect(tabButton(manager, 'installed')).toHaveText('Installed (0)');
+    await expect(manager.locator('webui-alert.plugin-manager-note[show]')).toHaveText(/was removed\.$/);
     await expect.poll(() => calls(page, 'plugin_remove')).toEqual([{ id: 'jira' }]);
 });
 
@@ -208,3 +212,31 @@ test.describe('catalog', () => {
     });
 });
 
+test('what goes wrong is said by the button that ran it, not above the tabs', async ({ page }) => {
+    const manager = await openManager(page, { pickedFolder: '/home/me/empty', catalog: [{ ...notes, permissions: {} }] });
+    await page.evaluate(() => {
+        window.__backend.handlers.plugin_set_enabled = () => { throw 'Could not turn it off.'; };
+        window.__backend.handlers.plugin_remove = () => { throw 'Could not remove it.'; };
+        window.__backend.handlers.plugin_install_catalog = () => { throw 'Could not download it.'; };
+    });
+    const card = manager.locator('[data-plugin="jira"]');
+    const actions = card.locator('.plugin-actions');
+    await actions.locator('webui-button', { hasText: 'Turn off' }).click();
+    await expect(actionNote(card, 'Could not turn it off.')).toHaveCount(1);
+    await expect(card.locator('.plugin-actions + webui-alert.action-note')).toHaveText('Could not turn it off.');
+    await actions.locator('webui-button', { hasText: 'Remove' }).click();
+    await dialogButton(page, 'Confirm').click();
+    // Running another action from the row replaces what the last one said there.
+    await expect(actionNote(card, 'Could not remove it.')).toHaveCount(1);
+    await expect(actionNote(card, 'Could not turn it off.')).toHaveCount(0);
+    await tabButton(manager, 'folder').click();
+    await manager.locator('webui-button', { hasText: 'Install from folder' }).click();
+    await expect(actionNote(manager.locator('.plugin-folder'), 'The folder has no plugin.json.')).toHaveCount(1);
+    // The only plugin in the catalog is the one shown.
+    await tabButton(manager, 'available').click();
+    const entry = detail(manager, 'available').locator('[data-catalog="notes"]');
+    await entry.locator('webui-button', { hasText: 'Install' }).click();
+    await dialogButton(page, 'Install').click();
+    await expect(entry.locator('webui-button + webui-alert.action-note[show]')).toHaveText('Could not download it.');
+    await expect(manager.locator('webui-alert.plugin-manager-note[show]')).toHaveCount(0);
+});

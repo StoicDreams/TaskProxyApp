@@ -1,4 +1,5 @@
 import { test, expect, openApp, calls } from '../support/app.mjs';
+import { spyOnAlerts, alerts } from '../../support/wait.mjs';
 
 // The open project's icon in Settings (wc/project-icon.js), saved in its .taskproxy/Project.json by Rust
 // (services/project_icons.rs). The mock backend keeps icons in projectIcons and the project's images in projectImages.
@@ -54,13 +55,11 @@ test('a refused icon says why, and the field goes back to the icon in use', asyn
     await openApp(page, { ...imageFiles, projectImages: IMAGES, projectIcons: { '/repo': 'img/banner.png' } });
     await page.evaluate(() => {
         window.__backend.handlers.set_project_icon = () => { throw "'docs/logo.svg' is too large for an icon. Choose an image under 512 KB."; };
-        window.__alerts = [];
-        const alert = webui.alert;
-        webui.alert = (...args) => { window.__alerts.push(`${args[0]}`); return alert(...args); };
     });
+    await spyOnAlerts(page);
     await picker(page).getByRole('button').click();
     await tile(page, 'docs/logo.svg').click();
-    await expect.poll(() => page.evaluate(() => window.__alerts)).toContain("'docs/logo.svg' is too large for an icon. Choose an image under 512 KB.");
+    await expect.poll(() => alerts(page)).toContain("'docs/logo.svg' is too large for an icon. Choose an image under 512 KB.");
     await expect(chosen(page)).toHaveAttribute('aria-label', 'banner.png');
 });
 

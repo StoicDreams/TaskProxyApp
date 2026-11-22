@@ -130,3 +130,56 @@ test.describe('files that are not text', () => {
     });
 });
 
+
+// A long list draws only the rows in view (drawFiles in wc/git-manager.js), since tens of thousands froze the window.
+test.describe('a long list of changes', () => {
+    const count = 5000;
+    const changes = Array.from({ length: count }, (_, i) => `M  src/part${i % 50}/file${i}.txt`);
+    const rows = page => manager(page).locator('.file-row');
+    const files = page => manager(page).locator('.files');
+
+    test('draws only the rows near the view, and scrolling reaches every file', async ({ page }) => {
+        await open(page, { changes });
+        await expect(manager(page).locator('#val-commit-files')).toHaveText(`${count} of ${count}`);
+        expect(await rows(page).count()).toBeLessThan(200);
+        await files(page).evaluate(el => { el.scrollTop = el.scrollHeight; });
+        await expect(rows(page).filter({ hasText: `file${count - 1}.txt` })).toBeInViewport();
+        await files(page).evaluate(el => { el.scrollTop = 0; });
+        await expect(rows(page).filter({ hasText: 'file0.txt' })).toBeInViewport();
+    });
+
+    test('the filter and Toggle All reach files that aren\'t drawn', async ({ page }) => {
+        await open(page, { changes });
+        await manager(page).locator('.file-filter').fill('file4999.txt');
+        await expect(manager(page).locator('.file-row button.file .name')).toHaveText(['file4999.txt']);
+        await manager(page).locator('.file-filter').fill('');
+        await manager(page).locator('webui-button', { hasText: 'Toggle All' }).click();
+        await expect(manager(page).locator('#val-commit-files')).toHaveText(`0 of ${count}`);
+        await files(page).evaluate(el => { el.scrollTop = el.scrollHeight; });
+        const last = rows(page).filter({ hasText: `file${count - 1}.txt` });
+        await expect(last).toBeInViewport();
+        await expect(last.locator('select.include')).toHaveValue('0');
+    });
+
+    test('a refresh keeps the list where it was, with the open file drawn', async ({ page }) => {
+        await open(page, { changes });
+        await files(page).evaluate(el => { el.scrollTop = el.scrollHeight; });
+        const chosen = rows(page).filter({ hasText: `file${count - 1}.txt` });
+        await chosen.locator('button.file').click();
+        await expect(chosen).toHaveClass(/selected/);
+        await refresh(page);
+        await expect(chosen).toHaveClass(/selected/);
+        await expect(chosen).toBeInViewport();
+    });
+
+    test('the arrow keys move through files beyond those drawn, keeping the chosen one in view', async ({ page }) => {
+        await open(page, { changes });
+        const first = rows(page).first().locator('button.file');
+        await first.focus();
+        for (let i = 0; i < 120; i++) await page.keyboard.press('ArrowDown');
+        const chosen = rows(page).filter({ hasText: 'file120.txt' });
+        await expect(chosen).toBeInViewport();
+        await expect(chosen).toHaveClass(/selected/);
+        await expect(chosen.locator('button.file')).toBeFocused();
+    });
+});

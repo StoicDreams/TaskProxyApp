@@ -222,9 +222,6 @@
 .task-manager button[aria-pressed="true"] { background: var(--color-info); color: var(--color-info-offset); }
 .task-manager .tm-search { flex: 1 1 10em; min-width: 6em; }
 .task-manager .tm-summary, .task-manager .tm-note { font-size: 0.9em; opacity: 0.85; }
-.task-manager .tm-message:empty { display: none; }
-.task-manager .tm-message { padding: 4px 8px; border-radius: var(--corners); background: var(--color-info); color: var(--color-info-offset); }
-.task-manager .tm-message.error { background: var(--color-danger, #c33); color: #fff; }
 .task-manager details.tm-rules > summary { cursor: pointer; }
 .task-manager details.tm-guide { flex: 0 0 auto; max-height: 35%; overflow: auto; font-size: 0.85em; }
 .task-manager details.tm-guide > summary { cursor: pointer; }
@@ -275,7 +272,7 @@
         <summary>Filter rules</summary>
         <div class="tm-rules-body"></div>
     </details>
-    <div class="tm-message" role="status"></div>
+    <webui-alert class="tm-message"></webui-alert>
     <div class="tm-summary"></div>
     <div class="tm-table-wrap">
         <table>
@@ -342,7 +339,10 @@
                 t.settings.guide = t.guide.open;
                 t.save();
             });
-            $('.tm-refresh').addEventListener('click', () => t.refresh());
+            $('.tm-refresh').addEventListener('click', () => {
+                t.clearDone();
+                t.refresh();
+            });
             $('thead').addEventListener('click', ev => {
                 const button = ev.target.closest('[data-sort]');
                 if (!button) return;
@@ -374,6 +374,7 @@
         }
         chooseFilter(id) {
             const t = this;
+            t.clearDone();
             t.settings.filter = id;
             const filter = t.currentFilter();
             if (filter.sort) t.settings.sort = { ...filter.sort };
@@ -458,8 +459,11 @@
         }
         onRuleClick(ev) {
             const t = this;
-            const action = ev.target.closest?.('[data-do]')?.dataset.do;
+            const trigger = ev.target.closest?.('[data-do]');
+            const action = trigger?.dataset.do;
             if (!action) return;
+            // What the last action did is not about this one.
+            t.clearDone();
             const filter = t.editedFilter();
             if (action === 'copy') {
                 const preset = t.currentFilter();
@@ -472,7 +476,8 @@
             } else if (action === 'save') {
                 const name = t.rulesBody.querySelector('[data-part="name"]').value.trim();
                 if (!name) {
-                    t.say('Give the filter a name to save it.', true);
+                    // Said by Save, beside the name it asks for, and gone once the rules are drawn again.
+                    actionNote(trigger, 'Give the filter a name to save it.', 'warning');
                     return;
                 }
                 const copy = { name, match: filter.match, rules: filter.rules.map(rule => ({ ...rule })) };
@@ -493,9 +498,21 @@
         sort() {
             return this.settings.sort || this.currentFilter().sort || { key: 'name', desc: false };
         }
-        say(text, error) {
-            this.message.textContent = text || '';
-            this.message.classList.toggle('error', !!error);
+        /**
+         * What an action did, or why it failed, in an alert above the list, which stays as the list is drawn again
+         * until the next action starts (clearDone). `variant` is success, info, warning, or danger.
+         */
+        say(text, variant = 'success') {
+            // Whatever said last is shown now, so a read that works again no longer has a failure of its own to clear.
+            this.listFailed = false;
+            setNote(this.message, text, variant);
+        }
+        /**
+         * Takes away what the last action said, whether it worked or failed, as the user's next action starts, so it
+         * is not read as being about that one. A list that couldn't be read stays until a read works again.
+         */
+        clearDone() {
+            if (this.message?.hasAttribute('show') && !this.listFailed) this.say();
         }
         /** Reads the processes now, unless a read is already under way, then waits for the next turn. */
         async refresh() {
@@ -505,8 +522,15 @@
             if (t.loading) return;
             t.loading = true;
             try {
-                const list = await webui.proxy.taskManager.list(true, err => t.say(`${err}`, true));
+                let failed = false;
+                const list = await webui.proxy.taskManager.list(true, err => {
+                    failed = true;
+                    t.say(`${err}`, 'danger');
+                    t.listFailed = true;
+                });
                 if (!t.body.isConnected) return;
+                // A read that works again takes away why the last one failed, which would otherwise stay.
+                if (!failed && t.listFailed) t.say();
                 if (list) {
                     t.list = list;
                     t.processes = list.processes;
@@ -725,6 +749,7 @@
         }
         select(pid) {
             const t = this;
+            t.clearDone();
             t.selected = t.selected === pid ? null : pid;
             t.draw();
             if (t.selected !== null) t.tbody.querySelector(`tr.tm-row[data-pid="${pid}"]`)?.focus();
@@ -750,8 +775,9 @@
         act(action, p) {
             const t = this;
             if (!p) return;
+            t.clearDone();
             if (action === 'copy') {
-                navigator.clipboard?.writeText(p.command || p.name).then(() => t.say('Copied the command.'), () => t.say('The clipboard could not be reached.', true));
+                navigator.clipboard?.writeText(p.command || p.name).then(() => t.say('Copied the command.'), () => t.say('The clipboard could not be reached.', 'danger'));
                 return;
             }
             const force = action.startsWith('kill');
@@ -769,7 +795,7 @@
                 onconfirm: () => {
                     webui.proxy.taskManager.stop(p.pid, p.started, tree, force).then(
                         message => t.say(message),
-                        err => t.say(`${err}`, true),
+                        err => t.say(`${err}`, 'danger'),
                     ).finally(() => setTimeout(() => t.refresh(), 400));
                     return true;
                 },
@@ -803,6 +829,7 @@
         });
     }
     webui.define("app-task-manager", {
+        preload: 'alert',
         linkCss: false,
         watchVisibility: false,
         isInput: false,

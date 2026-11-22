@@ -1,4 +1,5 @@
-import { test, expect, openApp, openPage, openTool, calls, onCommand, runOutput, runEnds, emit } from '../support/app.mjs';
+import { test, expect, openApp, openPage, openTool, calls, onCommand, runOutput, runEnds, emit, dialogButton, openDialog } from '../support/app.mjs';
+import { actionNote } from '../../support/wait.mjs';
 
 const open = async (page, state = {}) => {
     await openApp(page, state);
@@ -431,6 +432,40 @@ test.describe('script filter', () => {
         await expect(dropdown(page)).toHaveJSProperty('value', 'test.ps1');
     });
 
+    test('a script being edited is kept on Keep Editing, still editable, and still selected, asking once for quick switches', async ({ page }) => {
+        await open(page, { scripts: ['build.ps1', 'test.ps1'], files: { 'build.ps1': 'Write-Host build', 'test.ps1': 'Write-Host test' } });
+        await ready(page);
+        await choose(page, 'Saved');
+        await expect.poll(() => shown(page)).toBe('build.ps1');
+        await settled(page);
+        const box = page.locator('#term-runner webui-input-message textarea');
+        await expect(box).toHaveValue('Write-Host build');
+        await box.fill('Write-Host mine');
+        await page.evaluate(() => {
+            window.__asked = 0;
+            window.__checks = 0;
+            const dialog = webui.dialog;
+            webui.dialog = (...args) => { window.__asked++; return dialog.apply(webui, args); };
+            const runner = document.querySelector('#term-runner');
+            const keepUnsaved = runner.keepUnsaved;
+            runner.keepUnsaved = function (...args) { window.__checks++; return keepUnsaved.apply(this, args); };
+            // Not awaited, since it waits for the question to be answered.
+            document.querySelector('app-terminals').switchTerminal('test.ps1');
+        });
+        await expect(dialogButton(page, 'Keep Editing')).toBeVisible();
+        // A second switch while the question is open waits for the same answer.
+        await page.evaluate(() => { document.querySelector('app-terminals').switchTerminal('test.ps1'); });
+        await expect.poll(() => page.evaluate(() => window.__checks)).toBe(2);
+        await dialogButton(page, 'Keep Editing').click();
+        await expect(openDialog(page)).toHaveCount(0);
+        await settled(page);
+        await expect.poll(() => shown(page)).toBe('build.ps1');
+        await expect(dropdown(page)).toHaveJSProperty('value', 'build.ps1');
+        await expect(box).toHaveValue('Write-Host mine');
+        await expect(box).toBeEditable();
+        expect(await page.evaluate(() => window.__asked)).toBe(1);
+    });
+
     test('with nothing to list, the list says None and is turned off, and the terminal is empty', async ({ page }) => {
         await open(page, { scripts: ['build.ps1'] });
         await ready(page);
@@ -577,4 +612,15 @@ test('a toggle beside the script filter shows the script and terminal one at a t
     await page.locator('#term-single').click();
     await expect(page.locator('#term-split')).not.toHaveAttribute('single');
     await expect.poll(() => page.evaluate(() => window.__backend.appData.data['app-terminal-single'])).toBe(false);
+});
+test('what Stop said goes when another terminal is shown', async ({ page }) => {
+    await open(page);
+    await ready(page);
+    await start(page, 'a.ps1');
+    await page.evaluate(() => { window.__backend.handlers.stop_run = () => { throw 'The script could not be stopped.'; }; });
+    await page.locator('#btn-kill').click();
+    const said = actionNote(page, 'The script could not be stopped.');
+    await expect(said).toHaveCount(1);
+    await start(page, 'b.ps1');
+    await expect(said).toHaveCount(0);
 });

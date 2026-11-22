@@ -1,5 +1,5 @@
 import { test, expect, openApp, mount, calls } from '../support/app.mjs';
-import { alertPopup } from '../../support/wait.mjs';
+import { alertPopup, actionNote } from '../../support/wait.mjs';
 
 // The current project in Settings (wc/project-manager.js): its icon and name in the heading, renamed in place by
 // clicking the name. Removing it is in project-remove.spec.mjs.
@@ -32,12 +32,14 @@ test('the heading shows the project name, with an edit icon, after its label and
     await expect(el.locator('#btn-remove')).toHaveCount(0);
     await expect(el.locator('.edit-form')).toBeHidden();
 });
+
 test('clicking the edit icon starts renaming too', async ({ page }) => {
     const el = await manager(page);
     await nameButton(el).locator('webui-icon').click();
     await expect(input(el)).toHaveValue('Repo');
     await expect(nameButton(el)).toBeHidden();
 });
+
 test('Save sends the new name and shows it in the heading', async ({ page }) => {
     const el = await manager(page);
     await openRename(el);
@@ -49,6 +51,7 @@ test('Save sends the new name and shows it in the heading', async ({ page }) => 
     await expect(el.locator('.edit-form')).toBeHidden();
     await expect(nameButton(el)).toBeFocused();
 });
+
 test('Enter saves, and Escape cancels', async ({ page }) => {
     const el = await manager(page);
     await openRename(el);
@@ -62,6 +65,7 @@ test('Enter saves, and Escape cancels', async ({ page }) => {
     await expect.poll(() => calls(page, 'rename_project')).toEqual([{ path: '/repo', newName: 'Entered' }]);
     await expect(nameButton(el)).toHaveText('Entered');
 });
+
 test('Cancel puts the name back without renaming', async ({ page }) => {
     const el = await manager(page);
     await openRename(el);
@@ -72,25 +76,30 @@ test('Cancel puts the name back without renaming', async ({ page }) => {
     await openRename(el);
     await expect.poll(() => calls(page, 'rename_project')).toEqual([]);
 });
+
 test('a blank name is refused, and the field stays open', async ({ page }) => {
     const el = await manager(page);
     await openRename(el);
     await input(el).fill('   ');
     await button(el, 'Save').click();
-    await expect(alertPopup(page, 'Project name cannot be empty.')).toHaveCount(1);
+    // Said by the name, not in the app's alerts.
+    await expect(actionNote(el, 'Project name cannot be empty.')).toHaveCount(1);
+    await expect(alertPopup(page, 'Project name cannot be empty.')).toHaveCount(0);
     await expect(input(el)).toBeVisible();
     await expect.poll(() => calls(page, 'rename_project')).toEqual([]);
 });
+
 test('a rename the backend refuses says why, and keeps the field open to correct it', async ({ page }) => {
     const el = await manager(page);
     await page.evaluate(() => { window.__backend.handlers.rename_project = () => { throw 'A project named Other already exists.'; }; });
     await openRename(el);
     await input(el).fill('Other');
     await button(el, 'Save').click();
-    await expect(alertPopup(page, 'A project named Other already exists.')).toHaveCount(1);
+    await expect(actionNote(page, 'A project named Other already exists.')).toHaveCount(1);
     await expect(input(el)).toHaveValue('Other');
     await expect.poll(() => page.evaluate(() => webui.getData('app-current-project').display)).toBe('Repo');
 });
+
 test('saving the same name closes the field without renaming', async ({ page }) => {
     const el = await manager(page);
     await openRename(el);
@@ -98,11 +107,13 @@ test('saving the same name closes the field without renaming', async ({ page }) 
     await expect(el.locator('.edit-form')).toBeHidden();
     await expect.poll(() => calls(page, 'rename_project')).toEqual([]);
 });
+
 test('a name with special characters shows as written', async ({ page }) => {
     const el = await manager(page, { name: 'Tom & "Co"', path: '/repo' });
     await expect(nameButton(el)).toHaveText('Tom & "Co"');
     await openRename(el, 'Tom & "Co"');
 });
+
 test('markup in a project name does not run', async ({ page }) => {
     const name = '"><img src=q onerror="window.__xss=1">';
     const el = await manager(page, { name, path: '/repo' });
@@ -110,8 +121,21 @@ test('markup in a project name does not run', async ({ page }) => {
     await expect(nameButton(el).locator('img')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
+
 test('with no project, there is no name to edit', async ({ page }) => {
     await openApp(page, { project: null });
     const root = await mount(page, '<app-project-manager id="m"></app-project-manager>');
     await expect(root.locator('#m .current-project')).toBeHidden();
+});
+
+test('what a rename said goes when the project is closed or removed', async ({ page }) => {
+    const el = await manager(page);
+    await openRename(el);
+    await input(el).fill('Main');
+    await button(el, 'Save').click();
+    await expect(actionNote(el, 'Project Successfully Renamed')).toHaveCount(1);
+    await page.evaluate(() => webui.setData('app-current-project', null));
+    await expect(el.locator('.current-project')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => document.querySelector('#m app-project-name').hasAttribute('project'))).toBe(false);
+    await expect(actionNote(el, 'Project Successfully Renamed')).toHaveCount(0);
 });
