@@ -1,4 +1,4 @@
-import { test, expect, openApp } from '../../tests/support/app.mjs';
+import { test, expect, openApp, openDialog, dialogButton } from '../../tests/support/app.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import {
     AI_APP_DATA, AI_PROVIDERS, AI_REPLIES, IMPORT_DOCS, IMPORT_PLAN, IMPORT_SUGGESTED, OTHER_PROJECTS, PAGE_IDS, PROJECT, PROJECT_LOGOS,
@@ -247,9 +247,8 @@ test.describe('tutorials', () => {
     test('task manager', async ({ page }) => {
         await open(page, '/');
         await loop(page, 'task-manager', async () => {
-            await openToolTab(page, 'tasks', { after: 1400 });
-            const view = page.locator('webui-drawer.shared .task-manager');
-            await view.locator('tr.tm-row').first().waitFor();
+            // Flat, with the guide closed, so the process chosen and its details both fit.
+            const view = await openTaskManager(page);
             // The Storybook server outlived its terminal: Orphaned finds it, and its details say what started it.
             await moveTo(page, view.locator('.tm-filter'));
             await view.locator('.tm-filter').selectOption('orphan');
@@ -362,6 +361,352 @@ test.describe('tutorials', () => {
         await loop(page, 'settings', async () => {
             await updates.scrollIntoViewIfNeeded();
             await clickOn(page, updates.locator('webui-button', { hasText: 'Check for Updates' }), { after: 1500 });
+        });
+    });
+});
+
+/** Features shown on TaskProxy.com's feature pages, each one action ending on its result. */
+test.describe('features', () => {
+    const settingsTab = (page, name) => clickOn(page, page.locator(`webui-button.settings-tab-${name}`), { after: 900 });
+    /** Makes a backend command take a while to answer, as a real one does, so its busy state shows. */
+    const slow = (page, command, ms) => page.evaluate(({ command, ms }) => {
+        const answer = window.__backend.handlers[command];
+        window.__backend.handlers[command] = async args => {
+            await new Promise(resolve => setTimeout(resolve, ms));
+            return answer(args);
+        };
+    }, { command, ms });
+    /** AI set up with Ollama and Claude Code, and turned on for everything. */
+    const withAi = (extra = {}) => ({
+        ai: AI_PROVIDERS, aiReplies: AI_REPLIES,
+        appData: { ...demoState().appData, ...AI_APP_DATA },
+        ...extra,
+    });
+    /** Drags a range input's thumb from one value to another, as a person would. */
+    const drag = async (page, slider, from, to) => {
+        await slider.scrollIntoViewIfNeeded();
+        const box = await slider.boundingBox();
+        const { min, max } = await slider.evaluate(el => ({ min: Number(el.min), max: Number(el.max) }));
+        const at = value => box.x + 8 + (box.width - 16) * (value - min) / (max - min);
+        const y = box.y + box.height / 2;
+        await page.mouse.move(at(from), y, { steps: 20 });
+        await page.waitForTimeout(250);
+        await page.mouse.down();
+        await page.mouse.move(at(to), y, { steps: 30 });
+        await page.waitForTimeout(150);
+        await page.mouse.up();
+    };
+    /** Each project's logo as the project dropdown shows it, from the image the project uses. */
+    const showLogos = (page, logos) => page.evaluate(logos => {
+        const backend = window.__backend;
+        const uri = svg => svg ? `data:image/svg+xml,${encodeURIComponent(svg)}` : null;
+        const icons = { ...logos };
+        backend.handlers.get_project_icons = () => Object.entries(icons).map(([path, svg]) => ({ path, icon: uri(svg) }));
+        backend.setLogo = (path, svg) => { icons[path] = svg; return uri(svg); };
+        document.dispatchEvent(new CustomEvent('app-project-icons-changed'));
+    }, logos);
+
+    test('the tools drawer', async ({ page }) => {
+        const output = testRunOutput.filter(step => typeof step === 'string').join('');
+        await open(page, `/${PAGE_IDS.onboarding}`, { runs: [{ terminalId: '.taskproxy/scripts/test.ps1', project: PROJECT.path, output: [output], code: 0 }] });
+        await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
+        await loop(page, 'tools-drawer', async () => {
+            await clickOn(page, page.locator('header app-tools'), { after: 1000 });
+            for (const id of ['terminals', 'tasks', 'variables', 'theme']) {
+                await clickOn(page, page.locator(`webui-drawer.shared webui-button.tools-tab-${id}`), { after: 1500 });
+            }
+        });
+    });
+
+    test('adding an AI provider', async ({ page }) => {
+        await open(page, '/', { aiModels: { 'provider-1': [{ id: 'qwen2.5-coder:7b', name: '' }, { id: 'llama3.2:3b', name: '' }, { id: 'gemma3:4b', name: '' }] } });
+        await loop(page, 'ai-providers', async () => {
+            await settingsTab(page, 'ai');
+            const ai = page.locator('.settings-ai app-ai-settings');
+            await clickOn(page, ai.locator('webui-button.ai-add-provider'), { after: 900 });
+            const card = ai.locator('.ai-provider-tabs > .ai-provider-content').first().locator('.ai-provider');
+            await moveTo(page, card.locator('.ai-choice-claude'));
+            await page.waitForTimeout(500);
+            await clickOn(page, card.locator('.ai-choice-ollama input[type="radio"]'), { after: 1000 });
+            await moveTo(page, card.locator('.ai-steps > li').first());
+            await page.waitForTimeout(700);
+            await moveTo(page, card.locator('webui-button.ai-run-command').first());
+            await page.waitForTimeout(900);
+            await slow(page, 'ai_models', 900);
+            await clickOn(page, ai.locator('webui-button.ai-save'), { after: 600 });
+            const models = ai.locator('.ai-provider-tabs > .ai-provider-content').first().locator('.ai-server-models .ai-model');
+            await expect(models).toHaveCount(3);
+            await moveTo(page, models.first());
+            await page.waitForTimeout(400);
+        });
+    });
+
+    test('a commit message written with AI', async ({ page }) => {
+        await openGit(page, withAi());
+        await slow(page, 'ai_write', 2200);
+        await loop(page, 'ai-commit-message', async () => {
+            const message = git(page).locator('webui-input-message[label="Commit Message"] textarea');
+            await moveTo(page, message);
+            await page.waitForTimeout(500);
+            await clickOn(page, git(page).locator('#ai-commit webui-button.ai-run'), { after: 400 });
+            await expect(message).toHaveValue(AI_REPLIES.git, { timeout: 10000 });
+            await page.waitForTimeout(600);
+            await moveTo(page, git(page).locator('webui-button[label="Commit"]'));
+        });
+    });
+
+    test('a code review of the changes', async ({ page }) => {
+        await openGit(page, withAi());
+        await page.evaluate(report => {
+            const backend = window.__backend;
+            backend.handlers.ai_review = async ({ request }) => {
+                for (let done = 0; done < 3; done++) {
+                    backend.emit('ai-progress', { requestId: request.requestId, done, total: 3 });
+                    await new Promise(resolve => setTimeout(resolve, 900));
+                }
+                return report;
+            };
+        }, AI_REPLIES.review);
+        await loop(page, 'git-review', async () => {
+            await gitTab(page, 'Review');
+            const review = git(page).locator('app-ai-review');
+            await page.waitForTimeout(700);
+            await typeInto(page, review.locator('textarea.review-focus'), 'edge cases in the cart total', { delay: 40 });
+            await clickOn(page, review.locator('webui-button.ai-run'), { after: 400 });
+            const report = review.locator('.review-report');
+            await expect(report.locator('h2').first()).toHaveText('Summary', { timeout: 15000 });
+            await moveTo(page, report.locator('ol li').first());
+            await page.waitForTimeout(800);
+        });
+    });
+
+    test('a page part written with AI', async ({ page }) => {
+        await open(page, `/${PAGE_IDS.release}`, withAi());
+        const segment = page.locator('app-page-handler > webui-reorder > app-markdown-segment').nth(1);
+        await segment.waitFor();
+        await slow(page, 'ai_write', 2000);
+        await settle(page);
+        await loop(page, 'ai-page-draft', async () => {
+            await clickOn(page, segment.locator('#btn-edit'), { after: 900 });
+            await clickOn(page, segment.locator('#ai-segment webui-button.ai-run'), { after: 700 });
+            await typeInto(page, page.locator('textarea[name="ai_request"]'), 'Add the steps to tag and publish the release after these checks', { delay: 30 });
+            await clickOn(page, dialogButton(page, 'Write with AI'), { after: 400 });
+            await expect(segment.locator('webui-input-message textarea')).toHaveValue(AI_REPLIES.pages, { timeout: 10000 });
+            await moveTo(page, segment.locator('webui-input-message textarea'));
+            await page.waitForTimeout(600);
+        });
+    });
+
+    test('importing markdown files as pages', async ({ page }) => {
+        const base = demoState();
+        const titles = JSON.parse(IMPORT_SUGGESTED);
+        await open(page, '/', withAi({
+            docs: ['README.md', ...Object.keys(IMPORT_DOCS)],
+            files: { ...base.files, ...IMPORT_DOCS },
+            importPlan: IMPORT_PLAN, aiReplies: { ...AI_REPLIES, markdown: IMPORT_SUGGESTED },
+            folderImport: titles.map(page => ({ name: page.title, content: `<webui-data data-page-title="${page.title}" data-page-subtitle="${page.subtitle}"></webui-data>\n` })),
+        }));
+        await slow(page, 'ai_write', 2000);
+        await loop(page, 'page-import', async () => {
+            await settingsTab(page, 'import');
+            const importer = page.locator('app-page-import');
+            await clickOn(page, importer.locator('webui-select').getByRole('button').first(), { after: 700 });
+            await clickOn(page, importer.locator('webui-select').getByRole('option', { name: /^docs \(/ }), { after: 800 });
+            await clickOn(page, importer.locator('app-ai-action webui-button.ai-run'), { after: 400 });
+            await expect(importer.locator('.page-import-table')).toBeVisible({ timeout: 10000 });
+            await moveTo(page, importer.locator('.page-import-table tr').nth(3));
+            await page.waitForTimeout(1000);
+            await clickOn(page, importer.locator('webui-button', { hasText: 'Import Pages' }), { after: 1200 });
+            await expect(importer.locator('webui-alert[show]')).toContainText('Imported');
+        });
+    });
+
+    test('favorite scripts', async ({ page }) => {
+        const favorite = (id, name, icon, path) => ({
+            id, name, icon, project: PROJECT.path, source: { kind: 'file', path },
+            params: [], scopes: { page: true, project: true, global: true }, projects: [PROJECT.path], preview: '',
+        });
+        await open(page, `/${PAGE_IDS.onboarding}`, {
+            appData: {
+                ...demoState().appData, 'app-trusted-projects': [PROJECT.path],
+                'app-favorite-scripts': [favorite('tests', 'Run tests', { name: 'test|theme:info|fill|backing' }, '.taskproxy/scripts/test.ps1'), favorite('clean', 'Clean', { name: 'eraser|theme:warning|fill|backing' }, '.taskproxy/scripts/clean.ps1')],
+            },
+        });
+        await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
+        await scriptOutput(page, [
+            '\r\n> acme-storefront@1.4.2 dev\r\n> vite\r\n\r\n', { wait: 500 },
+            '  \x1b[32m\x1b[1mVITE\x1b[22m v6.0.7\x1b[39m  \x1b[2mready in \x1b[0m\x1b[1m412\x1b[22m\x1b[2m\x1b[0m ms\x1b[22m\r\n\r\n',
+            '  \x1b[32m➜\x1b[39m  \x1b[1mLocal\x1b[22m:   \x1b[36mhttp://localhost:\x1b[1m5173\x1b[22m/\x1b[39m\r\n',
+            '  \x1b[32m➜\x1b[39m  \x1b[2mNetwork: use \x1b[22m\x1b[1m--host\x1b[22m\x1b[2m to expose\x1b[22m\r\n',
+            { wait: 120000 },
+        ]);
+        await settle(page);
+        await loop(page, 'favorites', async () => {
+            const favorites = page.locator('app-favorites');
+            await clickOn(page, favorites.locator('.fav-edit'), { after: 1000 });
+            await clickOn(page, favorites.locator('webui-button.fav-add'), { after: 1000 });
+            await clickOn(page, favorites.locator('.fav-choice[data-block="3"]'), { after: 1200 });
+            await moveTo(page, favorites.locator('.fav-editor .fav-name'));
+            await page.waitForTimeout(800);
+            await clickOn(page, favorites.locator('webui-button.fav-done'), { after: 1000 });
+            await clickOn(page, favorites.locator('.fav-icons > .fav-icon').last(), { after: 1200 });
+            await expect(page.locator('#term-status')).toContainText('Running', { timeout: 10000 });
+            await page.waitForTimeout(1200);
+        });
+    });
+
+    test('choosing a theme', async ({ page }) => {
+        await open(page, `/${PAGE_IDS.onboarding}`);
+        await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
+        await loop(page, 'theme', async () => {
+            await openToolTab(page, 'theme', { after: 1600 });
+            const panel = page.locator('webui-drawer.shared webui-theme-selector[panel]');
+            for (const [category, theme] of [['Ocean', 'seafoam'], ['Space', 'nebula'], ['Organic', 'forest']]) {
+                await clickOn(page, panel.locator(`.category-tab[data-category="${category}"]`), { after: 700 });
+                await clickOn(page, panel.locator(`.tile[data-theme-value="${theme}"]`).first(), { after: 1600 });
+            }
+        });
+    });
+
+    test('accessibility choices', async ({ page }) => {
+        await open(page, `/${PAGE_IDS.onboarding}`);
+        await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
+        await loop(page, 'accessibility', async () => {
+            await openToolTab(page, 'accessibility', { after: 1200 });
+            const panel = page.locator('webui-drawer.shared .accessibility-panel');
+            await drag(page, panel.locator('.a11y-text-size'), 100, 130);
+            await expect(panel.locator('.a11y-text-value')).toHaveText('130%');
+            await page.waitForTimeout(1200);
+            await clickOn(page, panel.locator('input[data-setting="underlineLinks"]'), { after: 1000 });
+            await moveTo(page, page.locator('app-page-handler > webui-reorder > app-markdown-segment').first(), { offsetY: -40 });
+        });
+    });
+
+    test('project tiles', async ({ page }) => {
+        const [mobile, design, payments] = OTHER_PROJECTS;
+        await open(page, '/', {
+            projects: [PROJECT, ...OTHER_PROJECTS],
+            gitStatus: { [PROJECT.path]: { changes: 4, ahead: 2, behind: 1 }, [mobile.path]: { changes: 1 }, [payments.path]: { behind: 3 } },
+            ciStatus: {
+                [PROJECT.path]: { state: 'success', service: 'GitHub Actions', url: 'https://github.com/acme/storefront/actions' },
+                [mobile.path]: { state: 'running', service: 'GitHub Actions', url: 'https://github.com/acme/mobile/actions' },
+                [design.path]: { state: 'success', service: 'GitLab CI/CD', url: 'https://gitlab.com/acme/design-system/-/pipelines' },
+                [payments.path]: { state: 'failure', service: 'GitHub Actions', url: 'https://github.com/acme/payments-api/actions' },
+            },
+        });
+        await showLogos(page, PROJECT_LOGOS);
+        await settle(page);
+        await loop(page, 'project-tiles', async () => {
+            const dropdown = page.locator('app-project-dropdown');
+            await clickOn(page, dropdown.getByRole('button').first(), { after: 900 });
+            const tiles = dropdown.locator('.tile');
+            for (const index of [1, 2, 3]) {
+                await moveTo(page, tiles.nth(index));
+                await page.waitForTimeout(700);
+            }
+        });
+    });
+
+    test("choosing the project's icon", async ({ page }) => {
+        const base = demoState();
+        await open(page, '/', { projectImages: Object.keys(STOREFRONT_IMAGES), files: { ...base.files, ...STOREFRONT_IMAGES } });
+        await showLogos(page, { ...PROJECT_LOGOS, [PROJECT.path]: null });
+        await page.evaluate(({ images, path }) => {
+            const backend = window.__backend;
+            const set = backend.handlers.set_project_icon;
+            backend.handlers.set_project_icon = args => {
+                set(args);
+                return backend.setLogo(args.project ?? path, images[args.icon] || null);
+            };
+        }, { images: STOREFRONT_IMAGES, path: PROJECT.path });
+        await settle(page);
+        await loop(page, 'project-icon', async () => {
+            const icon = page.locator('app-project-manager app-project-icon');
+            await clickOn(page, icon.getByRole('button').first(), { after: 900 });
+            const tile = name => icon.locator('.tile').filter({ has: page.locator('.name', { hasText: name }) });
+            await moveTo(page, tile('storefront-mono.svg'));
+            await page.waitForTimeout(500);
+            await clickOn(page, tile('storefront-logo.svg'), { after: 1200 });
+            await moveTo(page, page.locator('app-project-dropdown'));
+        });
+    });
+
+    test('script performance', async ({ page }) => {
+        await open(page, '/');
+        await loop(page, 'script-performance', async () => {
+            await settingsTab(page, 'performance');
+            const perf = page.locator('app-script-performance');
+            await clickOn(page, perf.locator('.perf-priority [role="radio"]', { hasText: /^Low$/ }), { after: 900 });
+            await clickOn(page, perf.locator('.perf-priority [role="radio"]', { hasText: 'Lowest' }), { after: 900 });
+            await drag(page, perf.locator('.perf-threads'), 12, 6);
+            await expect(perf.locator('.perf-threads-label')).toHaveText('6 of 12 threads');
+            await page.waitForTimeout(600);
+        });
+    });
+
+    test('remote connections', async ({ page }) => {
+        await open(page, '/', {
+            myfi: { account: { id: 'demo-account', displayName: 'Sam Rivera' } },
+            remote: { enabled: false, name: 'Sam’s Workstation' },
+        });
+        await loop(page, 'remote-connections', async () => {
+            await settingsTab(page, 'remote');
+            const remote = page.locator('.settings-remote app-remote-connections');
+            await clickOn(page, remote.locator('[data-role="turn-on"]'), { after: 1200 });
+            await page.evaluate(() => window.__backend.remote.ask({ key: 'demo-browser', name: 'Chrome on Pixel 8', code: 'K7Q-42M' }));
+            const waiting = remote.locator('.remote-waiting webui-flex.remote-browser');
+            await expect(waiting).toBeVisible();
+            await moveTo(page, waiting.locator('.remote-code'));
+            await page.waitForTimeout(1000);
+            await clickOn(page, waiting.locator('[data-role="approve"]'), { after: 1200 });
+            const approved = remote.locator('.remote-approved webui-flex.remote-browser');
+            await expect(approved).toBeVisible();
+            await moveTo(page, approved.locator('.remote-browser-name'));
+        });
+    });
+
+    test('signing in to a Stoic Dreams account', async ({ page }) => {
+        await open(page, `/${PAGE_IDS.onboarding}`);
+        await page.locator('app-page-handler > webui-reorder > app-markdown-segment').first().waitFor();
+        await loop(page, 'account', async () => {
+            await openToolTab(page, 'account', { after: 1200 });
+            const account = page.locator('webui-drawer.shared app-account');
+            await clickOn(page, account, { after: 800 });
+            const code = openDialog(page).locator('.myfi-code');
+            await expect(code).toBeVisible();
+            await moveTo(page, code);
+            await page.waitForTimeout(2200);
+            await page.evaluate(() => window.__backend.myfi.approve({ id: 'demo-account', displayName: 'Sam Rivera' }));
+            await expect(account).toContainText('Signed in as Sam Rivera');
+            await moveTo(page, account);
+            // Until the popup saying so has gone, so the poster shows the panel.
+            await expect(page.locator('webui-alerts webui-alert[show], webui-alerts .alert')).toHaveCount(0, { timeout: 15000 }).catch(() => { });
+            await page.waitForTimeout(600);
+        });
+    });
+
+    test('git repos with their CI results', async ({ page }) => {
+        const base = demoState().git;
+        const actions = 'https://github.com/acme/storefront/actions';
+        await openGit(page, {
+            git: {
+                ...base, repos: ['', 'packages/checkout-api', 'packages/ui-kit'],
+                repoStatus: { '': { changes: 4, ahead: 2, behind: 1 }, 'packages/checkout-api': { changes: 2, behind: 3 }, 'packages/ui-kit': { ahead: 1 } },
+                ciStatus: {
+                    '': { state: 'success', service: 'GitHub Actions', url: actions },
+                    'packages/checkout-api': { state: 'failure', service: 'GitHub Actions', url: actions },
+                    'packages/ui-kit': { state: 'running', service: 'GitHub Actions', url: actions },
+                },
+            },
+        });
+        await loop(page, 'git-repos', async () => {
+            const repos = git(page).locator('webui-select[label="Repo"]');
+            await clickOn(page, repos.getByRole('button').first(), { after: 900 });
+            const tiles = repos.locator('.tile');
+            for (const index of [1, 2]) {
+                await moveTo(page, tiles.nth(index));
+                await page.waitForTimeout(800);
+            }
         });
     });
 });

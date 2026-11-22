@@ -273,6 +273,16 @@ export async function mount(page, html) {
     return page.locator('#test-root');
 }
 
+/** The types file_server.rs's content_type gives each extension. Anything else is application/octet-stream. */
+const FILE_SERVER_TYPES = {
+    mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', mkv: 'video/x-matroska', ogv: 'video/ogg',
+    avi: 'video/x-msvideo', mpeg: 'video/mpeg', mpg: 'video/mpeg', mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav',
+    flac: 'audio/flac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', aac: 'audio/aac', png: 'image/png',
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon',
+    bmp: 'image/bmp', avif: 'image/avif', pdf: 'application/pdf', woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf',
+    otf: 'font/otf', json: 'application/json',
+};
+
 /**
  * Answers the addresses the file preview loads, as the backend's file_server.rs does, from the state's files and
  * binaryFiles. Records each request's path and range in `page.__fileRequests`.
@@ -292,7 +302,9 @@ function serveProjectFiles(page, state) {
         const text = state.files?.[path];
         if (binary === undefined && text === undefined) return route.fulfill({ status: 404, body: 'File not found' });
         const body = binary !== undefined ? Buffer.from(binary, 'base64') : Buffer.from(text);
-        const headers = { 'access-control-allow-origin': '*', 'accept-ranges': 'bytes' };
+        // Typed as file_server.rs types them, without which an SVG is not drawn as an image.
+        const type = FILE_SERVER_TYPES[extname(path).slice(1).toLowerCase()] || 'application/octet-stream';
+        const headers = { 'access-control-allow-origin': '*', 'accept-ranges': 'bytes', 'content-type': type };
         const match = /^bytes=(\d*)-(\d*)$/.exec(range || '');
         if (match) {
             const start = match[1] ? parseInt(match[1]) : Math.max(0, body.length - parseInt(match[2]));
