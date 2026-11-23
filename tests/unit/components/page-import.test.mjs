@@ -66,11 +66,18 @@ test('the pages can go at the top of the navigation, with no folder to name', as
     await expect.poll(() => navigation(page)).toEqual([...NAVIGATION, { name: 'Imported', icon: 'file', url: '/imported-0', children: null }]);
 });
 
-test('a new folder needs a name', async ({ page }) => {
+test('Import is off while a new folder has no name, and on once it has one or the pages go at the top', async ({ page }) => {
     const el = await importer(page);
+    await expect(importButton(el)).not.toHaveAttribute('disabled');
     await nameInput(el).fill('  ');
-    await importButton(el).click();
-    await expect(actionNote(page, 'Name the folder the pages go in.')).toHaveCount(1);
+    await expect(importButton(el)).toHaveAttribute('disabled');
+    await expect(importButton(el)).toHaveAttribute('title', 'Name the folder the pages go in to import them');
+    await el.getByRole('radio', { name: 'At the top of the navigation' }).click();
+    await expect(importButton(el)).not.toHaveAttribute('disabled');
+    await el.getByRole('radio', { name: 'In a new folder' }).click();
+    await expect(importButton(el)).toHaveAttribute('disabled');
+    await nameInput(el).fill('Guides');
+    await expect(importButton(el)).not.toHaveAttribute('disabled');
     await expect.poll(() => calls(page, 'import_page_folder')).toEqual([]);
 });
 

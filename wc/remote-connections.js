@@ -214,6 +214,17 @@
             if (status.enabled) {
                 const rename = button('Save Name', 'info', 'pencil', 'rename');
                 rename.addEventListener('click', () => run(() => webui.proxy.remoteConnections.setEnabled(true, typed())));
+                // Saving is only for a name typed that isn't the one saved.
+                const refreshRename = () => {
+                    // Until the field is drawn, its value is the attribute it was given.
+                    const value = `${name.value ?? name.getAttribute('value') ?? ''}`.trim();
+                    const why = !value ? 'Type a name for this computer to save it' : value === `${status.name ?? ''}`.trim() ? 'Type a new name to save it' : '';
+                    rename.toggleAttribute('disabled', !!why);
+                    rename.setAttribute('title', why || 'Save this computer\'s new name');
+                };
+                name.addEventListener('input', refreshRename);
+                name.addEventListener('change', refreshRename);
+                refreshRename();
                 const off = button('Turn Off', 'secondary', 'power', 'turn-off');
                 off.addEventListener('click', () => run(() => webui.proxy.remoteConnections.setEnabled(false)));
                 actions.append(rename, off);

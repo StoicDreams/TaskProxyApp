@@ -7,13 +7,18 @@
 
 use crate::prelude::*;
 use git2::Repository;
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
 const SETTINGS_FILE: &str = "ai-settings.enc";
-const DEFAULT_TIMEOUT_SECS: u64 = 120;
-const DEFAULT_MAX_CHARS: usize = 40_000;
+/// The limits of a model with none set and none suggested: a short wait and a modest amount, which fit most models.
+const FALLBACK_TIMEOUT_SECS: u64 = 120;
+const FALLBACK_MAX_CHARS: usize = 40_000;
+/// The limits the user can set on a model.
+const TIMEOUT_RANGE: (u64, u64) = (10, 3600);
+const MAX_CHARS_RANGE: (usize, usize) = (2_000, 2_000_000);
 /// Files larger than this are left out of a whole-project review.
 const REVIEW_FILE_LIMIT: u64 = 200 * 1024;
 const ANTHROPIC_BASE: &str = "https://api.anthropic.com";
@@ -129,36 +134,253 @@ struct StoredProvider {
     models: Vec<AiModel>,
     #[serde(default)]
     hidden: Vec<String>,
+    /// The limits set on its models, by model id. A model left out uses its suggested limits.
+    #[serde(default)]
+    limits: BTreeMap<String, ModelLimits>,
     #[serde(default)]
     last_error: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// The settings as they are saved. Files from earlier releases also have `timeoutSecs` and `maxChars`, limits for
+/// every provider, which are left unread: each model has its own limits now.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct AiStore {
     #[serde(default)]
     providers: Vec<StoredProvider>,
-    #[serde(default = "default_timeout")]
-    timeout_secs: u64,
-    #[serde(default = "default_max_chars")]
-    max_chars: usize,
 }
 
-fn default_timeout() -> u64 {
-    DEFAULT_TIMEOUT_SECS
-}
-fn default_max_chars() -> usize {
-    DEFAULT_MAX_CHARS
+/// The limits the user set on one model. Each one not set is the model's suggested limit.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelLimits {
+    /// How long to wait for an answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+    /// The most characters of changes, files, or context sent in one request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_chars: Option<usize>,
 }
 
-impl Default for AiStore {
-    fn default() -> Self {
-        Self {
-            providers: Vec::new(),
-            timeout_secs: DEFAULT_TIMEOUT_SECS,
-            max_chars: DEFAULT_MAX_CHARS,
-        }
+impl ModelLimits {
+    fn is_empty(&self) -> bool {
+        self.timeout_secs.is_none() && self.max_chars.is_none()
     }
+}
+
+/// The limits suggested for the models whose id, in lower case, holds any of `matches`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LimitSuggestion {
+    pub matches: Vec<String>,
+    /// What the suggestion is for, such as "Claude Opus".
+    pub name: String,
+    pub timeout_secs: u64,
+    pub max_chars: usize,
+}
+
+/// The limits suggested for well-known models, the first that matches a model's id winning, so more particular ones
+/// come first: `(parts of the id, name, seconds, characters)`. Each one is based on the model's documented context
+/// window, but well under it: a token is about 3.5 to 4 characters of code, and what is sent leaves room for the
+/// instructions and the answer, and keeps a request's quality, time, and cost reasonable. Models that think before
+/// answering, and models on the user's own computer, get longer to answer.
+///
+/// - Claude: platform.claude.com/docs/en/about-claude/models/overview (checked 2026-11-23). Opus, Sonnet, and Haiku
+///   from 4.6 on, Fable, and Mythos have a 1M-token window (about 2.5M characters); 4.5 and earlier 200K. The Claude
+///   Code aliases `opus`, `sonnet`, and `haiku` are always the newest. About 300,000 characters is 75K to 85K tokens.
+/// - OpenAI: developers.openai.com/api/docs/models (checked 2026-11-23). GPT-6 and GPT-5.5 have 1.05M tokens, GPT-5
+///   and its mini 400K (272K input), GPT-4.1 1M, GPT-4o and GPT-4 Turbo 128K, GPT-3.5 Turbo 16K, GPT-4 8K.
+/// - Local models: their pages in Ollama's library. Ollama runs a model with 4K tokens on graphics cards under
+///   24 GB, and LM Studio usually starts at 4K too, unless the context length is set higher, which Settings says.
+///   So they get at most 32,000 characters (about 9K tokens, for a 16K context), and less when the model's own
+///   window is smaller: 8K-token models 12,000, 4K-token models 6,000.
+/// - Anything else gets the fallback, 40,000 characters and 120 seconds.
+const SUGGESTIONS: &[(&[&str], &str, u64, usize)] = &[
+    // Claude
+    (
+        &[
+            "claude-3",
+            "opus-4-5",
+            "opus-4.5",
+            "sonnet-4-5",
+            "sonnet-4.5",
+            "haiku-4-5",
+            "haiku-4.5",
+            "opus-4-1",
+            "opus-4.1",
+            "opus-4-0",
+            "sonnet-4-0",
+            "opus-4-2025",
+            "sonnet-4-2025",
+        ],
+        "Claude 4.5 and earlier (200K tokens)",
+        240,
+        120_000,
+    ),
+    (
+        &["fable", "mythos"],
+        "Claude Fable and Mythos (1M tokens)",
+        600,
+        300_000,
+    ),
+    (&["opus"], "Claude Opus (1M tokens)", 420, 300_000),
+    (&["sonnet"], "Claude Sonnet (1M tokens)", 300, 300_000),
+    (&["haiku"], "Claude Haiku (1M tokens)", 180, 200_000),
+    // OpenAI
+    (&["gpt-6"], "GPT-6 (1.05M tokens)", 420, 300_000),
+    (&["gpt-5"], "GPT-5 (400K tokens or more)", 300, 200_000),
+    (&["gpt-4.1"], "GPT-4.1 (1M tokens)", 180, 200_000),
+    (&["gpt-4o-mini"], "GPT-4o mini (128K tokens)", 90, 80_000),
+    (
+        &["gpt-4o", "gpt-4-turbo"],
+        "GPT-4o (128K tokens)",
+        120,
+        120_000,
+    ),
+    (&["gpt-3.5"], "GPT-3.5 Turbo (16K tokens)", 60, 24_000),
+    (&["gpt-4"], "GPT-4 (8K tokens)", 120, 12_000),
+    // Models on the user's own computer, through Ollama or LM Studio
+    (
+        &["gpt-oss"],
+        "gpt-oss (128K tokens, on your computer)",
+        600,
+        32_000,
+    ),
+    (
+        &["qwen3-coder"],
+        "Qwen3 Coder (256K tokens, on your computer)",
+        300,
+        32_000,
+    ),
+    (
+        &["qwen3"],
+        "Qwen3 (40K tokens, on your computer)",
+        600,
+        32_000,
+    ),
+    (
+        &["qwen2.5", "qwen2"],
+        "Qwen2.5 (32K tokens, on your computer)",
+        300,
+        32_000,
+    ),
+    (
+        &["deepseek-r1"],
+        "DeepSeek-R1 (128K tokens, on your computer)",
+        600,
+        32_000,
+    ),
+    (
+        &["deepseek-coder-v2"],
+        "DeepSeek-Coder-V2 (160K tokens, on your computer)",
+        300,
+        32_000,
+    ),
+    (
+        &["deepseek-coder", "codellama"],
+        "Code Llama and DeepSeek Coder (16K tokens, on your computer)",
+        300,
+        16_000,
+    ),
+    (
+        &[
+            "llama3.1",
+            "llama3.2",
+            "llama3.3",
+            "llama-3.1",
+            "llama-3.2",
+            "llama-3.3",
+            "llama4",
+            "llama-4",
+        ],
+        "Llama 3.1 and later (128K tokens, on your computer)",
+        300,
+        32_000,
+    ),
+    (
+        &["llama3", "llama-3"],
+        "Llama 3 (8K tokens, on your computer)",
+        300,
+        12_000,
+    ),
+    (
+        &["llama"],
+        "Llama 2 (4K tokens, on your computer)",
+        300,
+        6_000,
+    ),
+    (
+        &["gemma3", "gemma-3"],
+        "Gemma 3 (128K tokens, on your computer)",
+        300,
+        32_000,
+    ),
+    (
+        &["gemma"],
+        "Gemma 2 (8K tokens, on your computer)",
+        300,
+        12_000,
+    ),
+    (
+        &["mistral", "mixtral", "codestral", "devstral"],
+        "Mistral (32K tokens or more, on your computer)",
+        300,
+        32_000,
+    ),
+    (
+        &["phi3.5", "phi-3.5", "phi4", "phi-4"],
+        "Phi-3.5 and Phi-4 (16K tokens or more, on your computer)",
+        300,
+        16_000,
+    ),
+    (
+        &["phi3", "phi-3"],
+        "Phi-3 (4K tokens, on your computer)",
+        300,
+        6_000,
+    ),
+];
+
+fn suggestions() -> Vec<LimitSuggestion> {
+    SUGGESTIONS
+        .iter()
+        .map(|(matches, name, timeout_secs, max_chars)| LimitSuggestion {
+            matches: matches.iter().map(|part| part.to_string()).collect(),
+            name: name.to_string(),
+            timeout_secs: *timeout_secs,
+            max_chars: *max_chars,
+        })
+        .collect()
+}
+
+fn fallback() -> LimitSuggestion {
+    LimitSuggestion {
+        matches: Vec::new(),
+        name: String::from("Other models"),
+        timeout_secs: FALLBACK_TIMEOUT_SECS,
+        max_chars: FALLBACK_MAX_CHARS,
+    }
+}
+
+/// The limits suggested for a model: those of the first suggestion with a part of its id, in lower case, or the
+/// fallback. The window matches the same way, from the suggestions it is sent (suggestedLimits in wc/ai-settings.js).
+pub(crate) fn suggested_limits(model: &str) -> (u64, usize) {
+    let id = model.to_lowercase();
+    SUGGESTIONS
+        .iter()
+        .find(|(matches, ..)| matches.iter().any(|part| id.contains(part)))
+        .map(|(_, _, timeout_secs, max_chars)| (*timeout_secs, *max_chars))
+        .unwrap_or((FALLBACK_TIMEOUT_SECS, FALLBACK_MAX_CHARS))
+}
+
+/// How long to wait for a model and the most characters sent to it: what the user set on it, or its suggestion.
+fn limits_for(provider: &StoredProvider, model: &str) -> (Duration, usize) {
+    let (timeout_secs, max_chars) = suggested_limits(model);
+    let set = provider.limits.get(model).copied().unwrap_or_default();
+    (
+        Duration::from_secs(set.timeout_secs.unwrap_or(timeout_secs)),
+        set.max_chars.unwrap_or(max_chars),
+    )
 }
 
 /// A provider as the window sees it: whether a key is set, never the key.
@@ -173,6 +395,7 @@ pub(crate) struct ProviderView {
     pub key_set: bool,
     pub models: Vec<AiModel>,
     pub hidden: Vec<String>,
+    pub limits: BTreeMap<String, ModelLimits>,
     pub last_error: Option<String>,
 }
 
@@ -180,8 +403,10 @@ pub(crate) struct ProviderView {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AiSettingsView {
     pub providers: Vec<ProviderView>,
-    pub timeout_secs: u64,
-    pub max_chars: usize,
+    /// The limits suggested for well-known models, shown on each model with no limit set.
+    pub suggestions: Vec<LimitSuggestion>,
+    /// The limits of a model no suggestion matches.
+    pub fallback: LimitSuggestion,
     /// Each integration's built-in instructions, which the window shows as the instructions' placeholders.
     pub defaults: HashMap<String, String>,
     /// The operating system of the computer Task Proxy runs on, as Rust names it (`windows`, `linux`, `macos`), so a
@@ -203,11 +428,12 @@ fn view(store: &AiStore) -> AiSettingsView {
                 key_set: p.api_key.as_deref().is_some_and(|key| !key.is_empty()),
                 models: p.models.clone(),
                 hidden: p.hidden.clone(),
+                limits: p.limits.clone(),
                 last_error: p.last_error.clone(),
             })
             .collect(),
-        timeout_secs: store.timeout_secs,
-        max_chars: store.max_chars,
+        suggestions: suggestions(),
+        fallback: fallback(),
         defaults: INTEGRATIONS
             .iter()
             .map(|(name, text)| (name.to_string(), text.to_string()))
@@ -236,16 +462,16 @@ pub(crate) struct ProviderUpdate {
     pub models: Option<Vec<AiModel>>,
     #[serde(default)]
     pub hidden: Vec<String>,
+    /// The limits set on its models, by model id. Kept when missing.
+    #[serde(default)]
+    pub limits: Option<BTreeMap<String, ModelLimits>>,
 }
 
+/// Settings sent to be saved. Limits for every provider, sent by earlier releases, are left unread.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsUpdate {
     pub providers: Vec<ProviderUpdate>,
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
-    #[serde(default)]
-    pub max_chars: Option<usize>,
 }
 
 /// Applies an update to the saved settings. Providers left out are removed, with their keys.
@@ -313,6 +539,24 @@ fn apply_update(store: &AiStore, update: SettingsUpdate) -> Result<AiStore, Stri
         if item.kind == ProviderKind::Command && models.is_empty() {
             return Err(format!("{} needs at least one model.", name));
         }
+        // Each limit within what can be set, and models without any left out, as they use their suggestions.
+        let limits = item
+            .limits
+            .unwrap_or_else(|| saved.map(|p| p.limits.clone()).unwrap_or_default())
+            .into_iter()
+            .filter_map(|(model, set)| {
+                let set = ModelLimits {
+                    timeout_secs: set
+                        .timeout_secs
+                        .map(|secs| secs.clamp(TIMEOUT_RANGE.0, TIMEOUT_RANGE.1)),
+                    max_chars: set
+                        .max_chars
+                        .map(|chars| chars.clamp(MAX_CHARS_RANGE.0, MAX_CHARS_RANGE.1)),
+                };
+                let model = model.trim().to_string();
+                (!model.is_empty() && !set.is_empty()).then_some((model, set))
+            })
+            .collect();
         // What failed last is kept while the provider is set up the same way.
         let same_setup = saved.is_some_and(|p| {
             p.kind == item.kind
@@ -329,6 +573,7 @@ fn apply_update(store: &AiStore, update: SettingsUpdate) -> Result<AiStore, Stri
             api_key,
             models,
             hidden: item.hidden,
+            limits,
             last_error: if same_setup {
                 saved.and_then(|p| p.last_error.clone())
             } else {
@@ -336,17 +581,7 @@ fn apply_update(store: &AiStore, update: SettingsUpdate) -> Result<AiStore, Stri
             },
         });
     }
-    Ok(AiStore {
-        providers,
-        timeout_secs: update
-            .timeout_secs
-            .unwrap_or(store.timeout_secs)
-            .clamp(10, 3600),
-        max_chars: update
-            .max_chars
-            .unwrap_or(store.max_chars)
-            .clamp(2_000, 2_000_000),
-    })
+    Ok(AiStore { providers })
 }
 
 /// Saved settings are read and written one at a time, so two saves can't lose each other's changes.
@@ -1529,7 +1764,7 @@ pub(crate) async fn ai_write(
         .ok_or_else(|| {
             String::from("That AI provider isn't set up any more. Choose another model.")
         })?;
-    let timeout = Duration::from_secs(store.timeout_secs);
+    let (timeout, max_chars) = limits_for(&provider, &request.model.model);
     let work = async {
         check_trusted(&app_handle, &provider, folder.as_deref()).map_err(Failure::Local)?;
         check_model(&provider, &request.model.model).map_err(Failure::Local)?;
@@ -1549,9 +1784,9 @@ pub(crate) async fn ai_write(
                     "Include at least one file to write a commit message for.",
                 )));
             }
-            commit_message(blocks, store.max_chars)
+            commit_message(blocks, max_chars)
         } else {
-            user_message(&request.request, &request.context, store.max_chars)
+            user_message(&request.request, &request.context, max_chars)
         };
         complete(
             &provider,
@@ -1991,7 +2226,7 @@ pub(crate) async fn ai_review(
         .ok_or_else(|| {
             String::from("That AI provider isn't set up any more. Choose another model.")
         })?;
-    let timeout = Duration::from_secs(store.timeout_secs);
+    let (timeout, max_chars) = limits_for(&provider, &request.model.model);
     let request_id = request.request_id.clone();
     let model = request.model.model.clone();
     let work = async {
@@ -2029,7 +2264,7 @@ pub(crate) async fn ai_review(
         } else {
             "The changes"
         };
-        let parts = review_parts(blocks, what, store.max_chars).map_err(Failure::Local)?;
+        let parts = review_parts(blocks, what, max_chars).map_err(Failure::Local)?;
         let total = parts.len() + usize::from(parts.len() > 1);
         let mut reports = Vec::new();
         for (index, part) in parts.iter().enumerate() {
@@ -2065,7 +2300,7 @@ pub(crate) async fn ai_review(
             &provider,
             &model,
             &join_system,
-            &join_message(&reports, store.max_chars),
+            &join_message(&reports, max_chars),
             folder.as_deref(),
             timeout,
         )
@@ -2307,7 +2542,6 @@ mod tests {
                 }],
                 ..Default::default()
             }],
-            ..Default::default()
         };
         let update = |api_key: Option<&str>| SettingsUpdate {
             providers: vec![ProviderUpdate {
@@ -2318,7 +2552,6 @@ mod tests {
                 api_key: api_key.map(str::to_string),
                 ..Default::default()
             }],
-            ..Default::default()
         };
         let kept = apply_update(&saved, update(None)).unwrap();
         assert_eq!(kept.providers[0].api_key.as_deref(), Some("sk-1"));
@@ -2350,6 +2583,110 @@ mod tests {
     }
 
     #[test]
+    fn each_model_is_suggested_limits_for_it_and_unknown_models_get_the_fallback() {
+        let suggested = |model: &str| suggested_limits(model);
+        // Claude Code's aliases are the newest of each, with a 1M-token window; dated 4.5 models have 200K.
+        assert_eq!(suggested("opus"), (420, 300_000));
+        assert_eq!(suggested("claude-sonnet-5-5"), (300, 300_000));
+        assert_eq!(suggested("haiku"), (180, 200_000));
+        assert_eq!(suggested("claude-opus-4-5-20251101"), (240, 120_000));
+        assert_eq!(suggested("anthropic/claude-sonnet-4.5"), (240, 120_000));
+        // A more particular match wins over one it holds.
+        assert_eq!(suggested("gpt-4o-mini"), (90, 80_000));
+        assert_eq!(suggested("gpt-4o"), (120, 120_000));
+        assert_eq!(suggested("GPT-4"), (120, 12_000));
+        assert_eq!(suggested("llama3.1:8b"), (300, 32_000));
+        assert_eq!(suggested("llama3:latest"), (300, 12_000));
+        assert_eq!(suggested("codellama:13b"), (300, 16_000));
+        assert_eq!(suggested("qwen2.5-coder:7b"), (300, 32_000));
+        assert_eq!(suggested("deepseek-r1:14b"), (600, 32_000));
+        assert_eq!(
+            suggested("my-own-model"),
+            (FALLBACK_TIMEOUT_SECS, FALLBACK_MAX_CHARS)
+        );
+        // The window is sent every suggestion, in order, and the fallback, to show them.
+        let shown = view(&AiStore::default());
+        assert_eq!(shown.suggestions.len(), SUGGESTIONS.len());
+        assert_eq!(shown.suggestions[0].matches[0], "claude-3");
+        assert_eq!(
+            (shown.fallback.timeout_secs, shown.fallback.max_chars),
+            (FALLBACK_TIMEOUT_SECS, FALLBACK_MAX_CHARS)
+        );
+    }
+
+    #[test]
+    fn limits_set_on_a_model_are_saved_within_range_and_used_in_place_of_its_suggestion() {
+        let update = |limits: Option<BTreeMap<String, ModelLimits>>| SettingsUpdate {
+            providers: vec![ProviderUpdate {
+                id: "a".into(),
+                name: "Ollama".into(),
+                kind: ProviderKind::OpenAi,
+                base_url: "http://localhost:11434/v1".into(),
+                limits,
+                ..Default::default()
+            }],
+        };
+        let set = |timeout_secs, max_chars| ModelLimits {
+            timeout_secs,
+            max_chars,
+        };
+        let saved = apply_update(
+            &AiStore::default(),
+            update(Some(BTreeMap::from([
+                ("llama3.1:8b".to_string(), set(Some(900), None)),
+                (
+                    "qwen2.5-coder:7b".to_string(),
+                    set(Some(1), Some(9_000_000)),
+                ),
+                ("gemma".to_string(), set(None, None)),
+            ]))),
+        )
+        .unwrap();
+        let limits = &saved.providers[0].limits;
+        assert_eq!(limits["llama3.1:8b"], set(Some(900), None));
+        assert_eq!(limits["qwen2.5-coder:7b"], set(Some(10), Some(2_000_000)));
+        // A model with nothing set isn't kept: it uses its suggestion.
+        assert!(!limits.contains_key("gemma"));
+        let provider = &saved.providers[0];
+        assert_eq!(
+            limits_for(provider, "llama3.1:8b"),
+            (Duration::from_secs(900), 32_000)
+        );
+        assert_eq!(
+            limits_for(provider, "gemma"),
+            (Duration::from_secs(300), 12_000)
+        );
+        // Saving without limits keeps those saved, and the window sees them.
+        let kept = apply_update(&saved, update(None)).unwrap();
+        assert_eq!(kept.providers[0].limits, saved.providers[0].limits);
+        assert_eq!(view(&kept).providers[0].limits, saved.providers[0].limits);
+        assert!(
+            apply_update(&saved, update(Some(BTreeMap::new())))
+                .unwrap()
+                .providers[0]
+                .limits
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn settings_saved_with_limits_for_every_provider_are_still_read() {
+        let old = r#"{"providers":[{"id":"a","name":"Ollama","kind":"openAi","baseUrl":"http://localhost:11434/v1",
+            "models":[{"id":"qwen3:8b"}]}],"timeoutSecs":300,"maxChars":60000}"#;
+        let store: AiStore = serde_json::from_str(old).unwrap();
+        assert!(store.providers[0].limits.is_empty());
+        // The old limits are left unread: the model's suggestion is used.
+        assert_eq!(
+            limits_for(&store.providers[0], "qwen3:8b"),
+            (Duration::from_secs(600), 32_000)
+        );
+        // And so are settings an earlier window sends.
+        let update: SettingsUpdate =
+            serde_json::from_str(r#"{"providers":[],"timeoutSecs":300,"maxChars":60000}"#).unwrap();
+        assert!(update.providers.is_empty());
+    }
+
+    #[test]
     fn a_saved_key_is_left_behind_when_its_provider_moves_to_another_server_or_kind() {
         let saved = AiStore {
             providers: vec![StoredProvider {
@@ -2360,7 +2697,6 @@ mod tests {
                 api_key: Some("sk-1".into()),
                 ..Default::default()
             }],
-            ..Default::default()
         };
         let moved = |kind, base_url: &str| SettingsUpdate {
             providers: vec![ProviderUpdate {
@@ -2370,7 +2706,6 @@ mod tests {
                 base_url: base_url.into(),
                 ..Default::default()
             }],
-            ..Default::default()
         };
         assert_eq!(
             apply_update(
@@ -2420,7 +2755,6 @@ mod tests {
                 last_error: Some("Claude failed".into()),
                 ..Default::default()
             }],
-            ..Default::default()
         };
         let update = |command: &str| SettingsUpdate {
             providers: vec![ProviderUpdate {
@@ -2430,7 +2764,6 @@ mod tests {
                 command: command.into(),
                 ..Default::default()
             }],
-            ..Default::default()
         };
         let kept = apply_update(&saved, update(" my-ai --model {model} ")).unwrap();
         assert_eq!(
@@ -2453,7 +2786,6 @@ mod tests {
                 command: command.into(),
                 ..Default::default()
             }],
-            ..Default::default()
         };
         let store = AiStore::default();
         assert!(apply_update(&store, one(ProviderKind::OpenAi, "", "", "Ollama")).is_err());
@@ -2489,7 +2821,6 @@ mod tests {
         }]);
         let mut store = AiStore {
             providers: vec![read_from.clone()],
-            ..Default::default()
         };
         keep_listed(&mut store, &read_from, &listed).unwrap();
         assert_eq!(store.providers[0].models[0].id, "llama3");
@@ -2511,7 +2842,6 @@ mod tests {
         ] {
             let mut store = AiStore {
                 providers: vec![moved],
-                ..Default::default()
             };
             let error = keep_listed(&mut store, &read_from, &listed).unwrap_err();
             assert!(error.contains("was changed"), "{}", error);
@@ -2570,7 +2900,6 @@ mod tests {
                     ..Default::default()
                 },
             ],
-            ..Default::default()
         };
         upgrade_claude_commands(&mut store);
         assert_eq!(store.providers[0].command, reads);
@@ -2589,7 +2918,6 @@ mod tests {
                     }]),
                     ..Default::default()
                 }],
-                ..Default::default()
             },
         )
         .unwrap();
@@ -2609,7 +2937,6 @@ mod tests {
                 }]),
                 ..Default::default()
             }],
-            ..Default::default()
         };
         let store = AiStore::default();
         for command in [
@@ -2664,7 +2991,6 @@ mod tests {
         stored.last_error = Some("https://ai.example/?key=abc can't be reached".into());
         let shown = for_browser(view(&AiStore {
             providers: vec![stored],
-            ..Default::default()
         }));
         let provider = &shown.providers[0];
         assert_eq!(provider.name, "Test");

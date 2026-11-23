@@ -118,7 +118,7 @@ test.describe('repo dropdown', () => {
         await expect.poll(() => repoDropdown(page).evaluate(el => el.value)).toBe('libs/api');
         await expect.poll(async () => (await calls(page, 'get_git_changes')).map(call => call.path)).toContain('libs/api');
     });
-    test('a commit made before the chosen repo\'s changes are listed is refused, not made from the list of the repo before', async ({ page }) => {
+    test('Commit is off until the chosen repo\'s changes are listed, so no commit is made from the list of the repo before', async ({ page }) => {
         await open(page, { repos: ['', 'libs/api'], repoStatus });
         await page.evaluate(() => {
             // The first answer with the changes of libs/api is held until the test lets it go.
@@ -135,8 +135,10 @@ test.describe('repo dropdown', () => {
         await markFiles(page);
         await (await repoTile(page, 'libs/api')).click();
         await expect.poll(() => page.evaluate(() => typeof window.__releaseChanges)).toBe('function');
-        await commit(page);
-        await expect(alertBox(page)).toContainText('still loading');
+        await messageBox(page).fill('msg');
+        const button = manager(page).locator('webui-button[label="Commit"]');
+        await expect(button).toHaveAttribute('disabled');
+        await expect(button).toHaveAttribute('title', 'The changes are still loading');
         await page.evaluate(() => window.__releaseChanges());
         await filesReloaded(page);
         await commit(page);
@@ -213,21 +215,50 @@ test.describe('commits Rust runs', () => {
         }]);
     });
 });
-test('a commit needs a message', async ({ page }) => {
+test('Commit is off until there is a message, and on once there is', async ({ page }) => {
     await open(page);
-    await commit(page, '   ');
-    // The commit is refused before anything is sent, and says why.
-    await expect(alertBox(page)).toContainText('You forgot to set your message!');
+    const button = manager(page).locator('webui-button[label="Commit"]');
+    await expect(button).toHaveAttribute('disabled');
+    await expect(button).toHaveAttribute('title', 'Write a commit message to commit');
+    // Only spaces are no message.
+    await messageBox(page).fill('   ');
+    await expect(button).toHaveAttribute('disabled');
+    await messageBox(page).fill('msg');
+    await expect(button).not.toHaveAttribute('disabled');
+    await messageBox(page).fill('');
+    await expect(button).toHaveAttribute('disabled');
     await expect.poll(() => calls(page, 'commit_enqueue')).toEqual([]);
-    await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
 });
-test('a commit with nothing selected is refused', async ({ page }) => {
+test('Commit is off with no file included, and on once one is', async ({ page }) => {
     await open(page);
+    const button = manager(page).locator('webui-button[label="Commit"]');
+    await messageBox(page).fill('msg');
+    await expect(button).not.toHaveAttribute('disabled');
     await manager(page).locator('webui-button[label="Toggle All"]').click();
-    await commit(page);
-    await expect(alertBox(page)).toContainText('Select at least one file');
+    await expect(button).toHaveAttribute('disabled');
+    await expect(button).toHaveAttribute('title', 'Include at least one file to commit');
+    await include(page, 'a.txt').selectOption('1');
+    await expect(button).not.toHaveAttribute('disabled');
     await expect.poll(() => calls(page, 'commit_enqueue')).toEqual([]);
-    await expect.poll(() => calls(page, 'git_commit')).toEqual([]);
+});
+test('Commit and Toggle All are off with nothing changed', async ({ page }) => {
+    await openApp(page, { currentPage: '/git-controller', git: { changes: [] } }, '/git-controller');
+    await expect(manager(page).locator('#val-commit-files')).toHaveText('No changes');
+    await messageBox(page).fill('msg');
+    await expect(manager(page).locator('webui-button[label="Commit"]')).toHaveAttribute('title', 'Include at least one file to commit');
+    await expect(manager(page).locator('webui-button[label="Commit"]')).toHaveAttribute('disabled');
+    await expect(manager(page).locator('webui-button[label="Toggle All"]')).toHaveAttribute('disabled');
+    await expect(manager(page).locator('webui-button[label="Toggle All"]')).toHaveAttribute('title', 'No files shown to include or exclude');
+});
+test('Toggle All is off while the filter shows no files, and on again once it does', async ({ page }) => {
+    await open(page);
+    const button = manager(page).locator('webui-button[label="Toggle All"]');
+    await expect(button).not.toHaveAttribute('disabled');
+    await manager(page).locator('input.file-filter').fill('nothing-matches');
+    await expect(button).toHaveAttribute('disabled');
+    await manager(page).locator('input.file-filter').fill('a.txt');
+    await expect(button).not.toHaveAttribute('disabled');
+    await expect(button).toHaveAttribute('title', 'Include or exclude every file shown');
 });
 test('excluded files are left out of the commit', async ({ page }) => {
     await open(page);
@@ -417,6 +448,33 @@ test('a saved token shows masked, and only reaches the project', async ({ page }
     await expect(manager(page).locator('input#input-git-pat')).toHaveAttribute('placeholder', 'abc***jkl');
     await expect.poll(() => page.evaluate(() => webui.getData('git_pat'))).toBeUndefined();
 });
+test('Save Token is off until a token is typed, and off again once it is saved', async ({ page }) => {
+    await open(page);
+    await openTab(page, 'Auth');
+    const button = manager(page).locator('#btn-save-pat');
+    await expect(button).toHaveAttribute('disabled');
+    await expect(button).toHaveAttribute('title', 'Type a token to save');
+    await manager(page).locator('input#input-git-pat').fill('abcdefghijkl');
+    await expect(button).not.toHaveAttribute('disabled');
+    await button.click();
+    await expect(manager(page).locator('input#input-git-pat')).toHaveAttribute('placeholder', 'abc***jkl');
+    await expect(button).toHaveAttribute('disabled');
+});
+test('Delete Token is off until a token is saved in the scope chosen, and deletes it after asking', async ({ page }) => {
+    await open(page);
+    await openTab(page, 'Auth');
+    const remove = manager(page).locator('#btn-delete-pat');
+    await expect(remove).toHaveAttribute('disabled');
+    await expect(remove).toHaveAttribute('title', 'No project token is saved to delete');
+    await manager(page).locator('input#input-git-pat').fill('abcdefghijkl');
+    await manager(page).locator('#btn-save-pat').click();
+    await expect(remove).not.toHaveAttribute('disabled');
+    await expect(remove).toHaveAttribute('title', 'Delete the project token');
+    await remove.click();
+    await dialogButton(page, 'Confirm').click();
+    await expect.poll(() => page.evaluate(() => webui.getProjectData('git_pat'))).toBeFalsy();
+    await expect(remove).toHaveAttribute('disabled');
+});
 test('ahead and behind counts are shown', async ({ page }) => {
     await open(page, { status: { hasUpstream: true, upstreamName: 'origin/main', ahead: 2, behind: 3, remoteUrl: 'x' } });
     await expect(manager(page).locator('#val-sync-status')).toContainText('2 Commits Ahead');
@@ -506,12 +564,18 @@ test.describe('stash and force pull', () => {
         await expect(manager(page).locator('webui-input-message[label="Commit Message"] textarea')).toHaveValue('');
         await expect.poll(async () => (await calls(page, 'get_git_changes')).length).toBeGreaterThan(before);
     });
-    test('with nothing changed, there is nothing to stash', async ({ page }) => {
+    test('with nothing changed, Stash and Revert All are off', async ({ page }) => {
         await openApp(page, { currentPage: '/git-controller', git: { changes: [] } }, '/git-controller');
         await expect(manager(page).locator('#val-commit-files')).toHaveText('No changes');
-        await manager(page).locator('#btn-stash').click();
-        await expect(alertBox(page)).toContainText('No pending changes to stash.');
-        await expect.poll(() => calls(page, 'git_stash')).toEqual([]);
+        await expect(manager(page).locator('#btn-stash')).toHaveAttribute('disabled');
+        await expect(manager(page).locator('#btn-stash')).toHaveAttribute('title', 'No pending changes to stash');
+        await expect(manager(page).locator('#btn-revert-all')).toHaveAttribute('disabled');
+        await expect(manager(page).locator('#btn-revert-all')).toHaveAttribute('title', 'No pending changes to revert');
+    });
+    test('Stash and Revert All are on once there are changes', async ({ page }) => {
+        await open(page);
+        await expect(manager(page).locator('#btn-stash')).not.toHaveAttribute('disabled');
+        await expect(manager(page).locator('#btn-revert-all')).not.toHaveAttribute('disabled');
     });
     test('pop stash calls the backend and refreshes the files', async ({ page }) => {
         await open(page);
@@ -624,6 +688,49 @@ test.describe('commit message memory', () => {
         await openProject(page, projects[1], '/git-controller');
         await waitForFiles(page);
         await expect(textarea(page)).toHaveValue('other message');
+    });
+});
+
+test.describe('the tab shown is remembered per project', () => {
+    const projects = [{ name: 'Repo', path: '/repo' }, { name: 'Other', path: '/other' }];
+    const shownTab = page => manager(page).locator('webui-button[slot="tabs"][aria-current="true"]');
+    // The saved tab is shown once the project's repos start loading, which is before its files are listed.
+    const tabRestored = page => manager(page).evaluate(async el => { await el._restoringTab; });
+    const openProject = async (page, project, startPage) => {
+        await switchProject(page, project);
+        await expect(page).toHaveURL(url => url.pathname === startPage);
+        if (startPage !== '/git-controller') await goToPage(page, '/git-controller');
+        await manager(page).locator('.files button.file').first().waitFor();
+        await tabRestored(page);
+    };
+
+    test('the tab comes back after switching projects away and back, and each project keeps its own', async ({ page }) => {
+        await open(page, {}, { projects });
+        await openTab(page, 'Branches');
+        await openProject(page, projects[1], '/');
+        await expect(shownTab(page)).toHaveText('Commit');
+        await openTab(page, 'Auth');
+        await openProject(page, projects[0], '/git-controller');
+        await expect(shownTab(page)).toHaveText('Branches');
+        await openProject(page, projects[1], '/git-controller');
+        await expect(shownTab(page)).toHaveText('Auth');
+    });
+    test('the tab is saved with the project, so it is shown after a restart', async ({ page }) => {
+        await open(page, {}, { data: { _gitTab: 'tab-queue' } });
+        await expect(shownTab(page)).toHaveText('Queue');
+        await openTab(page, 'Commit');
+        await expect.poll(() => page.evaluate(() => window.__backend.savedProjects['/repo'].data._gitTab)).toBe('tab-commit');
+    });
+    test('the saved tab is found by name when the Review tab moves the others', async ({ page }) => {
+        await open(page, {}, { data: { _gitTab: 'tab-review' }, appData: { 'app-ai-integrations': { review: true } } });
+        await expect(shownTab(page)).toHaveText('Review');
+    });
+    test('a saved tab that is no longer there falls back to the first tab', async ({ page }) => {
+        // Review is off, so its tab is gone.
+        await open(page, {}, { data: { _gitTab: 'tab-review' } });
+        await tabRestored(page);
+        await expect(manager(page).locator('webui-button[slot="tabs"]')).toHaveText(['Commit', 'Branches', 'Auth', 'Queue']);
+        await expect(shownTab(page)).toHaveText('Commit');
     });
 });
 

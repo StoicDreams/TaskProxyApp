@@ -35,6 +35,7 @@
         <webui-page-segment>
         - **Setting a PAT**: Enter your Personal Access Token in the Auth tab to enable remote operations (Push, Pull, Fetch).
         - **Scoping**: Choose **Project Level** to apply the token only to the current project, or **Global Level** to use it across all Task Proxy projects.
+        - **Deleting a PAT**: Click **Delete Token** to remove the token saved at the scope chosen. It is off when that scope has none.
         </webui-page-segment>
     </webui-content>
     <webui-button slot="tabs">AI</webui-button>

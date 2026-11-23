@@ -125,6 +125,7 @@
                 t.showSuggestions();
             });
             t._place.addEventListener('change', () => t.showName());
+            t._name.addEventListener('input', () => t.showImportReady());
             t._import.addEventListener('click', () => t.importFolder());
         },
         reconnected() {
@@ -141,9 +142,17 @@
             if (!t._projectValue || !webui.proxy?.projects?.isLoaded || !webui.projectData?.path) return '';
             return `${webui.projectData.path}|${t._folder?.value ?? ''}`;
         },
+        /** Whether the pages need a folder name that hasn't been given yet. */
+        needsName() {
+            const t = this;
+            return t._place.value === NEW_FOLDER && !`${t._name.value ?? ''}`.trim();
+        },
         showImportReady() {
             const t = this;
-            t._import.toggleAttribute('disabled', !!t._importing || !!t._ai.isBusy?.());
+            const needsName = t.needsName();
+            t._import.toggleAttribute('disabled', !!t._importing || !!t._ai.isBusy?.() || needsName);
+            t._import.setAttribute('title', t._importing ? 'Importing the pages' : t._ai.isBusy?.() ? 'Waiting for the AI suggestions'
+                : needsName ? 'Name the folder the pages go in to import them' : 'Import the folder\'s markdown files as pages');
             // Suggestions asked for during an import could bring back pages it just made.
             t._ai.blocked = !!t._importing;
         },
@@ -174,10 +183,12 @@
             const t = this;
             const folder = `${t._folder.value ?? ''}`;
             t._name.value = folder ? folder.split('/').pop() : `${webui.getData('app-current-project')?.display ?? ''}`;
+            t.showImportReady();
         },
         showName() {
             const t = this;
             t._name.hidden = t._place.value !== NEW_FOLDER;
+            t.showImportReady();
         },
         /**
          * Asks AI for each page's title, description, and navigation folders, from what an import would make, and

@@ -112,6 +112,18 @@ test('kill all also forgets the queue', async ({ page }) => {
     await expect.poll(() => page.evaluate(() => webui.proxy.terminalHelpers.getState().terminals['a.ps1'].status)).toBe('Finished');
     await expect.poll(async () => (await calls(page, 'spawn_script')).map(call => call.terminalId)).toEqual(['a.ps1']);
 });
+test('Kill All is off while nothing runs in the project, saying so, and on while a script runs', async ({ page }) => {
+    await open(page);
+    await ready(page);
+    const killAll = page.locator('#btn-kill-all');
+    await expect(killAll).toHaveAttribute('disabled');
+    await expect(killAll).toHaveAttribute('title', 'No scripts are running in this project');
+    await start(page, 'a.ps1');
+    await expect(killAll).not.toHaveAttribute('disabled');
+    await expect(killAll).toHaveAttribute('title', 'End every running script now');
+    await runEnds(page, { terminalId: 'a.ps1', code: 0 });
+    await expect(killAll).toHaveAttribute('disabled');
+});
 test('clear empties the console', async ({ page }) => {
     await open(page);
     await ready(page);

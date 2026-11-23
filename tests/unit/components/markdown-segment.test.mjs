@@ -238,8 +238,12 @@ test.describe('Write with AI', () => {
             });
             await ask(page);
             await expect.poll(() => page.evaluate(() => typeof window.__release)).toBe('function');
-            // The editor closes, and its Write with AI button stays, hidden with it.
-            await page.evaluate(button => document.querySelector('#seg')[button].click(), button);
+            // The editor closes, and its Write with AI button stays, hidden with it. Undo only reverts a change.
+            await page.evaluate(button => {
+                const seg = document.querySelector('#seg');
+                if (button === '_btnUndo') seg._inputMessage.value = 'Changed';
+                seg[button].click();
+            }, button);
             await expect(page.locator('#seg')).not.toHaveClass(/isEditing/);
             await page.evaluate(() => window.__release());
             await expect(alertPopup(page, "The editor was closed before AI finished, so the draft wasn't used.")).toHaveCount(1);
@@ -277,4 +281,21 @@ test.describe('Write with AI', () => {
         await twoSegments(page, false);
         await expect(ai(page)).toBeHidden();
     });
+});
+test('Revert is off until the segment differs from how the page saved it, and puts back the saved one', async ({ page }) => {
+    const original = '<webui-page-segment>\n\nSome text\n\n</webui-page-segment>';
+    await segment(page, original);
+    await toggleEdit(page);
+    const undo = page.locator('#seg #btn-undo');
+    await expect(undo).toHaveAttribute('disabled');
+    await page.locator('#seg webui-input-message textarea').fill('Changed');
+    await expect(undo).not.toHaveAttribute('disabled');
+    await expect(page.locator('#seg')).toHaveClass(/changed/);
+    // Closing the editor keeps the change, and opening it again still reverts to the saved text.
+    await toggleEdit(page);
+    await toggleEdit(page);
+    await expect(undo).not.toHaveAttribute('disabled');
+    await undo.click();
+    await expect.poll(() => getMarkdown(page)).toBe(original);
+    await expect(page.locator('#seg')).not.toHaveClass(/changed/);
 });

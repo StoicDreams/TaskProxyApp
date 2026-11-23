@@ -59,6 +59,23 @@ test('while it is on, the computer can be renamed', async ({ page }) => {
     await expect.poll(() => calls(page, 'remote_set_enabled')).toEqual([{ enabled: true, name: 'Garage' }]);
 });
 
+test('Save Name is off until a new name is typed, and off again once it is saved', async ({ page }) => {
+    const el = await panel(page, { remote: { enabled: true } });
+    const name = role(el, 'computer-name').locator('input');
+    await expect(name).toHaveValue('Desk PC');
+    await expect(role(el, 'rename')).toHaveAttribute('disabled');
+    await expect(role(el, 'rename')).toHaveAttribute('title', 'Type a new name to save it');
+    await name.fill('  ');
+    await expect(role(el, 'rename')).toHaveAttribute('title', 'Type a name for this computer to save it');
+    await expect(role(el, 'rename')).toHaveAttribute('disabled');
+    await name.fill('Garage');
+    await expect(role(el, 'rename')).not.toHaveAttribute('disabled');
+    await role(el, 'rename').click();
+    await expect(el.locator('.remote-state')).toContainText('Garage is listed on www.taskproxy.com');
+    await expect(role(el, 'computer-name').locator('input')).toHaveValue('Garage');
+    await expect(role(el, 'rename')).toHaveAttribute('disabled');
+});
+
 test('turning on fails with the reason the backend gives', async ({ page }) => {
     const el = await panel(page, { remote: { enableError: 'api.myfi.ws answered with something unexpected.' } });
     await role(el, 'turn-on').click();

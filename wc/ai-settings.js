@@ -10,6 +10,10 @@
  * What is saved is one of the three kinds services/ai.rs knows: an OpenAI-compatible server, the Anthropic API, or a
  * command. Which choice a provider was made with is read back from its kind, address, and command (presetOf), so the
  * backend keeps nothing extra. API keys are kept by the backend, and this page only learns whether one is set.
+ *
+ * Each model has its own limits, how long to wait for it and the most characters sent to it at once, since models
+ * differ, even one provider's. A limit left empty is the one suggested for that model, from the table services/ai.rs
+ * sends with the settings (SUGGESTIONS there), shown in the empty field.
  */
 "use strict"
 {
@@ -212,6 +216,21 @@
     function claudeCommandFor(reads) {
         return `claude -p ${CLAUDE_ISOLATED} --model {model} --tools "${reads ? CLAUDE_READ_TOOLS : ''}"`;
     }
+    /** The limits of a model none of the suggestions match, until the settings say. */
+    const FALLBACK = { name: 'Other models', timeoutSecs: 120, maxChars: 40000 };
+    /**
+     * The limits suggested for a model: the first suggestion with a part of its id, in lower case, or the fallback.
+     * Matched as suggested_limits in services/ai.rs matches them.
+     */
+    function suggestedLimits(view, model) {
+        const id = `${model || ''}`.toLowerCase();
+        return (view?.suggestions || []).find(item => (item.matches || []).some(part => id.includes(part))) || view?.fallback || FALLBACK;
+    }
+    /** A limit typed in, as a whole number, or undefined when empty or not a number, which is the suggestion. */
+    function limitOf(text) {
+        const value = Number(`${text ?? ''}`.trim());
+        return `${text ?? ''}`.trim() && Number.isFinite(value) && value > 0 ? Math.round(value) : undefined;
+    }
     /** Which choice a saved provider was set up with, read from what was saved. */
     function presetOf(provider) {
         if (provider.preset) return provider.preset;
@@ -266,8 +285,6 @@
                 // Shown unless this screen has unsaved edits.
                 if (t._dirty) return;
                 t.renderProviders();
-                t._timeout.value = view.timeoutSecs;
-                t._maxChars.value = view.maxChars;
             }));
         },
         /** What the settings say about the computer Task Proxy runs on. */
@@ -315,15 +332,11 @@
             draft = null;
             if (kept) {
                 t.renderProviders(kept.providers, kept.shown);
-                t._timeout.value = kept.timeoutSecs;
-                t._maxChars.value = kept.maxChars;
                 t.markDirty();
                 return;
             }
             t.markClean();
             t.renderProviders();
-            t._timeout.value = view.timeoutSecs;
-            t._maxChars.value = view.maxChars;
         },
         /** Everything on the Providers tab as it is now, to be shown again as it was. */
         snapshot() {
@@ -331,8 +344,6 @@
             return {
                 providers: [...t._providers.querySelectorAll('.ai-provider')].map(card => card._draft()),
                 shown: t._providerTabs?.currentTab?.() || 0,
-                timeoutSecs: t._timeout.value,
-                maxChars: t._maxChars.value,
             };
         },
         build() {
@@ -361,16 +372,6 @@
                 if (!t._saving) t.addProvider();
             });
             t._add = add;
-            const general = el('details', { class: 'ai-general' });
-            general.appendChild(el('summary', {}, 'Limits for every provider'));
-            t._timeout = el('input', { type: 'number', min: '10', max: '3600', class: 'ai-timeout', 'aria-label': 'Seconds to wait for an answer' });
-            t._maxChars = el('input', { type: 'number', min: '2000', step: '1000', class: 'ai-max-chars', 'aria-label': 'Most characters sent' });
-            [t._timeout, t._maxChars].forEach(input => input.addEventListener('input', () => t.markDirty()));
-            const timeoutLabel = el('label', { class: 'ai-field' });
-            timeoutLabel.append(el('span', {}, 'Seconds to wait for an answer'), t._timeout);
-            const maxLabel = el('label', { class: 'ai-field' });
-            maxLabel.append(el('span', {}, 'Most characters of changes or files sent at once'), t._maxChars);
-            general.append(timeoutLabel, el('p', { class: 'ai-help' }, 'Models on your own computer can be slow, so give them longer.'), maxLabel, el('p', { class: 'ai-help' }, 'Larger changes are cut down to fit, and larger reviews are done in parts. A smaller model may need less.'));
             t._save = webui.create('webui-button', { theme: 'primary', 'start-icon': 'save', label: 'Save Providers', class: 'ai-save' });
             t._save.addEventListener('click', () => t.save());
             t._discard = webui.create('webui-button', { theme: 'secondary', 'start-icon': 'undo', label: 'Discard Changes', class: 'ai-discard' });
@@ -384,7 +385,7 @@
             t._saveNote = webui.create('webui-alert', { class: 'ai-save-note' });
             const saveRow = el('div', { class: 'ai-save-row' });
             saveRow.append(add, t._save, t._discard);
-            return [intro, saveRow, t._saveNote, t._providers, general];
+            return [intro, saveRow, t._saveNote, t._providers];
         },
         buildIntegrations() {
             const t = this;
@@ -599,6 +600,56 @@
 
             const read = { kind: preset.kind, baseUrl: () => '', command: () => '', models: null, problem: () => null };
             const dirty = () => t.markDirty();
+            // Each model's limits, by model id, kept while its models change, such as while a command's are typed.
+            const limitValues = new Map(Object.entries(provider.limits || {}).map(([model, set]) => [model, { ...set }]));
+            const limitsBox = el('div', { class: 'ai-model-limits' });
+            /** The models limits can be set on: the ones chosen, typed in, or listed and checked. */
+            const limitModels = () => {
+                if (read.models) return read.models();
+                const unchecked = [...serverModels.querySelectorAll('input[data-model]')].filter(box => !box.checked).map(box => box.dataset.model);
+                return (card._provider.models || []).filter(model => !unchecked.includes(model.id));
+            };
+            /** A row for each model, with its limits, or its suggestion shown in each one left empty. */
+            function drawLimits() {
+                const models = limitModels();
+                limitsBox.replaceChildren();
+                if (!models.length) {
+                    limitsBox.appendChild(el('span', { class: 'ai-help' }, 'Each model\'s limits can be set once it is listed.'));
+                    return;
+                }
+                const head = el('div', { class: 'ai-model-limit ai-model-limits-head' });
+                head.append(el('span', {}, 'Model'), el('span', {}, 'Seconds to wait'), el('span', {}, 'Most characters sent'), el('span', {}, ''));
+                limitsBox.appendChild(head);
+                models.forEach(model => {
+                    const label = model.name || model.id;
+                    const suggested = suggestedLimits(t._view, model.id);
+                    const set = limitValues.get(model.id) || {};
+                    const row = el('div', { class: 'ai-model-limit', 'data-model': model.id });
+                    const input = (cls, key, attrs, aria) => {
+                        const node = el('input', { type: 'number', class: cls, placeholder: `${suggested[key]}`, 'aria-label': `${aria} ${label}`, ...attrs });
+                        node.value = set[key] ?? '';
+                        node.addEventListener('input', () => {
+                            const next = { ...(limitValues.get(model.id) || {}), [key]: limitOf(node.value) };
+                            limitValues.set(model.id, next);
+                            dirty();
+                        });
+                        return node;
+                    };
+                    row.append(
+                        el('span', { class: 'ai-model-limit-name' }, label),
+                        input('ai-limit-timeout', 'timeoutSecs', { min: '10', max: '3600' }, 'Seconds to wait for'),
+                        input('ai-limit-chars', 'maxChars', { min: '2000', max: '2000000', step: '1000' }, 'Most characters sent to'),
+                        el('span', { class: 'ai-help ai-limit-suggested' }, `Suggested for ${suggested.name}: ${suggested.timeoutSecs} seconds, ${Number(suggested.maxChars).toLocaleString('en-US')} characters.`),
+                    );
+                    limitsBox.appendChild(row);
+                });
+            }
+            /** The limits set on the models listed now, leaving out those left to their suggestions. */
+            const readLimits = () => Object.fromEntries(limitModels().map(model => {
+                const set = limitValues.get(model.id) || {};
+                const kept = Object.fromEntries(Object.entries(set).filter(([, value]) => value !== undefined));
+                return [model.id, kept];
+            }).filter(([, set]) => Object.keys(set).length));
             if (card._preset === 'claude') {
                 const parsed = claudeCommand(provider.command) || { reads: true };
                 const reads = switchOf('ai-claude-reads', 'Can Claude Code look at other files in the project?', [YES, NO], parsed.reads ? YES : NO);
@@ -610,7 +661,7 @@
                     const row = el('label', { class: 'ai-model' });
                     const box = el('input', { type: 'checkbox', 'data-model': model.id });
                     box.checked = known.some(item => item.id === model.id);
-                    box.addEventListener('change', dirty);
+                    box.addEventListener('change', () => { drawLimits(); dirty(); });
                     const text = el('span', {});
                     text.append(el('strong', {}, model.name), ' ', el('span', { class: 'ai-help' }, model.help));
                     row.append(box, text);
@@ -665,13 +716,13 @@
                     shown.value = model.name || '';
                     const value = el('input', { type: 'text', class: 'ai-command-model-value', placeholder: 'Value for {model}', 'aria-label': 'Value for {model}' });
                     value.value = model.id || '';
-                    [shown, value].forEach(input => input.addEventListener('input', dirty));
-                    row.append(shown, value, button('ai-command-model-remove', 'Remove', () => { row.remove(); dirty(); }, 'trash', 'danger'));
+                    [shown, value].forEach(input => input.addEventListener('input', () => { drawLimits(); dirty(); }));
+                    row.append(shown, value, button('ai-command-model-remove', 'Remove', () => { row.remove(); drawLimits(); dirty(); }, 'trash', 'danger'));
                     rows.appendChild(row);
                 };
                 (provider.models || []).forEach(addRow);
                 if (!rows.children.length) addRow();
-                const more = button('ai-command-model-add', 'Add Model', () => { addRow(); dirty(); }, 'plus', 'success');
+                const more = button('ai-command-model-add', 'Add Model', () => { addRow(); drawLimits(); dirty(); }, 'plus', 'success');
                 const holder = el('div', {});
                 holder.append(rows, more);
                 parts.push(field('Models', holder, 'Leave the value empty to use the name.'));
@@ -723,7 +774,7 @@
                     const row = el('label', { class: 'ai-model' });
                     const shown = el('input', { type: 'checkbox', 'data-model': model.id });
                     shown.checked = !hidden.includes(model.id);
-                    shown.addEventListener('change', dirty);
+                    shown.addEventListener('change', () => { drawLimits(); dirty(); });
                     row.append(shown, el('span', {}, model.name || model.id));
                     serverModels.appendChild(row);
                 });
@@ -751,6 +802,7 @@
                         if (updated) {
                             card._provider = updated;
                             listModels(updated.models);
+                            drawLimits();
                             say();
                         }
                     } catch (err) {
@@ -783,6 +835,9 @@
             const remove = webui.create('webui-button', { theme: 'danger', 'start-icon': 'trash', label: 'Remove', class: 'ai-remove' });
             remove.addEventListener('click', () => t.removeProvider(card));
             buttons.append(refresh, test, remove);
+            drawLimits();
+            const local = card._preset === 'ollama' || card._preset === 'lmstudio';
+            parts.push(field('Limits per model', limitsBox, `How long to wait for each model, and the most characters of changes, files, or a page sent to it at once: larger changes are cut down to fit, and larger reviews are done in parts. Leave one empty to use the limit suggested for that model, shown in it.${local ? ` ${preset.name} often runs a model with only 4K tokens of context. Set the model's context length to 16K or more in ${preset.name}, or send fewer characters.` : ''}`, 'ai-limits-field'));
             parts.push(buttons, status);
             card.replaceChildren(...parts);
             if (card._tab) card._tab.textContent = card._title();
@@ -791,6 +846,7 @@
                     id: card._provider.id || '', name: name.value.trim() || preset.name, kind: read.kind,
                     baseUrl: read.baseUrl(), command: read.command(),
                     hidden: [...serverModels.querySelectorAll('input[data-model]')].filter(box => !box.checked).map(box => box.dataset.model),
+                    limits: readLimits(),
                 };
                 if (read.models) update.models = read.models();
                 if (key?.value.trim()) update.apiKey = key.value.trim();
@@ -876,11 +932,7 @@
                 setNote(t._saveNote, `Nothing was saved. Fix what is said on ${problems.map(card => card._title()).join(', ')} first.`, 'warning');
                 return;
             }
-            const settings = {
-                providers: cards.map(card => card._read()),
-                timeoutSecs: Number(t._timeout.value) || undefined,
-                maxChars: Number(t._maxChars.value) || undefined,
-            };
+            const settings = { providers: cards.map(card => card._read()) };
             // Read before saving, as saving also sends the new settings to every screen, this one included.
             const before = new Set((t._view?.providers || []).map(provider => provider.id));
             // Adding, discarding, and saving again wait for this save, which is of what was there when it began.

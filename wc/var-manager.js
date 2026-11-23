@@ -347,7 +347,7 @@
         </webui-flex>
         <webui-flex justify="center" gap="var(--padding)">
             <webui-input-text id="input-proj-var" data-bind="proj-var-name" label="Key"></webui-input-text>
-            <webui-button id="btn-add-proj" label="Add" theme="success"></webui-button>
+            <webui-button id="btn-add-proj" label="Add" theme="success" title="Type a key to add" disabled></webui-button>
         </webui-flex>
         <div id="var-project-list" data-action-row style="margin-top: 1rem;"></div>
     </webui-content>
@@ -355,7 +355,7 @@
     <webui-content slot="content" nodetach>
         <webui-flex justify="center" gap="var(--padding)">
             <webui-input-text id="input-glob-var" data-bind="glob-var-name" label="Key"></webui-input-text>
-            <webui-button id="btn-add-glob" label="Add" theme="success"></webui-button>
+            <webui-button id="btn-add-glob" label="Add" theme="success" title="Type a key to add" disabled></webui-button>
         </webui-flex>
         <div id="var-global-list" data-action-row style="margin-top: 1rem;"></div>
     </webui-content>
@@ -443,15 +443,43 @@
             if (manageEnvBtn) {
                 manageEnvBtn.addEventListener('click', () => {
                     const dialogId = webui.uuid();
+                    // Save renames, so it waits for a new name. Delete waits for another environment to be left.
                     const envRowHtml = name => {
                         const escaped = webui.escapeForHTML(name);
+                        const onlyOne = getEnvironments().length <= 1;
                         return `
                         <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="center" style="margin-bottom: 0.5rem;">
                             <webui-input-text value="${escaped}"></webui-input-text>
-                            <webui-button theme="success" class="env-save-btn" data-env="${escaped}">Save</webui-button>
-                            <webui-button theme="danger" class="env-del-btn" data-env="${escaped}">Delete</webui-button>
+                            <webui-button theme="success" class="env-save-btn" data-env="${escaped}" title="Type a new name to rename it" disabled>Save</webui-button>
+                            <webui-button theme="danger" class="env-del-btn" data-env="${escaped}" ${onlyOne ? 'title="You must have at least one environment." disabled' : 'title="Delete this environment"'}>Delete</webui-button>
                         </webui-grid>
                     `;
+                    };
+                    /** Save is on while its row's name is new and not empty. */
+                    const refreshSave = saveBtn => {
+                        const input = webui.closest(saveBtn, 'webui-grid')?.querySelector('webui-input-text');
+                        const name = `${input?.value ?? ''}`.trim();
+                        const can = !!name && name !== saveBtn.getAttribute('data-env');
+                        saveBtn.toggleAttribute('disabled', !can);
+                        saveBtn.setAttribute('title', can ? 'Rename this environment' : 'Type a new name to rename it');
+                    };
+                    /** Delete is on while there is another environment to keep. */
+                    const refreshDeletes = manageContainer => {
+                        const onlyOne = getEnvironments().length <= 1;
+                        manageContainer.querySelectorAll('.env-del-btn').forEach(btn => {
+                            btn.toggleAttribute('disabled', onlyOne);
+                            btn.setAttribute('title', onlyOne ? 'You must have at least one environment.' : 'Delete this environment');
+                        });
+                    };
+                    /** Add New is on while its field has a name. */
+                    const refreshAdd = manageContainer => {
+                        const addBtn = manageContainer.querySelector(`#btn-add-env-${dialogId}`);
+                        // Its id moves to the input in its shadow root.
+                        const input = manageContainer.querySelector('webui-input-text.new-env-input');
+                        if (!addBtn) return;
+                        const can = !!`${input?.value ?? ''}`.trim();
+                        addBtn.toggleAttribute('disabled', !can);
+                        addBtn.setAttribute('title', can ? 'Add this environment' : 'Type a name to add an environment');
                     };
                     let envsHtml = getEnvironments().map(e => envRowHtml(e.name)).join('');
                     let content = `
@@ -461,8 +489,8 @@
                             </webui-flex>
                             <webui-line></webui-line>
                             <webui-grid columns="1fr max-content" gap="var(--padding)" align="center" style="margin-top: 1rem;">
-                                <webui-input-text id="new-env-input-${dialogId}" placeholder="New Environment Name"></webui-input-text>
-                                <webui-button id="btn-add-env-${dialogId}" theme="primary">Add New</webui-button>
+                                <webui-input-text id="new-env-input-${dialogId}" class="new-env-input" placeholder="New Environment Name"></webui-input-text>
+                                <webui-button id="btn-add-env-${dialogId}" theme="primary" title="Type a name to add an environment" disabled>Add New</webui-button>
                             </webui-grid>
                         </div>
                     `;
@@ -497,6 +525,7 @@
                                 webui.proxy.syncProjectData();
                                 actionNote(saveBtn, 'Environment renamed', 'success');
                                 saveBtn.setAttribute('data-env', newName);
+                                refreshSave(saveBtn);
                                 let delBtn = grid.querySelector('.env-del-btn');
                                 if (delBtn) delBtn.setAttribute('data-env', newName);
                                 renderAllLists();
@@ -522,6 +551,7 @@
                             // What was said by its buttons goes with it.
                             grid?._actionNote?.remove();
                             grid?.remove();
+                            refreshDeletes(manageContainer);
                             // Its row is gone, so this is said by Add New.
                             actionNote(manageContainer.querySelector(`#btn-add-env-${dialogId}`), `Environment ${envName} deleted`, 'success');
                             renderAllLists();
@@ -548,12 +578,38 @@
                             let newGrid = webui.createFromHTML(envRowHtml(envName).trim());
                             let flex = manageContainer.querySelector('webui-flex');
                             if (flex) flex.appendChild(newGrid);
+                            refreshAdd(manageContainer);
+                            refreshDeletes(manageContainer);
                             renderAllLists();
                             return;
                         }
                     };
+                    // What is typed turns the buttons that use it on or off.
+                    const onManageInput = (ev) => {
+                        let manageContainer = webui.querySelector(`#manage-envs-${dialogId}`);
+                        if (!manageContainer || !ev.composedPath().includes(manageContainer)) return;
+                        // webui-input-text moves its id to its own input.
+                        const path = ev.composedPath();
+                        const field = path.find(node => node.localName === 'webui-input-text');
+                        if (!field) return;
+                        // With nothing to add or rename, what was said about an earlier try goes.
+                        if (path.some(node => node.id === `new-env-input-${dialogId}`)) {
+                            refreshAdd(manageContainer);
+                            const addBtn = manageContainer.querySelector(`#btn-add-env-${dialogId}`);
+                            if (addBtn?.hasAttribute('disabled')) clearActionNote(addBtn);
+                            return;
+                        }
+                        const saveBtn = webui.closest(field, 'webui-grid')?.querySelector('.env-save-btn');
+                        if (!saveBtn) return;
+                        refreshSave(saveBtn);
+                        if (saveBtn.hasAttribute('disabled')) clearActionNote(saveBtn);
+                    };
                     document.addEventListener('click', onManageClick);
-                    const stopManaging = () => document.removeEventListener('click', onManageClick);
+                    document.addEventListener('input', onManageInput);
+                    const stopManaging = () => {
+                        document.removeEventListener('click', onManageClick);
+                        document.removeEventListener('input', onManageInput);
+                    };
                     Promise.resolve(webui.dialog({
                         title: 'Manage Environments',
                         content: content,
@@ -561,6 +617,31 @@
                     })).then(stopManaging, stopManaging);
                 });
             }
+            // Add waits for a key to be typed.
+            // Each key's id moves to the input in its shadow root, so the field is found by what it binds.
+            const refreshAddKey = (bind, buttonId) => {
+                const input = container.querySelector(`webui-input-text[data-bind="${bind}"]`);
+                const button = container.querySelector(buttonId);
+                if (!button) return;
+                const can = !!`${input?.value ?? ''}`.trim();
+                button.toggleAttribute('disabled', !can);
+                button.setAttribute('title', can ? 'Add this variable' : 'Type a key to add');
+            };
+            const refreshAddKeys = () => {
+                refreshAddKey('proj-var-name', '#btn-add-proj');
+                refreshAddKey('glob-var-name', '#btn-add-glob');
+            };
+            // With no key, what was said about an earlier one goes.
+            // webui-input-text moves its id to its own input, so typing is found by the id in the event's path.
+            container.addEventListener('input', ev => {
+                const path = ev.composedPath();
+                [['input-proj-var', '#btn-add-proj'], ['input-glob-var', '#btn-add-glob']].forEach(([inputId, buttonId]) => {
+                    if (!path.some(node => node.id === inputId)) return;
+                    refreshAddKeys();
+                    const button = container.querySelector(buttonId);
+                    if (button?.hasAttribute('disabled')) clearActionNote(button);
+                });
+            });
             container.addEventListener('click', (ev) => {
                 const btnAddProj = webui.closest(ev.target, '#btn-add-proj');
                 if (btnAddProj) {
@@ -577,6 +658,10 @@
                         webui.proxy.syncProjectData();
                         webui.setData('proj-var-name', '');
                         if (input) input.value = '';
+                        // Its id is on the input in its shadow root, so the field itself is emptied too.
+                        const field = container.querySelector('webui-input-text[data-bind="proj-var-name"]');
+                        if (field) field.value = '';
+                        refreshAddKeys();
                         renderAllLists();
                     } else {
                         actionNote(btnAddProj, 'Project variable already exists', 'warning');
@@ -597,6 +682,10 @@
                         webui.proxy.saveAppData();
                         webui.setData('glob-var-name', '');
                         if (input) input.value = '';
+                        // Its id is on the input in its shadow root, so the field itself is emptied too.
+                        const field = container.querySelector('webui-input-text[data-bind="glob-var-name"]');
+                        if (field) field.value = '';
+                        refreshAddKeys();
                         renderAllLists();
                     } else {
                         actionNote(btnAddGlob, 'Global variable already exists', 'warning');
@@ -610,6 +699,8 @@
             const tabs = container.querySelector('webui-tabs');
             webui.wait(() => typeof tabs.setTab === 'function').then(() => webui.wait(50)).then(() => {
                 tabs.setTab(Number(tabs.getAttribute('index')) || 0);
+                // A key kept from before shows in its field once the field is drawn.
+                refreshAddKeys();
             });
         }, 0);
         return container;

@@ -7,12 +7,25 @@ async function setter(page, state = {}) {
     await expect.poll(async () => (await calls(page, 'has_securitykey')).length).toBeGreaterThan(0);
     return el;
 }
-test('a short key is refused', async ({ page }) => {
+test('Save is off until the key is long enough, saying so, and on once it is', async ({ page }) => {
     const el = await setter(page);
+    const save = el.locator('webui-button[theme="primary"]');
+    await expect(save).toHaveAttribute('disabled');
+    await expect(save).toHaveAttribute('title', /at least 20 characters/);
     await el.locator('webui-input-message textarea').fill('too short');
-    await el.locator('webui-button[theme="primary"]').click();
-    await expect(el.locator('webui-alert')).toContainText('at least 20');
+    await expect(save).toHaveAttribute('disabled');
+    await el.locator('webui-input-message textarea').fill('a key that is long enough');
+    await expect(save).not.toHaveAttribute('disabled');
+    await el.locator('webui-input-message textarea').fill('');
+    await expect(save).toHaveAttribute('disabled');
     await expect.poll(() => calls(page, 'set_securitykey')).toEqual([]);
+});
+test('a generated key can be saved', async ({ page }) => {
+    const el = await setter(page);
+    const save = el.locator('webui-button[theme="primary"]');
+    await expect(save).toHaveAttribute('disabled');
+    await el.locator('webui-button[theme="secondary"]').click();
+    await expect(save).not.toHaveAttribute('disabled');
 });
 test('a long enough key is saved', async ({ page }) => {
     const el = await setter(page);

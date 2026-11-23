@@ -206,16 +206,66 @@ test('models that can\'t be listed tell every screen why', async ({ page }) => {
     await expect.poll(() => page.evaluate(() => window.__errors)).toEqual(['Ollama isn\'t running.']);
 });
 
+test('each model has its own limits, an empty one showing the limit suggested for that model', async ({ page }) => {
+    const el = await settings(page, { ai: { providers: [CLAUDE, OLLAMA] } });
+    const claude = provider(el, 0);
+    const limit = (card, model) => card.locator(`.ai-model-limit[data-model="${model}"]`);
+    await expect(claude.locator('.ai-model-limit[data-model] .ai-model-limit-name')).toHaveText(['Claude Sonnet', 'Claude Opus']);
+    await expect(limit(claude, 'opus').locator('input.ai-limit-timeout')).toHaveAttribute('placeholder', '420');
+    await expect(limit(claude, 'opus').locator('input.ai-limit-chars')).toHaveAttribute('placeholder', '300000');
+    await expect(limit(claude, 'opus').locator('.ai-limit-suggested')).toHaveText('Suggested for Claude Opus (1M tokens): 420 seconds, 300,000 characters.');
+    await expect(limit(claude, 'opus').locator('input.ai-limit-timeout')).toHaveValue('');
+    // A model on this computer is suggested less, and its card says to give it more context.
+    await expect(limit(provider(el, 1), 'qwen2.5-coder').locator('input.ai-limit-chars')).toHaveAttribute('placeholder', '32000');
+    await expect(provider(el, 1).locator('.ai-limits-field')).toContainText('Set the model\'s context length to 16K or more');
+    await limit(claude, 'opus').locator('input.ai-limit-timeout').fill('600');
+    await expect(note(el)).toHaveAttribute('variant', 'warning');
+    await save(el);
+    // Only what was set is sent: the others use their suggestions.
+    expect((await saved(page)).map(p => p.limits)).toEqual([{ opus: { timeoutSecs: 600 } }, {}]);
+    await expect(limit(provider(el, 0), 'opus').locator('input.ai-limit-timeout')).toHaveValue('600');
+    // Emptied, it goes back to its suggestion.
+    await limit(provider(el, 0), 'opus').locator('input.ai-limit-timeout').fill('');
+    await save(el);
+    expect((await saved(page)).map(p => p.limits)).toEqual([{}, {}]);
+});
+
+test('limits follow a provider\'s models: one chosen or typed in gets its row, keeping what was set on it', async ({ page }) => {
+    const el = await settings(page, { ai: { providers: [{ ...CLAUDE, limits: { sonnet: { maxChars: 50000 } } }] } });
+    const claude = provider(el, 0);
+    const rows = () => claude.locator('.ai-model-limit[data-model]');
+    await claude.locator('input[data-model="sonnet"]').uncheck();
+    await expect(rows().locator('.ai-model-limit-name')).toHaveText(['Claude Opus']);
+    await claude.locator('input[data-model="haiku"]').check();
+    await claude.locator('input[data-model="sonnet"]').check();
+    await expect(rows().locator('.ai-model-limit-name')).toHaveText(['Claude Sonnet', 'Claude Opus', 'Claude Haiku']);
+    await expect(claude.locator('.ai-model-limit[data-model="sonnet"] input.ai-limit-chars')).toHaveValue('50000');
+    await expect(claude.locator('.ai-model-limit[data-model="haiku"] input.ai-limit-timeout')).toHaveAttribute('placeholder', '180');
+    // A command's model typed in gets a row too, with the limits for other models when none is suggested for it.
+    await el.locator('webui-button.ai-add-provider').click();
+    const card = provider(el, 1);
+    await choose(card, 'command');
+    await card.locator('input.ai-name').fill('My Tool');
+    await card.locator('input.ai-command').fill('my-ai --model {model}');
+    await card.locator('.ai-command-model input.ai-command-model-value').fill('my-model');
+    const mine = card.locator('.ai-model-limit[data-model="my-model"]');
+    await expect(mine.locator('input.ai-limit-timeout')).toHaveAttribute('placeholder', '120');
+    await expect(mine.locator('input.ai-limit-chars')).toHaveAttribute('placeholder', '40000');
+    await mine.locator('input.ai-limit-chars').fill('8000');
+    await save(el);
+    expect((await saved(page)).map(p => p.limits)).toEqual([{ sonnet: { maxChars: 50000 } }, { 'my-model': { maxChars: 8000 } }]);
+});
+
 test('limits changed elsewhere are shown, and saved again as they are, when this screen has no changes', async ({ page }) => {
     const el = await settings(page, { ai: { providers: [OLLAMA] } });
-    await expect(el.locator('input.ai-timeout')).toHaveValue('120');
-    await page.evaluate(view => window.__backend.emit('ai-settings-changed', view), { providers: [OLLAMA], timeoutSecs: 300, maxChars: 60000, defaults: {} });
-    await expect(el.locator('input.ai-timeout')).toHaveValue('300');
-    await expect(el.locator('input.ai-max-chars')).toHaveValue('60000');
+    const chars = provider(el, 0).locator('.ai-model-limit[data-model="qwen2.5-coder"] input.ai-limit-chars');
+    await expect(chars).toHaveValue('');
+    const view = await page.evaluate(() => webui.proxy.ai.settings());
+    await page.evaluate(view => window.__backend.emit('ai-settings-changed', view), { ...view, providers: [{ ...view.providers[0], limits: { 'qwen2.5-coder': { maxChars: 20000 } } }] });
+    await expect(chars).toHaveValue('20000');
     await provider(el, 0).locator('input.ai-name').fill('Ollama Here');
     await save(el);
-    const sent = (await calls(page, 'ai_save_settings')).at(-1).settings;
-    expect([sent.timeoutSecs, sent.maxChars]).toEqual([300, 60000]);
+    expect((await saved(page))[0].limits).toEqual({ 'qwen2.5-coder': { maxChars: 20000 } });
 });
 
 test('Discard Changes leaves nothing to save even when the saved providers can\'t be read again', async ({ page }) => {
@@ -329,7 +379,7 @@ test('Settings drawn again and again stops listening for provider changes each t
     // A change made elsewhere is still shown on one drawn now.
     const el = (await mount(page, '<app-ai-settings id="w"></app-ai-settings>')).locator('#w');
     await expect(el.locator('.ai-none')).toBeVisible();
-    await page.evaluate(view => window.__backend.emit('ai-settings-changed', view), { providers: [OLLAMA], timeoutSecs: 120, maxChars: 60000, defaults: {} });
+    await page.evaluate(view => window.__backend.emit('ai-settings-changed', view), { providers: [OLLAMA], defaults: {} });
     await expect(providerTabs(el)).toHaveText(['Ollama']);
 });
 

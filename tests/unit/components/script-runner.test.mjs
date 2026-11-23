@@ -45,37 +45,44 @@ test('a script that could not be saved says why, and does not run', async ({ pag
     await expect(actionNote(page, 'The disk is full.')).toHaveCount(1);
     await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
 });
-test('an empty script does not run', async ({ page }) => {
+test('Run is off for an empty script, saying why, and on once there is a script', async ({ page }) => {
     const el = await runner(page);
+    const run = el.locator('webui-button[label="Run"]');
     await setScript(el, 'a.ps1', '   ');
-    await click(el, 'Run');
-    await expect(actionNote(page, 'Script is empty.')).toHaveCount(1);
-    await expect.poll(() => calls(page, 'spawn_script')).toEqual([]);
+    await expect(run).toHaveAttribute('disabled');
+    await expect(run).toHaveAttribute('title', 'Write a script to run');
+    await el.locator('webui-input-message textarea').fill('Write-Host hi');
+    await expect(run).not.toHaveAttribute('disabled');
+    await el.locator('webui-input-message textarea').fill('');
+    await expect(run).toHaveAttribute('disabled');
+    expect(await calls(page, 'spawn_script')).toEqual([]);
 });
 test('what the buttons said goes when another script is shown, or loaded, and stays for the same one', async ({ page }) => {
     const el = await runner(page, { files: { 'b.ps1': 'Write-Host b' } });
-    await setScript(el, 'a.ps1', '   ');
+    await page.evaluate(() => { window.__backend.handlers.save_project_file = () => { throw 'The disk is full.'; }; });
+    await setScript(el, 'a.ps1', 'Write-Host a');
     await click(el, 'Run');
-    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
-    await setScript(el, 'a.ps1', '   ');
-    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
+    await expect(actionNote(el, 'The disk is full.')).toHaveCount(1);
+    await setScript(el, 'a.ps1', 'Write-Host a');
+    await expect(actionNote(el, 'The disk is full.')).toHaveCount(1);
     await setScript(el, 'other.ps1', 'Write-Host other');
-    await expect(actionNote(el, 'Script is empty.')).toHaveCount(0);
-    await setScript(el, 'a.ps1', '   ');
+    await expect(actionNote(el, 'The disk is full.')).toHaveCount(0);
+    await setScript(el, 'a.ps1', 'Write-Host a');
     await click(el, 'Run');
-    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
+    await expect(actionNote(el, 'The disk is full.')).toHaveCount(1);
     await el.evaluate(node => node.loadScript('b.ps1'));
     await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host b');
-    await expect(actionNote(el, 'Script is empty.')).toHaveCount(0);
+    await expect(actionNote(el, 'The disk is full.')).toHaveCount(0);
 });
 test('what the buttons said goes when the script is shown read-only', async ({ page }) => {
     const el = await runner(page);
-    await setScript(el, 'a.ps1', '   ');
+    await page.evaluate(() => { window.__backend.handlers.save_project_file = () => { throw 'The disk is full.'; }; });
+    await setScript(el, 'a.ps1', 'Write-Host a');
     await click(el, 'Run');
-    await expect(actionNote(el, 'Script is empty.')).toHaveCount(1);
+    await expect(actionNote(el, 'The disk is full.')).toHaveCount(1);
     await el.evaluate(node => node.setReadOnly(true));
     await expect(el.locator('webui-button[label="Run"]')).toBeHidden();
-    await expect(actionNote(el, 'Script is empty.')).toHaveCount(0);
+    await expect(actionNote(el, 'The disk is full.')).toHaveCount(0);
 });
 test('a page script is never saved as a file, even with a dot in its name', async ({ page }) => {
     const el = await runner(page);
@@ -125,16 +132,75 @@ test('typed changes are asked about before another script is shown, and kept on 
 });
 test('reset reloads a script file', async ({ page }) => {
     const el = await runner(page, { files: { 'a.ps1': 'from disk' } });
-    await setScript(el, 'a.ps1', 'changed');
+    await el.evaluate(node => node.loadScript('a.ps1'));
+    await expect(el.locator('webui-input-message textarea')).toHaveValue('from disk');
+    await el.locator('webui-input-message textarea').fill('changed');
     await click(el, 'Reset');
     await expect(el.locator('webui-input-message textarea')).toHaveValue('from disk');
 });
 test('a script that fails to load cannot be saved over', async ({ page }) => {
     const el = await runner(page);
     await el.evaluate(node => node.loadScript('missing.ps1'));
+    await expect.poll(() => el.evaluate(node => node._fileName)).toBe('');
+    // With nothing written, there is nothing to save.
+    await expect(el.locator('webui-button[label="Save"]')).toHaveAttribute('disabled');
+    await el.locator('webui-input-message textarea').fill('x');
     await click(el, 'Save');
     await expect(page.getByText('Save Script As')).toBeVisible();
     await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
+});
+test('Save and Reset are off until the script changes, and off again once it is saved', async ({ page }) => {
+    const el = await runner(page, { files: { 'a.ps1': 'Write-Host a' } });
+    const save = el.locator('webui-button[label="Save"]');
+    const reset = el.locator('webui-button[label="Reset"]');
+    await el.evaluate(node => node.loadScript('a.ps1'));
+    await expect(el.locator('webui-input-message textarea')).toHaveValue('Write-Host a');
+    await expect(save).toHaveAttribute('disabled');
+    await expect(save).toHaveAttribute('title', 'This script has no changes to save');
+    await expect(reset).toHaveAttribute('disabled');
+    await el.locator('webui-input-message textarea').fill('Write-Host b');
+    await expect(save).not.toHaveAttribute('disabled');
+    await expect(reset).not.toHaveAttribute('disabled');
+    // Typed back as it is saved, there is nothing to save again.
+    await el.locator('webui-input-message textarea').fill('Write-Host a');
+    await expect(save).toHaveAttribute('disabled');
+    await el.locator('webui-input-message textarea').fill('Write-Host c');
+    await click(el, 'Save');
+    await expect.poll(() => calls(page, 'save_project_file')).toEqual([{ filePath: 'a.ps1', contents: 'Write-Host c' }]);
+    await expect(save).toHaveAttribute('disabled');
+    await expect(reset).toHaveAttribute('disabled');
+    // Run saves the script too.
+    await el.locator('webui-input-message textarea').fill('Write-Host d');
+    await expect(save).not.toHaveAttribute('disabled');
+    await click(el, 'Run');
+    await expect.poll(async () => (await calls(page, 'spawn_script')).length).toBe(1);
+    await expect(save).toHaveAttribute('disabled');
+});
+test('Save and Reset are off for an empty script with no file, which Save As still saves', async ({ page }) => {
+    const el = await runner(page);
+    const save = el.locator('webui-button[label="Save"]');
+    await setScript(el, 'live', '');
+    await expect(save).toHaveAttribute('disabled');
+    await expect(save).toHaveAttribute('title', 'Write a script to save');
+    await expect(el.locator('webui-button[label="Reset"]')).toHaveAttribute('disabled');
+    await expect(el.locator('webui-button[label="Save As"]')).not.toHaveAttribute('disabled');
+    await el.locator('webui-input-message textarea').fill('Write-Host hi');
+    await expect(save).not.toHaveAttribute('disabled');
+    await expect(el.locator('webui-button[label="Reset"]')).not.toHaveAttribute('disabled');
+});
+test('Clear Params is off until a parameter has a value, and off again once cleared', async ({ page }) => {
+    const el = await runner(page);
+    const clear = el.locator('webui-button[label="Clear Params"]');
+    await setScript(el, 'a.ps1', 'Write-Host a');
+    await expect(clear).toHaveAttribute('disabled');
+    await expect(clear).toHaveAttribute('title', 'This script has no parameters');
+    await setScript(el, 'b.ps1', 'param([string]$Name)\nx');
+    await expect(clear).toHaveAttribute('disabled');
+    await expect(clear).toHaveAttribute('title', 'No parameter has a value to clear');
+    await el.locator('webui-input-text[data-param="Name"] input').fill('val');
+    await expect(clear).not.toHaveAttribute('disabled');
+    await click(el, 'Clear Params');
+    await expect(clear).toHaveAttribute('disabled');
 });
 test('an empty script file loads, and stays attached to its file', async ({ page }) => {
     const el = await runner(page, { files: { 'empty.ps1': '' } });
@@ -223,6 +289,7 @@ test.describe('Write with AI', () => {
     test('a draft shows as not saved, in place of what Save said before', async ({ page }) => {
         const el = await runner(page, { ai: AI, appData: { 'app-ai-integrations': { scripts: true } }, aiReplies: { scripts: DRAFT } });
         await setScript(el, 'hello.ps1', 'Write-Host hi');
+        await el.locator('webui-input-message textarea').fill('Write-Host hello');
         await click(el, 'Save');
         await expect.poll(() => calls(page, 'save_project_file')).toHaveLength(1);
         await expect(el.locator('webui-alert.action-note[show]')).toHaveAttribute('variant', 'success');

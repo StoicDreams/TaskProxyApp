@@ -1,7 +1,18 @@
-import { test, expect, openPage, openApp, calls, onCommand, dialogButton, openDialog, goToPage } from '../support/app.mjs';
+import { test, expect, openPage, openApp, calls, onCommand, dialogButton, openDialog, goToPage, pageSettled } from '../support/app.mjs';
 import { actionNote, alertPopup, spyOnAlerts, alerts } from '../../support/wait.mjs';
 
-const save = page => page.locator('app-page-handler webui-button[title="Save Page"]').first().click();
+const saveButton = page => page.locator('app-page-handler webui-button.page-save').first();
+const save = page => saveButton(page).click();
+const pageSegments = page => page.locator('app-page-handler > webui-reorder > app-markdown-segment');
+/** Adds a segment saying `text` at the end of the page, which gives it a change to save. */
+async function addSegment(page, text = 'Added') {
+    await page.locator('app-page-handler webui-button[title="Add Segment"]').last().click();
+    const segment = pageSegments(page).last();
+    await segment.locator('#btn-edit').click();
+    await segment.locator('webui-input-message textarea').fill(text);
+    await expect(saveButton(page)).not.toHaveAttribute('disabled');
+}
+const ADDED = '<webui-page-segment>\n\nAdded\n\n</webui-page-segment>';
 const saved = async page => {
     await expect.poll(async () => (await calls(page, 'save_project_file')).length).toBeGreaterThan(0);
     return (await calls(page, 'save_project_file')).at(-1);
@@ -20,6 +31,7 @@ test.describe('saving', () => {
         const data = '<webui-data data-page-title="T" data-page-subtitle=""></webui-data>';
         const markdown = `${data}\n\n# Heading\n\nUse List<string> here.\nSecond line.\n\n<webui-page-segment>\n\nInner\n\n</webui-page-segment>\n\n\`\`\`bash\necho hi\n\`\`\``;
         await openPage(page, markdown);
+        await addSegment(page);
         await save(page);
         expect((await saved(page)).contents).toBe([
             data,
@@ -27,22 +39,26 @@ test.describe('saving', () => {
             '<webui-page-segment>\n\nUse List<string> here.\nSecond line.\n\n</webui-page-segment>',
             '<webui-page-segment>\n\nInner\n\n</webui-page-segment>',
             '<webui-page-segment>\n\n```bash\necho hi\n```\n\n</webui-page-segment>',
+            ADDED,
         ].join('\n\n'));
     });
     test('saves to the file for this page', async ({ page }) => {
         await openPage(page, '# Heading', { pageId: 'my-page' });
+        await addSegment(page);
         await save(page);
         expect((await saved(page)).filePath).toBe('.taskproxy/pages/my-page.md');
     });
     test('a page that does not exist yet starts empty, and can be saved', async ({ page }) => {
         await openApp(page, { currentPage: '/new-page' }, '/new-page');
         await page.locator('app-page-handler webui-button[title="Add Segment"]').first().waitFor();
+        await addSegment(page);
         await save(page);
         expect((await saved(page)).filePath).toBe('.taskproxy/pages/new-page.md');
     });
     test('a new page does not take the previous page\'s title', async ({ page }) => {
         await openApp(page, { currentPage: '/new-page', appData: { 'page-title': 'Some Other Page' } }, '/new-page');
         await page.locator('app-page-handler webui-button[title="Add Segment"]').first().waitFor();
+        await addSegment(page);
         await save(page);
         expect((await saved(page)).contents).not.toContain('Some Other Page');
     });
@@ -52,7 +68,7 @@ test.describe('saving', () => {
         await page.evaluate(() => webui.navigateTo('/broken'));
         // The page has dealt with the failed load once it says so. Save is refused as it is clicked, before anything is sent.
         await expect(page.locator('app-page-handler webui-alert')).toContainText('This page could not be loaded.');
-        const button = page.locator('app-page-handler webui-button[title="Save Page"]').first();
+        const button = saveButton(page);
         if (await button.count()) await button.click();
         await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
     });
@@ -75,6 +91,7 @@ test.describe('saving', () => {
         await page.evaluate(() => window.__releaseSlow());
         await expect(page.getByRole('heading', { name: 'Fast Page' })).toBeVisible();
         await expect(page.getByRole('heading', { name: 'Slow Page' })).toHaveCount(0);
+        await addSegment(page);
         await save(page);
         const result = await saved(page);
         expect(result.filePath).toBe('.taskproxy/pages/fast.md');
@@ -85,6 +102,7 @@ test.describe('saving', () => {
         await openPage(page, '# First', { pageId: 'first', files: { '.taskproxy/pages/second.md': '# Second' } });
         await page.evaluate(() => webui.navigateTo('/second'));
         await page.getByRole('heading', { name: 'Second' }).waitFor();
+        await addSegment(page);
         await save(page);
         expect((await saved(page)).filePath).toBe('.taskproxy/pages/second.md');
     });
@@ -476,8 +494,9 @@ test.describe('help', () => {
         // The panel can cover the Save button.
         await help.locator('.panel button.close').click();
         await expect(help.locator('.panel')).toBeHidden();
+        await addSegment(page);
         await save(page);
-        expect((await saved(page)).contents).toBe('<webui-data data-page-title="" data-page-subtitle=""></webui-data>\n\n# One');
+        expect((await saved(page)).contents).toBe(`<webui-data data-page-title="" data-page-subtitle=""></webui-data>\n\n# One\n\n${ADDED}`);
     });
     test('the help lists the Web UI components a page can use, without changing the url', async ({ page }) => {
         await openPage(page, '# One');
@@ -647,27 +666,145 @@ test.describe('importing a markdown file', () => {
     });
 });
 
-test.describe('copying the page', () => {
-    const copyButton = page => page.locator('app-page-handler webui-button.page-copy');
-    const clipboard = page => page.evaluate(() => window.__backend.clipboard);
+test.describe('unsaved changes', () => {
+    const revertButton = page => page.locator('app-page-handler webui-button.page-revert').first();
+    const drafts = page => page.evaluate(() => window.__backend.savedProjects['/repo']?.data?._pageDrafts);
+    const DATA = '<webui-data data-page-title="" data-page-subtitle=""></webui-data>';
+    const PENDING = 'This page has changes that aren\'t saved. They are kept, even when you leave the page, until you save or revert them.';
 
-    test("copies the page's markdown file as it is saved, not what is being edited", async ({ page }) => {
-        const md = '<webui-data data-page-title="T" data-page-subtitle=""></webui-data>\n\n# Saved\n\nBody';
-        await openPage(page, md);
-        const segment = page.locator('app-page-handler > webui-reorder > app-markdown-segment').nth(1);
+    test('Save is off until the page changes, and Revert shows only while it has changes', async ({ page }) => {
+        await openPage(page, '# One');
+        await expect(saveButton(page)).toHaveAttribute('disabled');
+        await expect(revertButton(page)).toBeHidden();
+        await addSegment(page);
+        await expect(revertButton(page)).toBeVisible();
+        await expect(actionNote(page, PENDING)).toHaveCount(1);
+        await save(page);
+        await expect(saveButton(page)).toHaveAttribute('disabled');
+        await expect(revertButton(page)).toBeHidden();
+        expect((await saved(page)).contents).toBe(`${DATA}\n\n# One\n\n${ADDED}`);
+    });
+    test('changes are kept with the project and shown again after leaving the page and coming back', async ({ page }) => {
+        await openPage(page, '# One', { files: { '.taskproxy/pages/other.md': '# Other' } });
+        await addSegment(page, 'Not saved yet');
+        await expect.poll(() => drafts(page)).toEqual({ abc: { base: `${DATA}\n\n# One`, segments: [{ md: '# One', saved: '# One' }, { md: '<webui-page-segment>\n\nNot saved yet\n\n</webui-page-segment>', saved: '' }] } });
+        await goToPage(page, '/other');
+        await page.getByRole('heading', { name: 'Other' }).waitFor();
+        await goToPage(page, '/abc');
+        await expect(pageSegments(page)).toHaveCount(2);
+        await expect(pageSegments(page).nth(1)).toContainText('Not saved yet');
+        await expect(saveButton(page)).not.toHaveAttribute('disabled');
+        await expect(actionNote(page, PENDING)).toHaveCount(1);
+        expect(await calls(page, 'save_project_file')).toEqual([]);
+    });
+    test('changes kept from before a restart show, and each segment reverts to how the file has it', async ({ page }) => {
+        const segments = [{ md: '# Changed', saved: '# One' }, { md: '# Two', saved: '# Two' }];
+        await openPage(page, '# One\n\n# Two', { data: { _pageDrafts: { abc: { base: `${DATA}\n\n# One\n\n# Two`, segments } } } });
+        await expect(page.getByRole('heading', { name: 'Changed' })).toBeVisible();
+        const changed = pageSegments(page).first();
+        await expect(changed).toHaveClass(/changed/);
+        await changed.locator('#btn-edit').click();
+        await expect(changed.locator('#btn-undo')).not.toHaveAttribute('disabled');
+        await changed.locator('#btn-undo').click();
+        await expect(page.getByRole('heading', { name: 'One' })).toBeVisible();
+        await expect(saveButton(page)).toHaveAttribute('disabled');
+        await expect.poll(() => drafts(page)).toEqual({});
+    });
+    test('a segment\'s Revert is off until the segment differs from the saved page', async ({ page }) => {
+        await openPage(page, '<webui-page-segment>\n\nBody\n\n</webui-page-segment>');
+        const segment = pageSegments(page).first();
         await segment.locator('#btn-edit').click();
-        await segment.locator('webui-input-message textarea').fill('Not saved yet');
-        await copyButton(page).click();
-        await expect(actionNote(page, "Copied this page's markdown.")).toHaveCount(1);
-        await expect.poll(() => clipboard(page)).toEqual({ text: md });
-        await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
+        const undo = segment.locator('#btn-undo');
+        await expect(undo).toHaveAttribute('disabled');
+        await segment.locator('webui-input-message textarea').fill('Body changed');
+        await expect(undo).not.toHaveAttribute('disabled');
+        await segment.locator('webui-input-message textarea').fill('Body');
+        await expect(undo).toHaveAttribute('disabled');
+    });
+    test('Revert puts the whole page back as saved, after asking', async ({ page }) => {
+        await openPage(page, '# One\n\n# Two');
+        const doomed = pageSegments(page).nth(1);
+        await doomed.locator('#btn-edit').click();
+        await doomed.locator('#btn-delete').click();
+        await addSegment(page);
+        await revertButton(page).click();
+        await dialogButton(page, 'Revert').click();
+        await expect(pageSegments(page)).toHaveCount(2);
+        await expect(page.getByRole('heading', { name: 'Two' })).toBeVisible();
+        await expect(actionNote(page, 'Reverted this page to how it is saved.')).toHaveCount(1);
+        await expect(saveButton(page)).toHaveAttribute('disabled');
+        await expect.poll(() => drafts(page)).toEqual({});
+    });
+    test('changes made before the file changed underneath say that saving replaces it', async ({ page }) => {
+        const segments = [{ md: '# Mine', saved: '# Old' }];
+        await openPage(page, '# Theirs', { data: { _pageDrafts: { abc: { base: `${DATA}\n\n# Old`, segments } } } });
+        await expect(page.getByRole('heading', { name: 'Mine' })).toBeVisible();
+        await expect(actionNote(page, 'This page has unsaved changes from before its file changed. Saving them replaces the file as it is now, and Revert shows the file as it is now.')).toHaveCount(1);
     });
 
-    test('a file that cannot be read says why, and copies nothing', async ({ page }) => {
-        await openPage(page, '# Existing');
-        await page.evaluate(() => { window.__backend.handlers.get_project_file = () => { throw 'Failed to load file: denied'; }; });
-        await copyButton(page).click();
-        await expect(actionNote(page, "This page's file could not be read. Failed to load file: denied")).toHaveCount(1);
-        await expect.poll(() => clipboard(page)).toBeUndefined();
+    test.describe('leaving the page', () => {
+        const LINKED = '<webui-page-segment>\n\n[Go to other](/other)\n\n</webui-page-segment>';
+        const openLinked = async page => {
+            await openPage(page, LINKED, { files: { '.taskproxy/pages/other.md': '# Other' } });
+            await addSegment(page);
+            await page.getByRole('link', { name: 'Go to other' }).click();
+            await expect(openDialog(page)).toContainText('This page has changes that aren\'t saved.');
+        };
+        test('Stay on Page keeps the page and its changes', async ({ page }) => {
+            await openLinked(page);
+            await dialogButton(page, 'Stay on Page').click();
+            await expect(openDialog(page)).toHaveCount(0);
+            await expect(page).toHaveURL(url => url.pathname === '/abc');
+            await expect(pageSegments(page)).toHaveCount(2);
+        });
+        test('Save and Leave saves the page, then goes', async ({ page }) => {
+            await openLinked(page);
+            await dialogButton(page, 'Save and Leave').click();
+            await page.getByRole('heading', { name: 'Other' }).waitFor();
+            expect((await saved(page)).contents).toBe(`${DATA}\n\n${LINKED}\n\n${ADDED}`);
+            await expect.poll(() => drafts(page)).toEqual({});
+        });
+        test('Leave Without Saving goes, keeping the changes for later', async ({ page }) => {
+            await openLinked(page);
+            await openDialog(page).getByText('Leave Without Saving').click();
+            await page.getByRole('heading', { name: 'Other' }).waitFor();
+            await pageSettled(page);
+            expect(await calls(page, 'save_project_file')).toEqual([]);
+            await expect.poll(async () => Object.keys(await drafts(page) || {})).toEqual(['abc']);
+        });
+        test('a page with no changes leaves without asking', async ({ page }) => {
+            await openPage(page, LINKED, { files: { '.taskproxy/pages/other.md': '# Other' } });
+            await page.getByRole('link', { name: 'Go to other' }).click();
+            await page.getByRole('heading', { name: 'Other' }).waitFor();
+            await expect(openDialog(page)).toHaveCount(0);
+        });
+    });
+});
+
+test.describe('writing the whole page with AI', () => {
+    const AI = { providers: [{ id: 'p', name: 'Local', kind: 'openAi', baseUrl: 'http://localhost:11434/v1', models: [{ id: 'm', name: 'Model' }], hidden: [] }] };
+    const withAi = reply => ({ ai: AI, appData: { 'app-ai-integrations': { pages: true } }, aiReplies: { pages: reply } });
+    const pageAi = page => page.locator('app-page-handler app-ai-action.page-ai').first();
+
+    test('the draft replaces the page unsaved, and each segment reverts to the saved one in its place', async ({ page }) => {
+        await openPage(page, '# One\n\n# Two', withAi('# One\n\n# Second\n\nNew text'));
+        await pageAi(page).locator('webui-button.ai-run').click();
+        await page.locator('textarea[name="ai_request"]').fill('Rename the second heading and add text');
+        await dialogButton(page, 'Write with AI').click();
+        await expect(page.getByRole('heading', { name: 'Second' })).toBeVisible();
+        await expect(pageSegments(page)).toHaveCount(3);
+        expect(await calls(page, 'save_project_file')).toEqual([]);
+        await expect(saveButton(page)).not.toHaveAttribute('disabled');
+        expect((await calls(page, 'ai_write')).at(-1).request.context).toContain('# One\n\n# Two');
+        // Unchanged, so nothing to revert; the renamed heading reverts to the file's heading in its place.
+        await expect(pageSegments(page).first()).not.toHaveClass(/changed/);
+        const renamed = pageSegments(page).nth(1);
+        await renamed.locator('#btn-edit').click();
+        await renamed.locator('#btn-undo').click();
+        await expect(page.getByRole('heading', { name: 'Two' })).toBeVisible();
+    });
+    test('the button only shows while AI is turned on for pages', async ({ page }) => {
+        await openPage(page, '# One', { ai: AI });
+        await expect(pageAi(page).locator('webui-button.ai-run')).toBeHidden();
     });
 });

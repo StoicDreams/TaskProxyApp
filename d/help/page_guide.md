@@ -6,12 +6,15 @@
 
         - **Edit**: Click the pencil beside a segment. The editor opens on the left and the result updates on the right as you type.
         - **Type**: Choose **segment**, a heading from **h1** to **h6**, or **line break** with the switch at the top. Text carries over when you change the type.
-        - **Undo**: Click the arrow below the pencil to throw away the changes and close the editor.
-        - **Delete**: Click **Delete** in the editor. The segment comes back if you leave without saving.
+        - **Revert**: Click the arrow below the pencil to put the segment back as the page is saved and close the editor. It is only on while the segment has changes, which a mark beside the segment shows.
+        - **Delete**: Click **Delete** in the editor. **Revert** in the top bar brings it back until the page is saved.
         - **Add**: Click **Add** in the top bar to add a segment at the top, or in the bottom bar to add one at the end.
         - **Move**: Drag a segment by its pencil, or focus the pencil and press Alt+Up or Alt+Down.
         - **Title**: Click the page title at the top of the window to change the title and subtitle.
-        - **Save**: Click **Save** in the top or bottom bar. Closing a segment's editor does not save the page.
+        - **Save**: Click **Save** in the top or bottom bar. It is only on while the page has changes. Closing a segment's editor does not save the page.
+        - **Unsaved changes**: Changes are kept until you save or revert them, even when you leave the page or close Task Proxy. Following a link away asks whether to save them first. **Revert** beside **Save** discards them all.
+        - **Write with AI**: With AI on for pages (Settings, **AI**), **Write with AI** in the top bar rewrites the whole page from what you ask, and the one in a segment's editor writes that segment. Check the draft, then save or revert it.
+        - **Export**: Choose **Export** in the top bar to save the page as a file, or copy it, as a PDF, a web page (HTML), Markdown without Task Proxy's components, the page's own Web UI Markdown file, or plain text. A copied PDF pastes as a file; copied HTML pastes formatted. Variables are exported as their `{NAME}`, never their values.
 
         Content that is not a heading or line break is kept in a segment. When a page opens, any loose content is wrapped in a segment that runs until the next heading, line break, or segment.
         </webui-page-segment>

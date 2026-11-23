@@ -225,6 +225,21 @@
                     t.changed();
                 }
             });
+            /** Save is on only while a setting differs from what is saved: a value changed, or a secret typed. */
+            const refreshSave = () => {
+                const changed = inputs.some(({ setting, input }) => {
+                    // Until the field is drawn, its value is the attribute it was given.
+                    const value = `${input.value ?? input.getAttribute('value') ?? ''}`;
+                    return setting.secret ? !!value : value !== `${setting.value ?? ''}`;
+                });
+                save.toggleAttribute('disabled', !changed);
+                save.setAttribute('title', changed ? 'Save these settings' : 'Change a setting to save it');
+            };
+            inputs.forEach(({ input }) => {
+                input.addEventListener('input', refreshSave);
+                input.addEventListener('change', refreshSave);
+            });
+            refreshSave();
             row.appendChild(save);
             inputs.filter(({ setting }) => setting.secret && setting.isSet).forEach(({ setting }) => {
                 const clear = button(`Clear ${setting.label}`, 'secondary', 'eraser');

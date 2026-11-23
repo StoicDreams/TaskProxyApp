@@ -32,6 +32,7 @@ test('editing updates the preview, and saving writes the file', async ({ page })
 test('what saving said goes when another file is shown', async ({ page }) => {
     await open(page, docs);
     await expect(manager(page).locator('webui-input-message textarea')).toHaveValue('# Read Me');
+    await manager(page).locator('webui-input-message textarea').fill('# Changed');
     await manager(page).locator('webui-button[label="Save"]').click();
     await expect(manager(page).locator('webui-alert.action-note[show]')).toHaveCount(1);
     await select(page, 'docs/guide.md');
@@ -56,9 +57,39 @@ test('scripts in a document do not run', async ({ page }) => {
 test('a document that fails to load cannot be saved over', async ({ page }) => {
     await open(page, { docs: ['README.md'], files: {} });
     await expect(manager(page).locator('webui-content')).toHaveText(/Failed to load/);
-    await manager(page).locator('webui-button[label="Save"]').click();
-    await expect(actionNote(page, 'This file has not loaded, so it was not saved.')).toHaveCount(1);
+    const save = manager(page).locator('webui-button[label="Save"]');
+    await manager(page).locator('webui-input-message textarea').fill('# Typed over nothing');
+    await expect(save).toHaveAttribute('disabled');
+    await expect(save).toHaveAttribute('title', 'No doc has loaded to edit');
     await expect.poll(() => calls(page, 'save_project_file')).toEqual([]);
+});
+test('Save and Reset are off until the doc changes, and off again once it is saved', async ({ page }) => {
+    await open(page, docs);
+    const text = manager(page).locator('webui-input-message textarea');
+    const save = manager(page).locator('webui-button[label="Save"]');
+    const reset = manager(page).locator('webui-button[label="Reset"]');
+    await expect(text).toHaveValue('# Read Me');
+    await expect(save).toHaveAttribute('disabled');
+    await expect(save).toHaveAttribute('title', 'This doc has no changes to save');
+    await expect(reset).toHaveAttribute('disabled');
+    await expect(reset).toHaveAttribute('title', 'This doc has no changes to reset');
+    await text.fill('# Changed');
+    await expect(save).not.toHaveAttribute('disabled');
+    await expect(reset).not.toHaveAttribute('disabled');
+    // Typed back as it was saved, there is nothing to save.
+    await text.fill('# Read Me');
+    await expect(save).toHaveAttribute('disabled');
+    await text.fill('# Changed');
+    await save.click();
+    await expect(actionNote(manager(page), 'File saved')).toHaveCount(1);
+    await expect(save).toHaveAttribute('disabled');
+    await expect(reset).toHaveAttribute('disabled');
+    // Another doc starts with nothing to save.
+    await text.fill('# Changed again');
+    await expect(save).not.toHaveAttribute('disabled');
+    await select(page, 'docs/guide.md');
+    await expect(text).toHaveValue('# Guide');
+    await expect(save).toHaveAttribute('disabled');
 });
 test('a slow document cannot replace the one selected after it', async ({ page }) => {
     await open(page, docs);
@@ -116,6 +147,7 @@ test('a save that finishes after another file is picked says nothing under that 
             return saving;
         };
     });
+    await manager(page).locator('webui-input-message textarea').fill('# Changed');
     await manager(page).locator('webui-button[label="Save"]').click();
     await expect.poll(() => calls(page, 'save_project_file')).toHaveLength(1);
     await select(page, 'docs/guide.md');
@@ -134,6 +166,7 @@ test('a save that fails after another file is picked says which file was not sav
         const held = new Promise(resolve => { window.__releaseSave = resolve; });
         window.__backend.handlers.save_project_file = async () => { await held; throw 'The disk is full.'; };
     });
+    await manager(page).locator('webui-input-message textarea').fill('# Changed');
     await manager(page).locator('webui-button[label="Save"]').click();
     await expect.poll(() => calls(page, 'save_project_file')).toHaveLength(1);
     await select(page, 'docs/guide.md');
@@ -152,8 +185,11 @@ test('Save and Reset are disabled while a save runs', async ({ page }) => {
     });
     const save = manager(page).locator('webui-button[label="Save"]');
     const reset = manager(page).locator('webui-button[label="Reset"]');
+    await manager(page).locator('webui-input-message textarea').fill('# Changed');
     await save.click();
     await expect.poll(() => calls(page, 'save_project_file')).toHaveLength(1);
+    // Typed while it saves, there is something left to save, but not until this save is done.
+    await manager(page).locator('webui-input-message textarea').fill('# Changed again');
     await expect(save).toHaveAttribute('disabled', '');
     await expect(reset).toHaveAttribute('disabled', '');
     await page.evaluate(() => window.__releaseSave());

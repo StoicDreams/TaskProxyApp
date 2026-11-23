@@ -1,5 +1,5 @@
-import { test, expect, openApp, mount, calls, dialogButton, openDialog } from '../support/app.mjs';
-import { actionNote, alertPopup } from '../../support/wait.mjs';
+import { test, expect, openApp, mount, calls, dialogButton, openDialog, switchProject } from '../support/app.mjs';
+import { alertPopup } from '../../support/wait.mjs';
 
 // Settings' Danger tab (wc/project-remove.js): removing the current project from Task Proxy, after asking.
 async function remover(page, project = { name: 'Repo', path: '/repo' }) {
@@ -44,11 +44,16 @@ test("the project's name is shown as written in the question, never run as marku
     await expect(openDialog(page).locator('img')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
 });
-test('with no project, removing says so', async ({ page }) => {
+test('with no project, Remove Project is off, saying why, and on once one opens', async ({ page }) => {
     await openApp(page, { project: null });
     const root = await mount(page, '<app-project-remove id="r"></app-project-remove>');
-    await root.locator('#r #btn-remove').click();
-    await expect(actionNote(page, 'No project is currently selected.')).toHaveCount(1);
+    const button = root.locator('#r #btn-remove');
+    await expect(button).toHaveAttribute('disabled');
+    await expect(button).toHaveAttribute('title', 'Open a project to remove it');
+    await switchProject(page, { name: 'Repo', path: '/repo' });
+    await expect(button).not.toHaveAttribute('disabled');
+    await switchProject(page, null);
+    await expect(button).toHaveAttribute('disabled');
     await expect(openDialog(page)).toHaveCount(0);
 });
 test('Settings has it in a Danger tab, and nowhere else', async ({ page }) => {

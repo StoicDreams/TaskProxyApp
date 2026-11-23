@@ -3217,14 +3217,27 @@ app-ai-settings .ai-command-models {
     width: 100%;
     max-width: 40em;
 }
-app-ai-settings .ai-general summary {
-    cursor: pointer;
-    font-weight: bold;
-}
-app-ai-settings .ai-general[open] {
+app-ai-settings .ai-model-limits {
     display: flex;
     flex-direction: column;
-    gap: calc(0.5 * var(--padding));
+    gap: calc(0.25 * var(--padding));
+    width: 100%;
+}
+app-ai-settings .ai-model-limit {
+    display: grid;
+    grid-template-columns: minmax(8em, 12em) 8em 10em minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--padding);
+}
+app-ai-settings .ai-model-limits-head {
+    font-weight: bold;
+}
+app-ai-settings .ai-model-limit-name {
+    overflow-wrap: anywhere;
+}
+app-ai-settings .ai-model-limit input {
+    width: 100%;
+    min-width: 0;
 }
 app-ai-settings .ai-defaults-wrap {
     overflow-x: auto;
@@ -3232,6 +3245,9 @@ app-ai-settings .ai-defaults-wrap {
 @media (max-width: 700px) {
     app-ai-settings .ai-field {
         grid-template-columns: minmax(0, 1fr);
+    }
+    app-ai-settings .ai-model-limit {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     }
 }
 app-ai-settings [hidden],

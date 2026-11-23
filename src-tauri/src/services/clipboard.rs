@@ -17,6 +17,10 @@ const MAX_DOWNLOAD: usize = 50 * 1024 * 1024;
 enum Content {
     Image(arboard::ImageData<'static>),
     Text(String),
+    /// Formatted text, with plain text for apps that can't paste it formatted.
+    Html { html: String, text: String },
+    /// Files, pasted as a file manager pastes copied files.
+    Files(Vec<std::path::PathBuf>),
 }
 
 type Job = (Content, Sender<Result<(), String>>);
@@ -40,6 +44,13 @@ fn clipboard() -> Sender<Job> {
                         (Some(clipboard), Content::Text(text)) => clipboard
                             .set_text(text)
                             .map_err(|err| format!("The text could not be copied: {err}")),
+                        (Some(clipboard), Content::Html { html, text }) => clipboard
+                            .set_html(html, Some(text))
+                            .map_err(|err| format!("The page could not be copied: {err}")),
+                        (Some(clipboard), Content::Files(files)) => clipboard
+                            .set()
+                            .file_list(&files)
+                            .map_err(|err| format!("The file could not be copied: {err}")),
                         (None, _) => Err("The clipboard could not be reached.".to_string()),
                     };
                     let _ = reply.send(result);
@@ -94,6 +105,19 @@ pub async fn copy_text(text: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || put(Content::Text(text)))
         .await
         .map_err(|err| err.to_string())?
+}
+
+/// Copies formatted text as HTML, with `text` for apps that only paste plain text.
+#[tauri::command]
+pub async fn copy_html(html: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || put(Content::Html { html, text }))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+/// Puts files on the clipboard, to paste where files go, such as a folder or an email.
+pub(crate) fn copy_files(files: Vec<std::path::PathBuf>) -> Result<(), String> {
+    put(Content::Files(files))
 }
 
 /// Copies an image the window sends as the request's raw bytes.

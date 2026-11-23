@@ -166,8 +166,23 @@ test('a refused name\'s warning goes once a name is added, or the field is empti
     await page.locator('#btn-add-proj').click();
     await expect(projectRefused).toHaveCount(1);
     await page.locator('input#input-proj-var').fill('');
-    await page.locator('#btn-add-proj').click();
+    await expect(page.locator('#btn-add-proj')).toHaveAttribute('disabled');
     await expect(projectRefused).toHaveCount(0);
+});
+test('Add is disabled until a key is typed, and again once it is added', async ({ page }) => {
+    await openApp(page);
+    await open(page);
+    for (const [input, add] of [['input#input-proj-var', '#btn-add-proj'], ['input#input-glob-var', '#btn-add-glob']]) {
+        await expect(page.locator(add)).toHaveAttribute('disabled');
+        await expect(page.locator(add)).toHaveAttribute('title', 'Type a key to add');
+    }
+    await page.locator('input#input-proj-var').fill('  ');
+    await expect(page.locator('#btn-add-proj')).toHaveAttribute('disabled');
+    await page.locator('input#input-proj-var').fill('new_key');
+    await expect(page.locator('#btn-add-proj')).not.toHaveAttribute('disabled');
+    await page.locator('#btn-add-proj').click();
+    await expect.poll(() => page.evaluate(() => webui.projectData.variables)).toContain('new_key|text|');
+    await expect(page.locator('#btn-add-proj')).toHaveAttribute('disabled');
 });
 test('deleting a project variable lets a global value of that name show through', async ({ page }) => {
     await openApp(page, { data: { shared: 'project' }, variables: ['shared|text|'], appData: { shared: 'global' }, appVariables: ['shared|text|'] });
@@ -258,23 +273,53 @@ test.describe('environments', () => {
         await page.locator('webui-button[id^="btn-add-env"]').click();
         await expect(actionNote(openDialog(page), 'Environment already exists')).toHaveCount(1);
         await input.fill('');
-        await page.locator('webui-button[id^="btn-add-env"]').click();
+        await expect(page.locator('webui-button[id^="btn-add-env"]')).toHaveAttribute('disabled');
         await expect(actionNote(openDialog(page), 'Environment already exists')).toHaveCount(0);
         const devRow = page.locator('webui-grid:has(webui-button.env-save-btn[data-env="dev"])');
         await devRow.locator('webui-input-text input').fill('prod');
         await devRow.locator('webui-button.env-save-btn').click();
         await expect(actionNote(openDialog(page), 'Environment name already exists')).toHaveCount(1);
         await devRow.locator('webui-input-text input').fill('dev');
-        await devRow.locator('webui-button.env-save-btn').click();
+        await expect(devRow.locator('webui-button.env-save-btn')).toHaveAttribute('disabled');
         await expect(actionNote(openDialog(page), 'Environment name already exists')).toHaveCount(0);
     });
     test('the last environment cannot be deleted', async ({ page }) => {
         await openApp(page, { data: envData([{ name: 'dev', variables: {} }]) });
         await open(page);
         await page.locator('#btn-manage-env').click();
-        await page.locator('webui-button.env-del-btn').click();
-        await expect(openDialog(page).getByText('You must have at least one environment.')).toBeVisible();
+        await expect(page.locator('webui-button.env-del-btn')).toHaveAttribute('disabled');
+        await expect(page.locator('webui-button.env-del-btn')).toHaveAttribute('title', 'You must have at least one environment.');
         await expect.poll(() => page.evaluate(() => webui.projectData.data._environments)).toHaveLength(1);
+    });
+    test('environment buttons are disabled until they can act, and again after', async ({ page }) => {
+        await openApp(page, { data: envData([{ name: 'dev', variables: {} }]) });
+        await open(page);
+        await page.locator('#btn-manage-env').click();
+        const add = page.locator('webui-button[id^="btn-add-env"]');
+        const save = page.locator('webui-button.env-save-btn');
+        await expect(add).toHaveAttribute('disabled');
+        await expect(save).toHaveAttribute('disabled');
+        await expect(save).toHaveAttribute('title', 'Type a new name to rename it');
+        await expect(page.locator('webui-button.env-del-btn')).toHaveAttribute('disabled');
+        // Adding one leaves another to keep, so both can be deleted.
+        await page.locator('input[id^="new-env-input"]').fill('staging');
+        await expect(add).not.toHaveAttribute('disabled');
+        await add.click();
+        await expect(page.locator('webui-button.env-del-btn')).toHaveCount(2);
+        await expect(add).toHaveAttribute('disabled');
+        await expect(page.locator('webui-button.env-del-btn[data-env="dev"]')).not.toHaveAttribute('disabled');
+        await expect(page.locator('webui-button.env-del-btn[data-env="staging"]')).not.toHaveAttribute('disabled');
+        // Renaming waits for a new name, and is done once it is saved.
+        const devRow = page.locator('webui-grid:has(webui-button.env-save-btn[data-env="dev"])');
+        await devRow.locator('webui-input-text input').fill('qa');
+        await expect(devRow.locator('webui-button.env-save-btn')).not.toHaveAttribute('disabled');
+        await devRow.locator('webui-button.env-save-btn').click();
+        await expect(actionNote(openDialog(page), 'Environment renamed')).toHaveCount(1);
+        await expect(page.locator('webui-button.env-save-btn[data-env="qa"]')).toHaveAttribute('disabled');
+        // Deleting one leaves the last, which can't be deleted.
+        await page.locator('webui-button.env-del-btn[data-env="staging"]').click();
+        await expect(page.locator('webui-button.env-del-btn')).toHaveCount(1);
+        await expect(page.locator('webui-button.env-del-btn')).toHaveAttribute('disabled');
     });
     test('deleting the active environment loads the next one\'s values', async ({ page }) => {
         await openApp(page, { variables: ['key|text|'], data: { ...data, key: 'dev value' } });

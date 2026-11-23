@@ -27,6 +27,34 @@
             t._ai.action = args => t.writeWithAi(args);
             t._fileName = '';
             t._isReadOnly = false;
+            /** The script as its file has it, to tell whether there are changes to save. Null while a file loads. */
+            t._savedContent = '';
+        },
+        /**
+         * Turns each button off while it would do nothing: Save and Reset with no changes to the file (or, for a
+         * script with no file, nothing written), Run with no script, and Clear Params with no values to clear.
+         */
+        refreshButtons() {
+            const t = this;
+            if (!t._btnSave || !t._message) return;
+            const text = `${t._message.value ?? ''}`;
+            const isFile = isScriptFile(t._fileName);
+            const changed = isFile ? t._savedContent !== null && text !== t._savedContent : text !== '';
+            const set = (button, enabled, title, why) => {
+                button.toggleAttribute('disabled', !enabled);
+                button.setAttribute('title', enabled ? title : why);
+            };
+            set(t._btnSave, changed, isFile ? 'Save the script' : 'Save the script as a new file',
+                isFile ? 'This script has no changes to save' : 'Write a script to save');
+            set(t._btnReset, changed, isFile ? 'Put the script back as it is saved' : 'Empty the script',
+                isFile ? 'This script has no changes to reset' : 'The script is already empty');
+            set(t._btnRun, !!text.trim(), 'Run the script', 'Write a script to run');
+            const hasValues = Array.from(t._paramsContainer.children).some(input => {
+                const value = webui.getData(`script-${input.getAttribute('data-param')}`) || input.value;
+                return input.tagName.toLowerCase() === 'webui-toggle-icon' ? value === true || value === 'true' : value !== undefined && value !== null && value !== '';
+            });
+            set(t._btnParamsClear, hasValues, 'Clear every parameter\'s value',
+                t._paramsContainer.children.length ? 'No parameter has a value to clear' : 'This script has no parameters');
         },
         /** Writes or changes the script with AI into the editor, unsaved, for the user to check before saving. */
         async writeWithAi({ model, requestId, asked, isCurrent }) {
@@ -57,6 +85,7 @@
             const t = this;
             t._unsaved = true;
             actionNote(t._btnSave, 'Not saved yet. Check the script, then Save it.', 'warning');
+            t.refreshButtons();
         },
         /**
          * Whether to keep an unsaved draft rather than show something else, asking before it is discarded. Showing
@@ -99,6 +128,7 @@
             const t = this;
             if (t._unsaved) clearActionNote(t._btnSave);
             t._unsaved = false;
+            t.refreshButtons();
         },
         attr: ['src', 'label'],
         attrChanged(property, value) {
@@ -126,6 +156,9 @@
             t.discardDraft();
             t.clearNoteFor(file);
             t._fileName = file;
+            // Nothing is saved or reset until the file has loaded.
+            t._savedContent = null;
+            t.refreshButtons();
             await whenProxyReady();
             let content = await webui.proxy.getProjectFile(file);
             if (t._fileName !== file) return true;
@@ -134,8 +167,10 @@
                 t.setScript('', '', { discard: true });
                 return true;
             }
+            t._savedContent = content;
             t._message.value = content;
             t.parseParams(t._message.value);
+            t.refreshButtons();
             return true;
         },
         /** Shows a script. Resolves to false when an unsaved draft was kept instead, and true otherwise. */
@@ -145,12 +180,15 @@
             t.discardDraft();
             t.clearNoteFor(file);
             t._fileName = file;
+            // What is shown is taken as the file's script, as the Terminal Manager shows a saved script's.
+            t._savedContent = content || '';
             // This can be called before the editor component has loaded.
             await customElements.whenDefined('webui-input-message');
             if (t._fileName !== file) return true;
             t._message.setValue(content || '');
             t.parseParams(content || '');
             t.updatePreview();
+            t.refreshButtons();
             return true;
         },
         /**
@@ -172,6 +210,7 @@
             } else {
                 t._message.removeAttribute('disabled');
             }
+            t.refreshButtons();
         },
         get scriptContent() {
             return this._message ? this._message.value : '';
@@ -210,6 +249,8 @@
         },
         async updatePreview() {
             const t = this;
+            // Parameters' values change what Clear Params can do.
+            t.refreshButtons();
             await webui.wait(() => t._previewPanel.setValue);
             if (!t._fileName) {
                 t._previewPanel.value = '';
@@ -263,9 +304,11 @@
                         content.alert('A script with that name already exists.', 'warning');
                         return false;
                     }
-                    const msg = await webui.proxy.saveProjectFile(targetPath, t._message.value, err => content.alert(webui.escapeForHTML(`${err}`), 'danger'));
+                    const saving = t._message.value;
+                    const msg = await webui.proxy.saveProjectFile(targetPath, saving, err => content.alert(webui.escapeForHTML(`${err}`), 'danger'));
                     if (msg) {
                         t._unsaved = false;
+                        t._savedContent = saving;
                         // The dialog closes, and the script stays open here, so it is said by its Save button.
                         actionNote(t._btnSave, msg, 'success');
                         state = webui.proxy.terminalHelpers.getState();
@@ -273,6 +316,7 @@
                         t._fileName = targetPath;
                         webui.setData('app-terminal-refresh', Date.now());
                         t.dispatchEvent(new CustomEvent('script-saved', { detail: targetPath }));
+                        t.refreshButtons();
                         return true;
                     }
                     // The dialog stays open with the error, so the name can be changed.
@@ -298,10 +342,14 @@
                     return;
                 }
                 clearActionNote(t._btnSave);
-                let msg = await webui.proxy.saveProjectFile(t._fileName, t._message.value, err => actionNote(t._btnSave, err, 'danger'));
+                const file = t._fileName;
+                const saving = t._message.value;
+                let msg = await webui.proxy.saveProjectFile(file, saving, err => actionNote(t._btnSave, err, 'danger'));
                 if (msg) {
                     t._unsaved = false;
+                    if (t._fileName === file) t._savedContent = saving;
                     actionNote(t._btnSave, msg, 'success');
+                    t.refreshButtons();
                 }
             });
             t._btnSaveAs.addEventListener('click', () => {
@@ -337,8 +385,11 @@
                 });
                 // What runs is what is saved, so a script that couldn't be saved doesn't run.
                 if (isScriptFile(t._fileName)) {
-                    if (!await webui.proxy.saveProjectFile(t._fileName, scriptContent, err => actionNote(t._btnRun, err, 'danger'))) return;
+                    const file = t._fileName;
+                    if (!await webui.proxy.saveProjectFile(file, scriptContent, err => actionNote(t._btnRun, err, 'danger'))) return;
                     t._unsaved = false;
+                    if (t._fileName === file) t._savedContent = scriptContent;
+                    t.refreshButtons();
                 }
                 webui.proxy.terminalHelpers.ensureListeners();
                 try {
@@ -367,11 +418,13 @@
                 // What is typed is kept as a draft, as an AI draft is, until it is saved or discarded.
                 if (!t._isReadOnly) t._unsaved = true;
                 t.parseParams(t._message.value);
+                t.refreshButtons();
             });
             t._toggleFullPath.addEventListener('change', () => {
                 t.updatePreview();
             });
             t.updatePreview();
+            t.refreshButtons();
         },
         disconnected() { },
         shadowTemplate: `

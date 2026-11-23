@@ -7,6 +7,15 @@
             url: `/${webui.uuid()}`
         };
     }
+    /** A navigation list as it is saved, without the ids the preview gives each item, to tell whether it changed. */
+    function savedForm(list) {
+        return (list || []).map(item => ({
+            name: item.name || '',
+            icon: item.icon || '',
+            url: item.url || null,
+            children: item.url ? null : savedForm(item.children),
+        }));
+    }
     function createNewFolder() {
         return {
             name: '',
@@ -43,12 +52,15 @@
                 if (t._isBinding) return;
                 t._navIcon.value = ev.detail;
                 link.icon = ev.detail;
+                t.refreshActions();
             });
             t._navPreview.addEventListener('nav-preview-click', async ev => {
                 ev.preventDefault();
                 ev.stopPropagation();
                 t._isBinding = true;
                 link = ev.detail;
+                t._selected = link;
+                t.refreshActions();
                 t._navName.value = ev.detail.name || '';
                 t._iconSearch.setAttribute('value', link.icon || '');
                 t._iconSearch.value = link.icon || '';
@@ -69,6 +81,7 @@
             });
             t._navName.addEventListener('input', ev => {
                 link.name = t._navName.value;
+                t.refreshActions();
             });
             t._btnSave.addEventListener('click', _ => {
                 t.saveNavigation();
@@ -90,17 +103,22 @@
                     }
                 }
                 checkChildren(t.nav);
+                // The preview selects its last item once it is built, and with none left nothing is selected.
+                t._selected = null;
                 t._navPreview.buildNav(t.nav, true);
+                t.refreshActions();
             });
             t._btnAddFolder.addEventListener('click', _ => {
                 t.updateNav();
                 t.nav.push(createNewFolder());
                 t._navPreview.buildNav(t.nav, true);
+                t.refreshActions();
             });
             t._btnAddPage.addEventListener('click', _ => {
                 t.updateNav();
                 t.nav.push(createNewPage());
                 t._navPreview.buildNav(t.nav, true);
+                t.refreshActions();
             });
         },
         setNavRoutes() {
@@ -118,8 +136,51 @@
                 customElements.upgrade(t._navPreview);
                 if (typeof t._navPreview.setNavRoutes !== 'function') return;
                 t.nav = webui.clone(webui.projectData.navigation);
+                // Moving items, by dragging or from the keyboard, changes the navigation too.
+                const root = t._navPreview.navRoot?.();
+                if (root && root !== t._reorderRoot) {
+                    t._reorderRoot = root;
+                    root.addEventListener('reorder', () => t.refreshActions());
+                }
+                // The preview selects its first item once it is built.
+                t._selected = null;
+                t._loaded = true;
                 t._navPreview.setNavRoutes(t.nav);
+                t.refreshActions();
             });
+        },
+        /** The navigation as the preview shows it now, in the form it is saved, without changing `nav`. */
+        shownNav() {
+            const t = this;
+            function walk(parent) {
+                const list = [];
+                parent.childNodes.forEach(node => {
+                    const link = node._linkData;
+                    if (!link) return;
+                    list.push({ ...link, children: link.url ? null : walk(node) });
+                });
+                return list;
+            }
+            const root = t._navPreview.navRoot?.();
+            return root ? savedForm(walk(root)) : [];
+        },
+        /** Whether the navigation shown differs from the project's saved navigation. */
+        navChanged() {
+            const t = this;
+            if (!t._loaded || !webui.projectData?.navigation) return false;
+            return JSON.stringify(t.shownNav()) !== JSON.stringify(savedForm(webui.projectData.navigation));
+        },
+        /** Save and Cancel act only on changes, and Delete only on a selected item. */
+        refreshActions() {
+            const t = this;
+            const pending = t.navChanged();
+            t._btnSave.toggleAttribute('disabled', !pending);
+            t._btnSave.setAttribute('title', pending ? 'Save all nav changes' : 'No navigation changes to save');
+            t._btnCancel.toggleAttribute('disabled', !pending);
+            t._btnCancel.setAttribute('title', pending ? 'Reset all nav changes' : 'No navigation changes to reset');
+            const selected = !!t._selected;
+            t._btnDelete.toggleAttribute('disabled', !selected);
+            t._btnDelete.setAttribute('title', selected ? 'Delete current nav item' : 'Select a nav item to delete');
         },
         updateNav() {
             let t = this;
@@ -140,7 +201,9 @@
             let t = this;
             t.updateNav();
             webui.projectData.navigation = webui.clone(t.nav);
+            t.refreshActions();
             await webui.proxy.saveProjectData();
+            t.refreshActions();
         },
         connected() {
             const t = this;
@@ -163,8 +226,8 @@ display:none;
 </style>
 <webui-flex column>
 <webui-grid columns="1fr 1fr">
-<webui-button label="Cancel" theme="warning" title="Reset all nav changes"></webui-button>
-<webui-button label="Save" theme="success" title="Save all nav changes"></webui-button>
+<webui-button label="Cancel" theme="warning" title="No navigation changes to reset" disabled></webui-button>
+<webui-button label="Save" theme="success" title="No navigation changes to save" disabled></webui-button>
 </webui-grid>
 <app-nav-preview></app-nav-preview>
 <webui-grid columns="1fr 1fr">
@@ -176,7 +239,7 @@ display:none;
 <webui-flex>
 <span class="detail"></span>
 <webui-flex grow></webui-flex>
-<webui-button label="Delete" theme="danger" title="Delete current nav item"></webui-button>
+<webui-button label="Delete" theme="danger" title="Select a nav item to delete" disabled></webui-button>
 </webui-flex>
 <webui-grid columns="2fr 3fr">
 <webui-input-text label="Name"></webui-input-text>

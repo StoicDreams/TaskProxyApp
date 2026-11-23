@@ -19,6 +19,8 @@
         return result;
     }
 
+    const MIN_KEY_LENGTH = 20;
+    const KEY_NEEDED = `Type or generate a key of at least ${MIN_KEY_LENGTH} characters to save it`;
     webui.define("app-security-key-setter", {
         linkCss: true,
         preload: 'input-message alert alerts',
@@ -29,6 +31,15 @@
             t._sav = t.template.querySelector('webui-button[theme="primary"]');
             t._gen = t.template.querySelector('webui-button[theme="secondary"]');
             t._input = t.template.querySelector('webui-input-message');
+            t._sav.setAttribute('disabled', '');
+            t._sav.setAttribute('title', KEY_NEEDED);
+        },
+        /** Save is on once the key typed is long enough to be one. */
+        refreshSave() {
+            const t = this;
+            const ready = `${t._input.value ?? ''}`.trim().length >= MIN_KEY_LENGTH;
+            t._sav.toggleAttribute('disabled', !ready);
+            t._sav.setAttribute('title', ready ? 'Save this security key' : KEY_NEEDED);
         },
         async connected() {
             const t = this;
@@ -48,7 +59,7 @@
             t._sav.addEventListener('click', webui.eventSoloProcess(async _ => {
                 await whenProxyReady();
                 let secKey = `${t._input.value}`.trim();
-                if (secKey.length < 20) {
+                if (secKey.length < MIN_KEY_LENGTH) {
                     t._alert.setValue({ text: 'Security key must be at least 20 characters in length.', theme: 'danger' });
                     return;
                 }
@@ -60,7 +71,9 @@
             }, handleError));
             t._gen.addEventListener('click', webui.eventSoloProcess(async _ => {
                 t._input.setValue(generateSecurityKey());
+                t.refreshSave();
             }, handleError));
+            t._input.addEventListener('input', () => t.refreshSave());
             function handleError(ex) {
                 t._alert.setValue({ text: ex, theme: 'danger' });
             }

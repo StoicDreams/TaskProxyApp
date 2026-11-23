@@ -204,7 +204,7 @@
                 t._activeConsole = container.querySelector('#term-console');
                 t._status = container.querySelector('#term-status');
                 t._btnKill = container.querySelector('#btn-kill');
-                const btnKillAll = container.querySelector('#btn-kill-all');
+                const btnKillAll = t._btnKillAll = container.querySelector('#btn-kill-all');
                 const btnClear = container.querySelector('#btn-clear');
                 t._btnRemove = container.querySelector('#btn-remove-script');
                 t._btnRemoveFinished = container.querySelector('#btn-remove-finished');
@@ -436,6 +436,12 @@
             const current = this._none ? null : state.terminals[state.activeId];
             const isRunning = current && current.status === 'Running';
             if (this._btnKill) this._btnKill.disabled = !isRunning;
+            if (this._btnKillAll) {
+                // It stops the open project's scripts, and a queue only waits while one of them runs.
+                const anyRunning = Object.values(webui.proxy.terminalHelpers.getState().terminals).some(term => term.status === 'Running');
+                this._btnKillAll.toggleAttribute('disabled', !anyRunning);
+                this._btnKillAll.setAttribute('title', anyRunning ? 'End every running script now' : 'No scripts are running in this project');
+            }
             if (this._btnRemove) {
                 this._btnRemove.style.display = current?.isPageScript ? '' : 'none';
                 this._btnRemove.disabled = isRunning;

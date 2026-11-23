@@ -37,8 +37,9 @@ test("a project's own settings can be changed, and it can stop using them", asyn
     await expect(settings).toContainText('as one other project does');
     await expect(settings.locator('webui-input-text[name="jira_site"]')).toHaveAttribute('value', 'https://team.atlassian.net');
     await expect(settings.locator('[data-role="sign-in-choice"]')).toHaveCount(0);
+    await settings.locator('webui-input-text[name="jira_site"] input').fill('https://work.atlassian.net');
     await settings.locator('webui-button', { hasText: 'Save settings' }).click();
-    await expect.poll(() => calls(page, 'plugin_save_settings')).toEqual([{ id: 'jira', values: { jira_site: 'https://team.atlassian.net' } }]);
+    await expect.poll(() => calls(page, 'plugin_save_settings')).toEqual([{ id: 'jira', values: { jira_site: 'https://work.atlassian.net' } }]);
     await expect.poll(() => page.evaluate(() => window.__changed)).toBe(1);
     // Said by the Save button, in an alert that stays there as the settings are drawn again.
     await expect(settings.locator('[data-note-at="save"] + webui-alert.plugin-settings-note[show]')).toHaveText('Settings saved.');
@@ -55,6 +56,7 @@ test("a project's own settings can be changed, and it can stop using them", asyn
 
 test('another project opening shows its settings, without what was said about the last one\'s', async ({ page }) => {
     const settings = await openSettings(page, { hasProject: true, signIn: 'sign-in-1', settings: fields(true), signIns: [work] });
+    await settings.locator('webui-input-text[name="jira_api_token"] input').fill('token-2');
     await settings.locator('webui-button', { hasText: 'Save settings' }).click();
     await expect(settings.locator('webui-alert.plugin-settings-note[show]')).toHaveText('Settings saved.');
     const asked = (await calls(page, 'plugin_settings')).length;
@@ -74,6 +76,7 @@ test('what saving said is not shown under another project\'s settings when it an
             return save(args);
         };
     });
+    await settings.locator('webui-input-text[name="jira_api_token"] input').fill('token-2');
     await settings.locator('webui-button', { hasText: 'Save settings' }).click();
     await expect.poll(() => page.evaluate(() => !!window.__releaseSave)).toBe(true);
     await switchProject(page, { name: 'Other', path: '/other' });
@@ -104,6 +107,37 @@ test("a project's new settings are saved for it alone", async ({ page }) => {
     await settings.locator('webui-input-text[name="jira_api_token"] input').fill('token-1');
     await settings.locator('webui-button', { hasText: 'Save for this project' }).click();
     await expect.poll(() => calls(page, 'plugin_save_settings')).toEqual([{ id: 'jira', values: { jira_site: 'https://mine.atlassian.net', jira_api_token: 'token-1' } }]);
+});
+
+test('Save is off until a setting changes, and off again once it is saved', async ({ page }) => {
+    const settings = await openSettings(page, { hasProject: true, signIn: 'sign-in-1', settings: fields(true), signIns: [work] });
+    const save = settings.locator('webui-button', { hasText: 'Save settings' });
+    const site = settings.locator('webui-input-text[name="jira_site"] input');
+    await expect(site).toHaveValue('https://team.atlassian.net');
+    await expect(save).toHaveAttribute('disabled');
+    await expect(save).toHaveAttribute('title', 'Change a setting to save it');
+    await site.fill('https://work.atlassian.net');
+    await expect(save).not.toHaveAttribute('disabled');
+    // Typed back as it is saved, there is nothing to save.
+    await site.fill('https://team.atlassian.net');
+    await expect(save).toHaveAttribute('disabled');
+    // A secret is saved by typing a new one.
+    const token = settings.locator('webui-input-text[name="jira_api_token"] input');
+    await token.fill('token-2');
+    await expect(save).not.toHaveAttribute('disabled');
+    await save.click();
+    await expect.poll(() => calls(page, 'plugin_save_settings')).toEqual([{ id: 'jira', values: { jira_site: 'https://team.atlassian.net', jira_api_token: 'token-2' } }]);
+    await expect(settings.locator('webui-alert.plugin-settings-note[show]')).toHaveText('Settings saved.');
+    // Drawn again from what is saved, with nothing left to save.
+    await expect(settings.locator('webui-button', { hasText: 'Save settings' })).toHaveAttribute('disabled');
+});
+
+test('new settings for a project can be saved once one is typed', async ({ page }) => {
+    const settings = await openSettings(page, { hasProject: true, signIn: null, settings: fields(), signIns: [] });
+    const save = settings.locator('webui-button', { hasText: 'Save for this project' });
+    await expect(save).toHaveAttribute('disabled');
+    await settings.locator('webui-input-text[name="jira_site"] input').fill('https://mine.atlassian.net');
+    await expect(save).not.toHaveAttribute('disabled');
 });
 
 test('with no project open, it asks for one', async ({ page }) => {

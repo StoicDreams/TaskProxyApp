@@ -8,6 +8,7 @@ pub(crate) mod favorites;
 pub(crate) mod file_server;
 pub(crate) mod git_controller;
 pub(crate) mod myfi;
+pub(crate) mod page_export;
 pub(crate) mod page_import;
 pub(crate) mod page_scripts;
 pub(crate) mod performance;

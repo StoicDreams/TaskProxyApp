@@ -7,7 +7,12 @@
     webui.define("app-project-remove", {
         connected() {
             const t = this;
-            if (t._button) return;
+            // Removing is for the current project, so the button is off while there is none.
+            t.dataset.subscribe = 'app-current-project:projectChanged';
+            if (t._button) {
+                t.projectChanged(webui.getData('app-current-project'));
+                return;
+            }
             const intro = webui.create('p');
             intro.textContent = 'Remove the current project from Task Proxy. Its files and folders on this computer stay as they are, and you can add it again from the Projects tab.';
             t._button = webui.create('webui-button', { id: 'btn-remove', theme: 'danger', 'start-icon': 'trash', label: 'Remove Project' });
@@ -15,6 +20,14 @@
             const actions = webui.create('div', { class: 'project-actions' });
             actions.append(t._button);
             t.append(intro, actions);
+            t.projectChanged(webui.getData('app-current-project'));
+        },
+        projectChanged(project) {
+            const button = this._button;
+            if (!button) return;
+            const open = !!project?.value;
+            button.toggleAttribute('disabled', !open);
+            button.setAttribute('title', open ? 'Remove the current project from Task Proxy' : 'Open a project to remove it');
         },
         removeProject() {
             const currentProject = webui.getData('app-current-project');

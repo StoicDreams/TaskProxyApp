@@ -391,7 +391,10 @@
         getCommitMessages()[repo] = draft;
         webui.proxy.syncProjectData();
         liveManagers.forEach(view => {
-            if (view._messagePath === path && view._messageRepo === repo && view._message) view._message.value = draft;
+            if (view._messagePath === path && view._messageRepo === repo && view._message) {
+                view._message.value = draft;
+                view.refreshActions();
+            }
         });
         return true;
     }
@@ -680,6 +683,7 @@
             t._inputPat = t.template.querySelector('#input-git-pat');
             t._dropdownPatScope = t.template.querySelector('#dropdown-pat-scope');
             t._btnSavePat = t.template.querySelector('#btn-save-pat');
+            t._btnDeletePat = t.template.querySelector('#btn-delete-pat');
             t._hasPendingChanges = false;
             t._branchList = [];
             t._currentBranch = '';
@@ -745,6 +749,29 @@
             const index = tabs.tabButtons().indexOf(shown);
             tabs.setTab(index >= 0 ? index : 0);
         },
+        /** Keeps the tab chosen with the open project, by its id, since the Review tab moves the others. */
+        rememberTab(id) {
+            const t = this;
+            t._tabChosen = true;
+            const data = webui.projectData?.data;
+            if (!data || data._gitTab === id) return;
+            data._gitTab = id;
+            webui.proxy.syncProjectData();
+        },
+        /** Shows the tab last chosen in the open project, or the first when that tab is not there, such as Review turned off. */
+        async restoreTab() {
+            const t = this;
+            const path = webui.projectData?.path;
+            await customElements.whenDefined('webui-tabs');
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            // A tab chosen meanwhile, or another project opened, wins over the one saved.
+            if (t._tabChosen || !t.isConnected || webui.projectData?.path !== path) return;
+            t.syncReviewTab();
+            const id = webui.projectData?.data?._gitTab;
+            if (!id) return;
+            const index = t._tabs.tabButtons().findIndex(button => button.id === id);
+            t._tabs.setTab(index >= 0 ? index : 0);
+        },
         /** Shows the message saved for the selected repo, and makes it the one that edits are saved to. */
         async restoreMessage() {
             const t = this;
@@ -757,6 +784,7 @@
             if (webui.proxy.projects.isLoaded) saveUnsavedDrafts();
             if (draftsNotUsed.has(`${t._messagePath}|${repo}`)) t.setAlert(CHANGED_WHILE_WRITING, 'warning');
             t._message.value = (repo !== undefined && getCommitMessages()[repo]) || '';
+            t.refreshActions();
             // Shows whether AI is writing this repo's message, which may have been asked for before it was drawn.
             t._aiCommit?.refresh?.();
         },
@@ -779,6 +807,7 @@
             const t = this;
             t._message.value = '';
             t.rememberMessage('');
+            t.refreshActions();
         },
         /** Lists the project's scripts, and shows the one the selected repo runs before a commit. */
         async loadBeforeCommit() {
@@ -977,6 +1006,7 @@
             } else {
                 t._commitState.removeAttribute('title');
             }
+            t.refreshActions();
         },
         /** Takes a queued commit out of the queue, or stops the script a running one waits on. */
         async cancelCommit() {
@@ -1116,6 +1146,7 @@
             } else {
                 t._inputPat.placeholder = undefined;
             }
+            t.refreshActions();
         },
         /** Keep remote status current without a network call on every refresh. */
         async autoFetch(repo) {
@@ -1131,6 +1162,7 @@
         /** Totals the files set to Include, so the counts match what Commit sends. */
         updateCommitStats() {
             const t = this;
+            t.refreshActions();
             const files = t._files || [];
             if (files.length === 0) {
                 t._valCommitFiles.textContent = 'No changes';
@@ -1160,6 +1192,44 @@
             });
             const binaryNote = binary ? ` <span class="binary-note">(${binary} binary ${binary === 1 ? 'file' : 'files'} not counted)</span>` : '';
             t._valCommitLines.innerHTML = `${badge('success', `+${additions.toLocaleString()}`)} ${badge('danger', `-${deletions.toLocaleString()}`)}${binaryNote}`;
+        },
+        /**
+         * Turns off the actions that can't act yet, each with a title saying what it needs: Commit until there is a
+         * message and an included file, Toggle All until the filter shows a file it can change, Revert All and Stash
+         * until there are changes, Save Token until a token is typed, and Delete Token until one is saved in the chosen scope.
+         */
+        refreshActions() {
+            const t = this;
+            if (!t._btnCommit) return;
+            const setState = (button, why, title) => {
+                if (!button) return;
+                button.toggleAttribute('disabled', !!why);
+                if (why) button.setAttribute('title', why);
+                else if (title) button.setAttribute('title', title);
+                else button.removeAttribute('title');
+            };
+            const repo = t._repos?.value;
+            const loaded = repo !== undefined && t._filesRepo === repo;
+            const files = loaded ? (t._files || []) : [];
+            let commitWhy = '';
+            if (repo === undefined) commitWhy = 'No repo is set';
+            else if (!loaded) commitWhy = 'The changes are still loading';
+            else if (!`${t._message?.value ?? ''}`.trim()) commitWhy = 'Write a commit message to commit';
+            else if (!files.some(file => file.isIncluded)) commitWhy = 'Include at least one file to commit';
+            setState(t._btnCommit, commitWhy, 'Commit the included files');
+            const canToggle = loaded && (t._shown || []).some(index => files[index] && files[index].state !== includeStates.ignore);
+            setState(t._btnToggleAll, canToggle ? '' : 'No files shown to include or exclude', 'Include or exclude every file shown');
+            const pending = loaded && t._hasPendingChanges;
+            setState(t._btnRevertAll, pending ? '' : 'No pending changes to revert', 'Discard every uncommitted change in this repo');
+            setState(t._btnStash, pending ? '' : 'No pending changes to stash', 'Stash every uncommitted change in this repo');
+            const token = `${t._inputPat?.value ?? ''}`.trim();
+            const scope = t._dropdownPatScope?.value;
+            let saved = '';
+            // Before a project has loaded there is no project data to read.
+            try { saved = scope === 'Global' ? webui.getGlobalData('git_pat') : webui.getProjectData('git_pat'); } catch { saved = ''; }
+            const scopeName = scope === 'Global' ? 'global' : 'project';
+            setState(t._btnSavePat, token ? '' : 'Type a token to save', `Save the token to the ${scopeName} scope`);
+            setState(t._btnDeletePat, saved ? '' : `No ${scopeName} token is saved to delete`, `Delete the ${scopeName} token`);
         },
         /** Each repo's name in the Repo list, with its CI result, changed files, and commits behind and ahead. */
         renderRepoOptions() {
@@ -1586,6 +1656,7 @@
                 if (!filter || details.fileName.toLowerCase().includes(filter)) t._shown.push(index);
             });
             t.drawFiles(true);
+            t.refreshActions();
         },
         /** The files the filter shows, drawn or not. */
         visibleIndexes() {
@@ -1660,15 +1731,27 @@
                 await whenProxyReady();
                 webui.proxy.projects.runWhenLoaded(() => {
                     t.loadRepos();
+                    t._restoringTab = t.restoreTab();
                 });
             }, 50);
-            t._message.addEventListener('input', _ => t.rememberMessage(t._message.value));
+            t._message.addEventListener('input', _ => {
+                t.rememberMessage(t._message.value);
+                t.refreshActions();
+            });
+            t._inputPat.addEventListener('input', () => t.refreshActions());
+            t._dropdownPatScope.addEventListener('change', () => t.refreshActions());
             t._aiCommit.action = args => t.writeMessage(args);
             // A message is for the open project's selected repo, and is written whatever is shown meanwhile.
             t._aiCommit.job = () => t._repos.value === undefined ? '' : `${webui.projectData?.path ?? ''}|${t._repos.value}`;
             t._review.source = { repo: () => t._repos.value, files: () => t.includedFiles() };
             t.dataset.subscribe = 'app-ai-integrations:syncReviewTab';
             customElements.whenDefined('webui-tabs').then(() => requestAnimationFrame(() => t.syncReviewTab()));
+            // The tab chosen is kept with the project, so coming back to it shows the same tab (restoreTab).
+            t._tabChosen = false;
+            t._tabs.addEventListener('click', ev => {
+                const button = ev.composedPath().find(node => node.parentNode === t._tabs && node.getAttribute?.('slot') === 'tabs');
+                if (button?.id) t.rememberTab(button.id);
+            });
             t._beforeScript.addEventListener('change', _ => t.chooseBeforeCommit(t._beforeScript.value || ''));
             t._beforeParams.addEventListener('change', _ => t.rememberBeforeCommitValues());
             t._beforeParams.addEventListener('input', _ => t.rememberBeforeCommitValues());
@@ -1906,32 +1989,36 @@
                     { value: 'Global', display: 'Global Level' }
                 ]);
                 t._dropdownPatScope.value = 'Project';
+                t.refreshActions();
+            });
+            t._btnDeletePat.addEventListener('click', () => {
+                const scope = t._dropdownPatScope.value;
+                if (scope === 'Project') {
+                    if (!webui.getProjectData('git_pat')) return;
+                    webui.dialog.confirm(`Confirm you want to delete this project's PAT token.`, async () => {
+                        webui.deleteProjectData('git_pat');
+                        await webui.proxy.saveProjectData();
+                        t.loadExistingPat();
+                        t.refreshActions();
+                        t.setAlert('Project PAT successfully deleted.', 'success');
+                        return true;
+                    });
+                } else {
+                    if (!webui.getGlobalData('git_pat')) return;
+                    webui.dialog.confirm(`Confirm you want to delete your global PAT token.`, async () => {
+                        webui.deleteGlobalData('git_pat');
+                        await webui.proxy.saveAppData();
+                        t.loadExistingPat();
+                        t.refreshActions();
+                        t.setAlert('Global PAT successfully deleted.', 'success');
+                        return true;
+                    });
+                }
             });
             t._btnSavePat.addEventListener('click', async () => {
                 let token = t._inputPat.value.trim();
                 let scope = t._dropdownPatScope.value;
-                if (!token) {
-                    if (scope === 'Project') {
-                        if (!webui.getProjectData('git_pat')) return;
-                        webui.dialog.confirm(`Confirm you want to delete this project's PAT token.`, async () => {
-                            webui.deleteProjectData('git_pat');
-                            await webui.proxy.saveProjectData();
-                            t.loadExistingPat();
-                            t.setAlert('Project PAT successfully deleted.', 'success');
-                            return true;
-                        });
-                    } else {
-                        if (!webui.getGlobalData('git_pat')) return;
-                        webui.dialog.confirm(`Confirm you want to delete your global PAT token.`, async () => {
-                            webui.deleteGlobalData('git_pat');
-                            await webui.proxy.saveAppData();
-                            t.loadExistingPat();
-                            t.setAlert('Global PAT successfully deleted.', 'success');
-                            return true;
-                        });
-                    }
-                    return;
-                }
+                if (!token) return;
                 if (scope === 'Project') {
                     webui.setProjectData('git_pat', token);
                     await webui.proxy.saveProjectData();
@@ -1943,6 +2030,7 @@
                 }
                 t._inputPat.value = ''
                 t._inputPat.placeholder = token.length > 5 ? `${token.substring(0,3)}***${token.substring(token.length-3)}` : token;
+                t.refreshActions();
                 t.setAlert(`PAT successfully saved to ${scope} scope.`, 'success');
             });
             t._btnCommit.addEventListener('click', async _ => {
@@ -2389,7 +2477,7 @@ button.revert {
 <webui-flex id="plugin-branch-cards" column gap="0.5rem"></webui-flex>
 <webui-alert></webui-alert>
 <webui-tabs theme="secondary" index="0" transition-timing="200">
-    <webui-button slot="tabs">Commit</webui-button>
+    <webui-button slot="tabs" id="tab-commit">Commit</webui-button>
     <webui-content slot="content" nodetach>
         <div class="commit-panes">
             <div class="commit-side">
@@ -2446,10 +2534,11 @@ button.revert {
         <webui-flex column gap="var(--padding)">
             <h2>Authentication Settings</h2>
             <p class="pa-1">Set your Personal Access Token (PAT) for remote Git operations.</p>
-            <webui-grid columns="1fr max-content max-content" gap="var(--padding)" align="end">
+            <webui-grid columns="1fr max-content max-content max-content" gap="var(--padding)" align="end">
                 <webui-input-text id="input-git-pat" label="Personal Access Token (PAT)"></webui-input-text>
                 <webui-select id="dropdown-pat-scope" label="Scope"></webui-select>
                 <webui-button id="btn-save-pat" theme="success" label="Save Token"></webui-button>
+                <webui-button id="btn-delete-pat" theme="danger" start-icon="trash" label="Delete Token"></webui-button>
             </webui-grid>
         </webui-flex>
     </webui-content>

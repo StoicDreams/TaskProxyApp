@@ -19,6 +19,19 @@
         segmentList ??= webui.create('webui-reorder', { class: 'page-segments', items: ':scope > app-markdown-segment', handle: '.drag-handle' });
         return segmentList;
     }
+    /** The page's markdown as its file has it, to tell unsaved changes by. Null until the page is drawn. */
+    let savedPage = null;
+    /**
+     * The file's markdown when the page's unsaved changes were first made, kept with them, to tell when the file has
+     * changed underneath them since, as through git.
+     */
+    let draftBase = null;
+    /** The project the page was opened in, which keeps the page's unsaved changes (`_pageDrafts` in its data). */
+    let pageProject = null;
+    /** Whether the warning that the page has unsaved changes is shown. */
+    let pendingShown = false;
+    /** Each bar's Save and Revert buttons, which show whether there are changes to save. */
+    const pageBars = [];
     let pageScripts = [];
     let pageDataComponent = '';
     let lastScannedMarkdown = null;
@@ -75,6 +88,8 @@
                 webui.setData('page-title', form.pageTitle || '');
                 webui.setData('page-subtitle', form.pageSubtitle || '');
                 pageDataComponent = dataComponent;
+                // The page was saved with every change in it.
+                if (file) markSaved();
                 return true;
             }
         });
@@ -85,6 +100,10 @@
         const file = `.taskproxy/pages/${myId}.md`;
         myFile = file;
         await whenProxyReady();
+        // Unsaved changes are kept with the project, so it must be loaded to find them.
+        await new Promise(resolve => webui.proxy.projects.runWhenLoaded(resolve));
+        if (load !== currentLoad || myFile !== file) return;
+        pageProject = webui.projectData;
         let error = null;
         let md = await webui.proxy.getProjectFile(file, err => { error = `${err}`; });
         // Leaving this page while it loads must not put its content on the next page.
@@ -96,7 +115,7 @@
             comp.appendChild(webui.create('webui-alert', { show: true, variant: 'danger', html: webui.escapeForHTML(`This page could not be loaded. ${error}`) }));
             return;
         }
-        setMarkdown(md || '');
+        setMarkdown(md || '', pageDrafts()?.[myId]);
     }
     /** The page's segments as markdown, as saving writes them, including any being edited. */
     function currentSegmentsMarkdown() {
@@ -107,6 +126,181 @@
             if (markdown) md.push(markdown);
         });
         return md;
+    }
+    /** The page's markdown as saving writes it. */
+    function pageMarkdown() {
+        return [pageDataComponent, ...currentSegmentsMarkdown()].filter(Boolean).join('\n\n').trim();
+    }
+    /** The page's segments, in order. */
+    function pageSegments() {
+        return segmentList ? [...segmentList.children].filter(node => node.localName === 'app-markdown-segment') : [];
+    }
+    /** Whether the page differs from its file: segments changed, added, removed, or moved. */
+    function hasPendingChanges() {
+        return !!myFile && savedPage !== null && pageMarkdown() !== savedPage;
+    }
+    /** The open project's unsaved page changes, by page id, when the page's project is still the one open. */
+    function pageDrafts(create = false) {
+        const data = pageProject?.data;
+        if (!data || pageProject !== webui.projectData) return null;
+        if (create) data._pageDrafts ??= {};
+        return data._pageDrafts || null;
+    }
+    /**
+     * Keeps the page's unsaved changes with its project (in its .enc file), so they are still here after leaving the
+     * page or restarting the app: each segment's markdown and the markdown its Revert puts back. Forgets them once
+     * there are none.
+     */
+    function keepDraft() {
+        if (!myId || savedPage === null) return;
+        const pending = hasPendingChanges();
+        const drafts = pageDrafts(pending);
+        if (!drafts) return;
+        if (pending) {
+            draftBase ??= savedPage;
+            drafts[myId] = { base: draftBase, segments: pageSegments().map(segment => ({ md: segment.getMarkdown(), saved: segment.getSavedMarkdown() })) };
+        } else if (myId in drafts) {
+            draftBase = null;
+            delete drafts[myId];
+        } else {
+            return;
+        }
+        webui.proxy.syncProjectData();
+    }
+    /** Shows whether the page has changes to save: Save enabled, Revert shown, and a warning by Save. */
+    function refreshPending() {
+        if (savedPage === null) return;
+        const pending = hasPendingChanges();
+        pageBars.forEach(({ save, revert }) => {
+            save.toggleAttribute('disabled', !pending);
+            save.setAttribute('title', pending ? 'Save Page' : 'This page has no changes to save');
+            revert.hidden = !pending;
+        });
+        if (pending !== pendingShown) {
+            pendingShown = pending;
+            const save = pageBars[0]?.save;
+            if (save && pending) actionNote(save, 'This page has changes that aren\'t saved. They are kept, even when you leave the page, until you save or revert them.', 'warning');
+            else if (save) clearActionNote(save);
+        }
+        keepDraft();
+    }
+    /** The page as it is now is its file: nothing left to save or revert. */
+    function markSaved() {
+        savedPage = pageMarkdown();
+        draftBase = null;
+        pageSegments().forEach(segment => { segment.setSavedMarkdown(segment.getMarkdown()); });
+        refreshPending();
+    }
+    /** Saves the page. Why it couldn't be saved is said by `button`, and resolves to whether it was saved. */
+    async function savePage(button) {
+        if (!myFile) return false;
+        clearActionNote(button);
+        const md = pageMarkdown();
+        const result = await webui.proxy.saveProjectFile(myFile, md, err => actionNote(button, err, 'danger'));
+        if (!result) return false;
+        markSaved();
+        actionNote(button, result, 'success');
+        return true;
+    }
+    /** Puts the page back as its file has it, after asking, since the changes can't be brought back. */
+    function revertPage(button) {
+        if (!hasPendingChanges()) return;
+        webui.dialog({
+            title: 'Revert This Page?',
+            content: '<p>Every change to this page that isn\'t saved is discarded, and the page shows as it is saved.</p>',
+            confirm: 'Revert',
+            cancel: 'Keep Changes',
+            onconfirm: () => {
+                if (savedPage === null) return true;
+                setMarkdown(savedPage);
+                actionNote(button, 'Reverted this page to how it is saved.', 'success');
+                return true;
+            },
+            // Cancel, Escape, and the close button reject the dialog's promise.
+        }).catch(() => undefined);
+    }
+    /**
+     * Asks what to do with the page's unsaved changes before going to `url`: stay, save them and go, or go and keep
+     * them for later. Going without saving loses nothing, since they are kept with the project.
+     */
+    function askToLeave(url) {
+        let choice = null;
+        const go = () => webui.navigateTo(url);
+        const dialog = webui.dialog({
+            title: 'Unsaved Changes',
+            content: `<webui-flex column gap="var(--padding)" class="leave-page-dialog">
+                <p>This page has changes that aren't saved. Save them before leaving?</p>
+                <p>Leaving without saving keeps them here, unsaved, for when you come back.</p>
+                <webui-flex justify="right"><webui-button theme="secondary" class="leave-unsaved" start-icon="arrow-right">Leave Without Saving</webui-button></webui-flex>
+            </webui-flex>`,
+            confirm: 'Save and Leave',
+            cancel: 'Stay on Page',
+            onconfirm: async (data, content) => {
+                const file = myFile;
+                const saved = await webui.proxy.saveProjectFile(file, pageMarkdown(), err => content.alert(webui.escapeForHTML(`${err}`), 'danger'));
+                if (!saved) return false;
+                if (myFile === file) markSaved();
+                choice = 'save';
+                go();
+                return true;
+            },
+        });
+        dialog.catch(() => undefined);
+        const leaveButton = () => document.querySelector('.leave-page-dialog .leave-unsaved');
+        webui.wait(() => !!leaveButton()).then(() => {
+            leaveButton()?.addEventListener('click', () => {
+                if (choice) return;
+                choice = 'leave';
+                dialog.close?.();
+                go();
+            });
+        });
+    }
+    /** Stops a link to another page while this one has unsaved changes, to ask first (askToLeave). */
+    function onLeaveClick(ev) {
+        if (ev.defaultPrevented || !hasPendingChanges() || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+        const link = ev.composedPath().find(node => node.getAttribute?.('href'));
+        if (!link) return;
+        const href = link.getAttribute('href');
+        if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//') || href.startsWith('#')) return;
+        const target = link.getAttribute('target');
+        if ((target && target !== '_self') || link.hasAttribute('download')) return;
+        const url = new URL(href, document.baseURI);
+        if (url.pathname === location.pathname) return;
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        askToLeave(`${url.pathname}${url.search}${url.hash}`);
+    }
+    /**
+     * Rewrites the whole page with AI from what the user asked, into its segments, unsaved, for the user to check and
+     * then save or revert. Each segment's Revert puts back the segment the file has at its place, or the same one
+     * where the draft kept it unchanged.
+     */
+    async function writePageWithAi({ model, requestId, asked, isCurrent }) {
+        if (!myFile) throw 'This page can\'t be written until it has loaded.';
+        const before = pageMarkdown();
+        const title = webui.getData('page-title') || '';
+        const page = currentSegmentsMarkdown().join('\n\n');
+        const request = `${asked}\n\nReply with the whole page's markdown, as it should be once changed. Keep each part of the page that shouldn't change as it is, including its <webui-page-segment> tags and components. Leave out the <webui-data> tag that holds the page's title.`;
+        const context = `The page${title ? `, "${title}"` : ''}, as it is now:\n\n${page || '(The page is empty.)'}`;
+        const draft = await webui.proxy.ai.write({ integration: 'pages', model, requestId, request, context });
+        if (!isCurrent()) return;
+        if (!comp?.isConnected || pageMarkdown() !== before) throw 'This page changed while AI was writing, so the draft wasn\'t used, to keep your changes. Write with AI again to start from it as it is now.';
+        const text = `${typeof draft === 'string' ? draft : ''}`.replace(/^\s*<webui-data\b[\s\S]*?<\/webui-data>\s*/i, '').trim();
+        if (!text) throw 'The AI answer was empty, so the page was left as it was. Try again, or with another model.';
+        const saved = splitMarkdownSegments(savedPage === null ? '' : savedPage.replace(/^<webui-data[\s\S]*?<\/webui-data>/i, '').trim()).map(item => item.md);
+        const kept = new Set();
+        const next = splitMarkdownSegments(text).map((item, index) => {
+            // A segment the draft left as the file has it reverts to itself; any other, to the file's at its place.
+            const same = saved.findIndex((md, at) => !kept.has(at) && md.trim() === item.md.trim());
+            const at = same >= 0 ? same : (kept.has(index) ? -1 : index);
+            if (at >= 0 && at < saved.length) kept.add(at);
+            return webui.create('app-markdown-segment', { 'data-markdown': item.md, 'data-saved': at >= 0 && at < saved.length ? saved[at] : '' });
+        });
+        segments = next;
+        segmentsElement().replaceChildren(...segments);
+        refreshScripts();
+        refreshPending();
     }
     const PREPEND = 'Before this page\'s content';
     const APPEND = 'After this page\'s content';
@@ -171,20 +365,14 @@
         actionNote(button, 'Imported the file into this page.', 'success');
         return true;
     }
-    /** Copies the page's markdown file as it is saved, not the segments being edited. */
-    async function copyPageFile(button) {
+    /** The page's file as it is saved, not the segments being edited, for exporting it as it is. */
+    async function readPageFile(failed) {
         const file = myFile;
-        if (!file) return;
-        clearActionNote(button);
+        if (!file) return undefined;
         let error = null;
         const md = await webui.proxy.getProjectFile(file, err => { error = `${err}`; });
-        if (error && !error.includes('File not found')) {
-            actionNote(button, `This page's file could not be read. ${error}`, 'danger');
-            return;
-        }
-        if (await webui.proxy.copyText(md || '', err => actionNote(button, `This page's markdown could not be copied: ${err}`, 'danger'))) {
-            actionNote(button, "Copied this page's markdown.", 'success');
-        }
+        if (error && !error.includes('File not found')) return failed(`This page's file could not be read. ${error}`);
+        return md || '';
     }
     function setupBar(isEnd) {
         let wrap = webui.create('webui-flex', { column: true, gap: 0 });
@@ -196,25 +384,16 @@
             bar.after(webui.create('webui-line'));
         }
         let btnSave = webui.create('webui-button', {
-            html: 'Save', title: "Save Page", 'start-icon': 'save', theme: 'primary'
+            html: 'Save', title: 'This page has no changes to save', 'start-icon': 'save', theme: 'primary', class: 'page-save', disabled: true
         });
-        btnSave.addEventListener('click', async _ => {
-            if (!myFile) return;
-            let md = [];
-            if (pageDataComponent) {
-                md.push(pageDataComponent);
-            }
-            comp.querySelectorAll('app-markdown-segment').forEach(segment => {
-                if (segment.parentNode !== segmentList) return;
-                let markdown = segment.getMarkdown();
-                if (markdown) {
-                    md.push(markdown);
-                }
-            });
-            clearActionNote(btnSave);
-            let result = await webui.proxy.saveProjectFile(myFile, md.join('\n\n').trim(), err => actionNote(btnSave, err, 'danger'));
-            if (result) actionNote(btnSave, result, 'success');
+        btnSave.addEventListener('click', () => savePage(btnSave));
+        // Shown only while the page has unsaved changes (refreshPending).
+        let btnRevert = webui.create('webui-button', {
+            html: 'Revert', title: 'Discard every unsaved change to this page', 'start-icon': 'undo', theme: 'warning', class: 'page-revert'
         });
+        btnRevert.hidden = true;
+        btnRevert.addEventListener('click', () => revertPage(btnRevert));
+        pageBars.push({ save: btnSave, revert: btnRevert });
         let btnAdd = webui.create('webui-button', {
             html: 'Add', title: 'Add Segment', 'start-icon': 'star', theme: 'secondary'
         });
@@ -234,13 +413,20 @@
             });
             btnImport.addEventListener('click', () => openImport(btnImport));
             bar.appendChild(btnImport);
-            let btnCopy = webui.create('webui-button', {
-                html: 'Copy', title: "Copy this page's markdown file", 'start-icon': 'copy', theme: 'secondary', class: 'page-copy'
+            const exporter = webui.create('app-page-export', { class: 'page-export' });
+            exporter.source = () => ({
+                title: webui.getData('page-title') || '',
+                subtitle: webui.getData('page-subtitle') || '',
+                markdown: pageMarkdown(),
+                file: readPageFile,
             });
-            btnCopy.addEventListener('click', () => copyPageFile(btnCopy));
-            bar.appendChild(btnCopy);
+            bar.appendChild(exporter);
+            const ai = webui.create('app-ai-action', { class: 'page-ai', integration: 'pages', label: 'Write with AI', ask: 'What should this page say? Describe the page, or the changes to make to all of it.' });
+            ai.action = args => writePageWithAi(args);
+            bar.appendChild(ai);
         }
         bar.appendChild(webui.create('webui-flex', { 'grow': true }));
+        bar.appendChild(btnRevert);
         bar.appendChild(btnSave);
         return wrap;
     }
@@ -260,8 +446,16 @@
             });
         }
     }
-    function setMarkdown(md) {
+    /**
+     * Draws the page from its file's markdown, `md`, and with `draft`, the unsaved changes kept for it (keepDraft),
+     * shows those changes in its segments.
+     */
+    function setMarkdown(md, draft = null) {
         if (!comp) return;
+        savedPage = null;
+        pendingShown = false;
+        draftBase = typeof draft?.base === 'string' ? draft.base : null;
+        pageBars.forEach(({ save }) => clearActionNote(save));
         rememberBoundValues(md);
         let mdTrimmed = md.trim();
         let webuiDataRegex = /^<webui-data[\s\S]*?<\/webui-data>/i;
@@ -326,7 +520,17 @@
         segmentsElement().replaceChildren(...segments);
         comp.appendChild(segmentsElement());
         comp.appendChild(bottomBar);
+        savedPage = pageMarkdown();
+        if (draft && Array.isArray(draft.segments)) {
+            segments = draft.segments.map(item => webui.create('app-markdown-segment', { 'data-markdown': `${item?.md ?? ''}`, 'data-saved': `${item?.saved ?? ''}` }));
+            segmentsElement().replaceChildren(...segments);
+        }
         refreshScripts();
+        refreshPending();
+        // Changes kept from before the file changed, as through git: saving them replaces what changed.
+        if (draft && hasPendingChanges() && draftBase !== null && draftBase !== savedPage && pageBars[0]) {
+            actionNote(pageBars[0].save, 'This page has unsaved changes from before its file changed. Saving them replaces the file as it is now, and Revert shows the file as it is now.', 'warning');
+        }
     }
     async function refreshScripts() {
         let mdContent = [];
@@ -779,7 +983,7 @@
         webui.setData('page-subtitle', webui.escapeForHTML(page?.name || ''));
     }
     webui.define("app-page-handler", {
-        preload: 'app:markdown-segment app:files dropdown select switch input-text input-message code page-help reorder',
+        preload: 'app:markdown-segment app:files app:page-export app:ai-action dropdown select switch input-text input-message code page-help reorder',
         constructor() {
             const t = this;
             comp = t;
@@ -807,8 +1011,14 @@
             t.addEventListener('segment-delete', ev => {
                 // The segment removes itself after this event, so leave it out of the page's list now.
                 segments = segments.filter(segment => segment !== ev.target);
-                setTimeout(() => refreshScripts(), 0);
+                setTimeout(() => {
+                    refreshScripts();
+                    refreshPending();
+                }, 0);
             });
+            t.addEventListener('segment-change', () => refreshPending());
+            t.addEventListener('reorder', () => refreshPending());
+            document.addEventListener('click', onLeaveClick, true);
             t.addEventListener('click', (ev) => {
                 let segment = ev.target.closest('app-markdown-segment');
                 if (segment) {
@@ -849,6 +1059,7 @@
             }
             if (t._pluginPage) return;
             webui.unwatchAppDataChanges(onAppDataChanged);
+            document.removeEventListener('click', onLeaveClick, true);
             if (sharedDrawerObserver) {
                 sharedDrawerObserver.disconnect();
                 sharedDrawerObserver = null;
@@ -872,6 +1083,10 @@
             lastScannedMarkdown = null;
             pageDataComponent = '';
             pageHelp = null;
+            savedPage = null;
+            pageProject = null;
+            pendingShown = false;
+            draftBase = null;
         }
     });
 }

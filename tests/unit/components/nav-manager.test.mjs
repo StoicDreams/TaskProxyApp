@@ -26,8 +26,44 @@ test('shows the navigation', async ({ page }) => {
 });
 test('saving keeps the structure', async ({ page }) => {
     await open(page);
+    await page.locator('app-nav-preview webui-nav-link[name="Inner"]').click();
+    await expect(nameInput(page)).toHaveValue('Inner');
+    await nameInput(page).fill('Inner Page');
     await button(page, 'Save').click();
-    expect(names(await savedNav(page))).toEqual([['Folder', ['Inner']], 'Top']);
+    expect(names(await savedNav(page))).toEqual([['Folder', ['Inner Page']], 'Top']);
+});
+test('Save and Cancel are disabled until the navigation changes, and again once it is saved or cancelled', async ({ page }) => {
+    await open(page);
+    await expect(button(page, 'Save')).toHaveAttribute('disabled');
+    await expect(button(page, 'Save')).toHaveAttribute('title', 'No navigation changes to save');
+    await expect(button(page, 'Cancel')).toHaveAttribute('disabled');
+    // Typing a name and putting it back leaves nothing to save.
+    await nameInput(page).fill('Changed');
+    await expect(button(page, 'Save')).not.toHaveAttribute('disabled');
+    await expect(button(page, 'Cancel')).not.toHaveAttribute('disabled');
+    await nameInput(page).fill('Folder');
+    await expect(button(page, 'Save')).toHaveAttribute('disabled');
+    await nameInput(page).fill('Changed');
+    await button(page, 'Save').click();
+    expect(names(await savedNav(page))).toEqual([['Changed', ['Inner']], 'Top']);
+    await expect(button(page, 'Save')).toHaveAttribute('disabled');
+    await expect(button(page, 'Cancel')).toHaveAttribute('disabled');
+    await button(page, 'Add Page').click();
+    await expect(button(page, 'Cancel')).not.toHaveAttribute('disabled');
+    await button(page, 'Cancel').click();
+    await expect(page.locator('app-nav-preview > webui-reorder > webui-nav-link[name=""]')).toHaveCount(0);
+    await expect(button(page, 'Save')).toHaveAttribute('disabled');
+    await expect(button(page, 'Cancel')).toHaveAttribute('disabled');
+});
+test('Delete is disabled with nothing to delete', async ({ page }) => {
+    await openApp(page, { currentPage: '/nav-manager', navigation: [{ name: 'Only', icon: 'star', url: '/only', children: null }] }, '/nav-manager');
+    await expect(nameInput(page)).toHaveValue('Only');
+    await expect(button(page, 'Delete')).not.toHaveAttribute('disabled');
+    await button(page, 'Delete').click();
+    await expect(page.locator('app-nav-preview webui-nav-link[name="Only"]')).toHaveCount(0);
+    await expect(button(page, 'Delete')).toHaveAttribute('disabled');
+    await expect(button(page, 'Delete')).toHaveAttribute('title', 'Select a nav item to delete');
+    await expect(button(page, 'Save')).not.toHaveAttribute('disabled');
 });
 test('adding a page gives it a unique url', async ({ page }) => {
     await open(page);

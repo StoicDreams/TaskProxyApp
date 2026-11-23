@@ -925,7 +925,14 @@ test.describe('plugins', () => {
             const card = manager.locator('.plugin-detail [data-plugin="jira"]');
             await card.waitFor();
             await expect(card.locator('webui-input-text[name="jira_site"]')).toBeVisible();
-            await moveTo(page, card.locator('webui-button', { hasText: 'Save settings' }));
+            // A setting is changed first, which turns Save settings on.
+            const email = card.locator('webui-input-text[name="jira_email"] input');
+            await clickOn(page, email, { after: 150 });
+            await page.keyboard.press('ControlOrMeta+a');
+            await typeInto(page, email, 'sam.lee@atlas.test');
+            const save = card.locator('webui-button', { hasText: 'Save settings' });
+            await expect(save).not.toHaveAttribute('disabled');
+            await moveTo(page, save);
             await page.waitForTimeout(1200);
             // The catalog, with what each plugin would reach, is the next tab.
             await clickOn(page, manager.locator('webui-button.plugin-tab-available'), { after: 1200 });

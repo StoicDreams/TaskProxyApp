@@ -345,6 +345,60 @@
             }
         }
         /**
+         * Copies formatted text as HTML, with `text` for apps that only paste plain text. Resolves to true once copied.
+         */
+        async copyHtml(html, text, errHandler) {
+            errHandler ??= defaultErrHandler;
+            try {
+                if (remote) {
+                    await navigator.clipboard.write([new ClipboardItem({
+                        'text/html': new Blob([`${html}`], { type: 'text/html' }),
+                        'text/plain': new Blob([`${text}`], { type: 'text/plain' }),
+                    })]);
+                } else {
+                    await tauri.core.invoke('copy_html', { html: `${html}`, text: `${text}` });
+                }
+                return true;
+            } catch (error) {
+                errHandler(error?.message || error);
+                return undefined;
+            }
+        }
+        /**
+         * Saves an exported page (services/page_export.rs), `bytes` a Uint8Array of the file, `kind` pdf, html, md, or
+         * txt, named after `title`, where the user chooses in the save dialog. A remote browser downloads it instead.
+         * Resolves to the file's name, null when no file was chosen, or undefined when it couldn't be saved.
+         */
+        async exportSave(bytes, title, kind, errHandler) {
+            errHandler ??= defaultErrHandler;
+            try {
+                if (remote) {
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(new Blob([bytes]));
+                    link.download = `${`${title || ''}`.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').trim() || 'Page'}.${kind}`;
+                    link.click();
+                    setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+                    return link.download;
+                }
+                return await tauri.core.invoke('export_save', bytes, { headers: exportHeaders(title, kind) }) ?? null;
+            } catch (error) {
+                errHandler(error?.message || error);
+                return undefined;
+            }
+        }
+        /** Copies an exported page as a file, to paste where files go. Resolves to true once copied. */
+        async exportCopyFile(bytes, title, kind, errHandler) {
+            errHandler ??= defaultErrHandler;
+            try {
+                if (remote) throw 'A file can only be copied on the computer running Task Proxy. Save it instead.';
+                await tauri.core.invoke('export_copy_file', bytes, { headers: exportHeaders(title, kind) });
+                return true;
+            } catch (error) {
+                errHandler(error?.message || error);
+                return undefined;
+            }
+        }
+        /**
          * Copies an image, a Blob or an <img>, to the system clipboard through Rust (services/clipboard.rs), since
          * WebKitGTK's own copy leaves nothing to paste on Wayland. Resolves to true once copied.
          */
@@ -2101,6 +2155,10 @@ async function pngOfImage(img) {
     return new Promise((resolve, reject) => canvas.toBlob(png => png ? resolve(png) : reject(new Error('The image could not be read.')), 'image/png'));
 }
 /** An image Blob in a format Rust reads: PNG, JPEG, WebP, and GIF go as they are, and anything else as a PNG. */
+/** An exported page's title and kind, as services/page_export.rs reads them. A header holds only ASCII. */
+function exportHeaders(title, kind) {
+    return { 'x-export-title': encodeURIComponent(`${title || ''}`), 'x-export-kind': `${kind}` };
+}
 async function imageForClipboard(blob) {
     if (/^image\/(png|jpeg|webp|gif)$/.test(blob.type)) return blob;
     const bitmap = await createImageBitmap(blob);

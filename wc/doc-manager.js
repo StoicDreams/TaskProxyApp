@@ -15,6 +15,21 @@
             t._message = t.template.querySelector('webui-input-message');
             t._btnReset = t.template.querySelector('webui-button[label="Reset"]');
             t._btnSave = t.template.querySelector('webui-button[label="Save"]');
+            /** The shown file's text as it is saved, to tell unsaved changes by. Null until a file has loaded. */
+            t._savedContent = null;
+            t.refreshButtons();
+        },
+        /** Save and Reset are on only while the file shown has changes that aren't saved, and not while it saves. */
+        refreshButtons() {
+            const t = this;
+            const loaded = !!t._loadingFile && t._loadedFile === t._loadingFile && t._savedContent !== null;
+            const changed = loaded && `${t._message.value ?? ''}` !== t._savedContent;
+            const ready = changed && !t._saving;
+            const why = action => !loaded ? 'No doc has loaded to edit' : t._saving ? 'Saving the doc' : `This doc has no changes to ${action}`;
+            t._btnSave.toggleAttribute('disabled', !ready);
+            t._btnSave.setAttribute('title', ready ? 'Save the changes to this doc' : why('save'));
+            t._btnReset.toggleAttribute('disabled', !ready);
+            t._btnReset.setAttribute('title', ready ? 'Discard the changes and show the doc as it is saved' : why('reset'));
         },
         attr: [],
         flags: [],
@@ -57,8 +72,10 @@
             let t = this;
             t._loadedFile = null;
             t._loadingFile = file;
+            t._savedContent = null;
             t._list.querySelectorAll('.file-row').forEach(row => row.setAttribute('aria-selected', row.dataset.file === file ? 'true' : 'false'));
             t._message.value = '';
+            t.refreshButtons();
             // What Save said was about the file shown before.
             clearActionNote(t._btnSave);
             if (!file) return;
@@ -72,11 +89,13 @@
             if (t._loadingFile !== file) return;
             if (fileContent !== undefined) {
                 t._loadedFile = file;
+                t._savedContent = fileContent;
                 t._content.setHtml(sanitizeProjectHtml(webui.parseMarkdown(fileContent)));
                 t._message.value = fileContent;
             } else {
                 t._content.setHtml('Failed to load content');
             }
+            t.refreshButtons();
         },
         connected() {
             const t = this;
@@ -84,6 +103,7 @@
             rememberSplit(t._editorSplit, t._editorToggle, 'app-doc-editor');
             t._message.addEventListener('input', ev => {
                 t._content.setHtml(sanitizeProjectHtml(webui.parseMarkdown(t._message.value)));
+                t.refreshButtons();
             });
             t._btnReset.addEventListener('click', async ev => {
                 let file = t._loadingFile;
@@ -104,23 +124,26 @@
                 const stillShown = () => t._loadingFile === file;
                 // Saving again, or resetting, before it finishes could write or show the file out of order.
                 // Loading a file waits for this, so switching away and back never reads it before the write lands.
-                t._btnSave.setAttribute('disabled', '');
-                t._btnReset.setAttribute('disabled', '');
+                const contents = t._message.value;
                 const saving = (async () => {
-                    let msg = await webui.proxy.saveProjectFile(file, t._message.value, err => {
+                    let msg = await webui.proxy.saveProjectFile(file, contents, err => {
                         if (stillShown()) actionNote(t._btnSave, err, 'danger');
                         else appAlert(`${file} wasn't saved: ${err}`, 'danger');
                     });
-                    if (msg && stillShown()) actionNote(t._btnSave, msg, 'success');
+                    // What was saved is the file now, so only what was typed since is left to save.
+                    if (msg && stillShown()) {
+                        t._savedContent = contents;
+                        actionNote(t._btnSave, msg, 'success');
+                    }
                 })();
                 t._saving = saving;
                 t._savingFile = file;
+                t.refreshButtons();
                 try {
                     await saving;
                 } finally {
                     if (t._saving === saving) { t._saving = null; t._savingFile = null; }
-                    t._btnSave.removeAttribute('disabled');
-                    t._btnReset.removeAttribute('disabled');
+                    t.refreshButtons();
                 }
             });
             t.loadFiles();

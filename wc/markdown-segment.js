@@ -74,6 +74,34 @@
             t._segmentType = SEGMENT;
             t._inputValue = '';
         },
+        /**
+         * This segment's markdown as the page's file has it, which Revert puts back: what it was made with, unless the
+         * page sets it, as for a new segment (empty) or one brought back with the page's unsaved changes.
+         */
+        getSavedMarkdown() {
+            const t = this;
+            return t._saved ?? t.dataset.saved ?? t.dataset.markdown ?? '';
+        },
+        setSavedMarkdown(value) {
+            this._saved = `${value ?? ''}`;
+            this.showChanged();
+        },
+        /** Whether this segment differs from the page's file. */
+        isChanged() {
+            return this.getMarkdown().trim() !== this.getSavedMarkdown().trim();
+        },
+        /**
+         * Marks this segment changed or not, enables Revert only when there is something to revert, and tells the page,
+         * which keeps its unsaved changes (wc/page-handler.js).
+         */
+        showChanged() {
+            const t = this;
+            const changed = t.isChanged();
+            t.classList.toggle('changed', changed);
+            t._btnUndo.toggleAttribute('disabled', !changed);
+            t._btnUndo.setAttribute('title', changed ? 'Revert this segment to how the page is saved, and close' : 'This segment has no changes to revert');
+            t.dispatchEvent(new CustomEvent('segment-change', { bubbles: true }));
+        },
         /** Shows the editor's markdown as it will look, while editing. */
         showLive() {
             const t = this;
@@ -111,6 +139,7 @@
             if (heading) t._inputText.value = line;
             else t._inputMessage.value = text;
             t.showLive();
+            t.showChanged();
         },
         /** The markdown for the type and text in the editor. */
         buildFinalMarkdown() {
@@ -144,25 +173,29 @@
             }
             t._type.setOptions(TYPES);
             t.setMarkdown(t.dataset.markdown || '');
-            const liveUpdate = () => t.showLive();
+            const liveUpdate = () => {
+                t.showLive();
+                t.showChanged();
+            };
             t._ai.action = args => t.writeWithAi(args);
             t._inputMessage.addEventListener('input', liveUpdate);
             t._inputText.addEventListener('input', liveUpdate);
             t._btnEdit.addEventListener('click', _ => {
                 t._isEditing = !t._isEditing;
                 if (t._isEditing) {
-                    t._originalMarkdown = t.getMarkdown();
                     t.classList.add('isEditing');
+                    t.showChanged();
                 } else {
                     t.classList.remove('isEditing');
                     t.setMarkdown(t.buildFinalMarkdown());
                 }
             });
+            // Puts back the segment as the page's file has it, changes made before this edit included.
             t._btnUndo.addEventListener('click', _ => {
-                if (!t._isEditing) return;
+                if (!t._isEditing || !t.isChanged()) return;
                 t._isEditing = false;
                 t.classList.remove('isEditing');
-                t.setMarkdown(t._originalMarkdown);
+                t.setMarkdown(t.getSavedMarkdown());
             });
             t._btnDelete.addEventListener('click', _ => {
                 // The page leaves this segment out from now on. Leaving the page without saving brings it back.
@@ -206,6 +239,7 @@
             t._inputValue = t._parsed.text;
             t.setSegmentType(t._parsed.type);
             t.render();
+            t.showChanged();
         },
         /** The type shown in the editor: segment, h1 to h6, or line break. */
         getSegmentType() {
@@ -244,6 +278,7 @@ flex-grow: 1;
 min-height: 36px;
 }
 #btn-undo { display: none; }
+:host(.changed) .tools { box-shadow: inset 3px 0 0 var(--color-warning, #d69e2e); }
 :host(.isEditing) #btn-undo { display: inline-flex; }
 :host div.content {
 position: relative;
@@ -287,7 +322,7 @@ display: none;
 </style>
 <div class="tools">
 <webui-button id="btn-edit" class="drag-handle" title="Edit segment. Drag, or press Alt+Up or Alt+Down, to move it" start-icon="pencil" theme="info"></webui-button>
-<webui-button id="btn-undo" title="Revert changes & close" start-icon="circle_arrow|rotate:180|bordered|inverted|theme:warning" theme="warning"></webui-button>
+<webui-button id="btn-undo" title="This segment has no changes to revert" disabled start-icon="circle_arrow|rotate:180|bordered|inverted|theme:warning" theme="warning"></webui-button>
 </div>
 <div class="content">
 <div class="input">

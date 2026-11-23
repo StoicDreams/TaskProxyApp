@@ -62,7 +62,8 @@
  *   one asking to connect would, and .changed(notice) sends remote-changed.
  *
  * - ai: AI providers as services/ai.rs keeps them: { providers: [{ id, name, kind, baseUrl, command, apiKey, models:
- *   [{ id, name }], hidden, lastError }], timeoutSecs, maxChars }. The window only ever gets keySet, never apiKey.
+ *   [{ id, name }], hidden, limits: { modelId: { timeoutSecs, maxChars } }, lastError }] }. The window only ever
+ *   gets keySet, never apiKey. ai_settings also sends some of services/ai.rs's suggested limits (aiSuggestions).
  *   aiOs: the operating system ai_settings says Task Proxy runs on, as Rust names it (default linux).
  *   aiReplies: { integration: text } for what ai_write and ai_review answer (default "Draft for {integration}").
  *   aiErrors: { integration: message } to fail one, with 'test' for ai_test, noted as the provider's lastError as
@@ -90,6 +91,12 @@ export function setup(state) {
     const project = state.project === null ? null : (state.project || { name: 'Repo', path: '/repo' });
     const files = { ...(state.files || {}) };
     const binaryFiles = { ...(state.binaryFiles || {}) };
+    const exportedFile = (bytes, options) => {
+        const headers = options?.headers || {};
+        const kind = headers['x-export-kind'];
+        const text = kind === 'pdf' ? Array.from(bytes, byte => String.fromCharCode(byte)).join('') : new TextDecoder().decode(bytes);
+        return { title: decodeURIComponent(headers['x-export-title'] || ''), kind, text };
+    };
     let processes = JSON.parse(JSON.stringify(state.processes || []));
     const git = {
         repos: [''], changes: [], lineStats: [], branches: [{ name: 'main', isCurrent: true, updatedDate: '2026-01-01' }], currentBranch: 'main',
@@ -134,7 +141,24 @@ export function setup(state) {
     };
     const emitEvent = (name, payload) => (listeners[name] || []).forEach(listener => listener({ payload }));
     // AI providers, as services/ai.rs keeps them. The window gets each provider's keySet, never its key.
-    const ai = { next: 0, providers: [], timeoutSecs: 120, maxChars: 40000, ...JSON.parse(JSON.stringify(state.ai || {})) };
+    const ai = { next: 0, providers: [], ...JSON.parse(JSON.stringify(state.ai || {})) };
+    // Some of the limits services/ai.rs suggests (SUGGESTIONS there), in its order, and its fallback.
+    const aiSuggestions = [
+        { matches: ['opus'], name: 'Claude Opus (1M tokens)', timeoutSecs: 420, maxChars: 300000 },
+        { matches: ['sonnet'], name: 'Claude Sonnet (1M tokens)', timeoutSecs: 300, maxChars: 300000 },
+        { matches: ['haiku'], name: 'Claude Haiku (1M tokens)', timeoutSecs: 180, maxChars: 200000 },
+        { matches: ['qwen2.5', 'qwen2'], name: 'Qwen2.5 (32K tokens, on your computer)', timeoutSecs: 300, maxChars: 32000 },
+        { matches: ['llama3.1', 'llama3.2', 'llama3.3'], name: 'Llama 3.1 and later (128K tokens, on your computer)', timeoutSecs: 300, maxChars: 32000 },
+        { matches: ['llama3', 'llama-3'], name: 'Llama 3 (8K tokens, on your computer)', timeoutSecs: 300, maxChars: 12000 },
+    ];
+    const aiFallback = { matches: [], name: 'Other models', timeoutSecs: 120, maxChars: 40000 };
+    // Each limit within what can be set, and models without any left out, as services/ai.rs saves them.
+    const aiLimits = limits => Object.fromEntries(Object.entries(limits || {}).map(([model, set]) => {
+        const kept = {};
+        if (set?.timeoutSecs != null) kept.timeoutSecs = Math.min(3600, Math.max(10, set.timeoutSecs));
+        if (set?.maxChars != null) kept.maxChars = Math.min(2000000, Math.max(2000, set.maxChars));
+        return [model.trim(), kept];
+    }).filter(([model, kept]) => model && Object.keys(kept).length));
     // Claude Code's command as services/ai.rs's claude_command writes it, and the one earlier releases wrote, which it
     // brings up to date as it reads the settings.
     const aiClaudeCommand = reads => `claude -p --setting-sources user --strict-mcp-config --permission-mode default --model {model} --tools "${reads ? 'Read,Grep,Glob' : ''}"`;
@@ -152,6 +176,7 @@ export function setup(state) {
             apiKey: provider.apiKey ?? null,
             models: provider.models ?? [],
             hidden: provider.hidden ?? [],
+            limits: provider.limits ?? {},
             lastError: provider.lastError ?? null,
         };
     });
@@ -205,7 +230,7 @@ export function setup(state) {
     };
     const aiView = () => ({
         providers: ai.providers.map(({ apiKey, ...provider }) => ({ ...copy(provider), keySet: !!apiKey })),
-        timeoutSecs: ai.timeoutSecs, maxChars: ai.maxChars, defaults: aiDefaults, os: state.aiOs || 'linux',
+        suggestions: copy(aiSuggestions), fallback: copy(aiFallback), defaults: aiDefaults, os: state.aiOs || 'linux',
     });
     // Script runs, as services/runs.rs keeps them.
     const runs = {
@@ -699,6 +724,14 @@ export function setup(state) {
             copy_image: bytes => { backend.clipboard = { bytes: [...bytes] }; },
             copy_image_url: ({ url }) => { backend.clipboard = { url }; },
             copy_text: ({ text }) => { backend.clipboard = { text }; },
+            copy_html: ({ html, text }) => { backend.clipboard = { html, text }; },
+            // An exported page, as services/page_export.rs gets it: its text (a PDF's too, as Latin-1), title, and kind.
+            // Saving answers with the file's name, or with exportSaveAnswer, such as null for a save dialog cancelled.
+            export_save: (bytes, options) => {
+                backend.exported = exportedFile(bytes, options);
+                return 'exportSaveAnswer' in backend ? backend.exportSaveAnswer : `${backend.exported.title || 'Page'}.${backend.exported.kind}`;
+            },
+            export_copy_file: (bytes, options) => { backend.clipboard = { file: exportedFile(bytes, options) }; },
             get_project_file_size: ({ filePath }) => {
                 if (filePath in binaryFiles) return atob(binaryFiles[filePath]).length;
                 if (filePath in files) return new TextEncoder().encode(files[filePath]).length;
@@ -752,11 +785,10 @@ export function setup(state) {
                     return {
                         id: item.id || `provider-${++ai.next}`, name: item.name.trim(), kind: item.kind, baseUrl,
                         command, apiKey, models: item.models ?? saved?.models ?? [], hidden: item.hidden || [],
+                        limits: aiLimits(item.limits ?? saved?.limits),
                         lastError: sameSetup ? saved.lastError ?? null : null,
                     };
                 });
-                if (settings.timeoutSecs) ai.timeoutSecs = settings.timeoutSecs;
-                if (settings.maxChars) ai.maxChars = settings.maxChars;
                 emitEvent('ai-settings-changed', aiView());
                 return aiView();
             },
@@ -1152,12 +1184,12 @@ export function setup(state) {
     window.__backend = backend;
     window.__TAURI__ = {
         core: {
-            invoke: async (command, args) => {
+            invoke: async (command, args, options) => {
                 // Raw bytes, as copy_image sends, are recorded by their length.
                 backend.calls.push({ command, args: args instanceof Uint8Array ? { bytes: args.length } : JSON.parse(JSON.stringify(args ?? {})) });
                 const handler = backend.handlers[command];
                 if (!handler) throw `The mock backend has no command named ${command}`;
-                return handler(args);
+                return handler(args, options);
             },
         },
         // Resolves to a function that stops listening, as Tauri's does.

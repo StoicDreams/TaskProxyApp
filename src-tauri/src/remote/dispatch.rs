@@ -49,6 +49,10 @@ pub(crate) const DESKTOP_ONLY: &[&str] = &[
     "copy_image",
     "copy_text",
     "copy_image_url",
+    "copy_html",
+    // Saves to a file chosen in the desktop's own save dialog. A remote browser saves exports itself.
+    "export_save",
+    "export_copy_file",
     "auto_install_powershell",
     "check_update",
     "install_update",
