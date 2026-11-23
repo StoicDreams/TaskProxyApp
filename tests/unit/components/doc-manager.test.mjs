@@ -4,19 +4,16 @@ import { actionNote, alertPopup } from '../../support/wait.mjs';
 const open = async (page, state) => {
     await openApp(page, { currentPage: '/docs', ...state }, '/docs');
     await page.locator('app-doc-manager').waitFor();
-    await page.waitForFunction(() => document.querySelector('app-doc-manager')._fileSelector?.setOptions);
+    await page.waitForFunction(() => document.querySelector('app-doc-manager')._list);
 };
 const manager = page => page.locator('app-doc-manager');
 const docs = { docs: ['docs/guide.md', 'README.md'], files: { 'README.md': '# Read Me', 'docs/guide.md': '# Guide' } };
-const select = (page, file) => page.evaluate(file => {
-    const el = document.querySelector('app-doc-manager');
-    el._fileSelector.value = file;
-    el._fileSelector.dispatchEvent(new Event('change'));
-}, file);
+const row = (page, file) => manager(page).locator(`.file-row[data-file="${file}"]`);
+const select = (page, file) => row(page, file).click();
 
 test('file names show as written', async ({ page }) => {
     await open(page, { docs: ['R&D/notes.md'], files: { 'R&D/notes.md': '# Notes' } });
-    await expect.poll(() => manager(page).evaluate(el => el._fileSelector._options[0]?.display)).toBe('R&D/notes.md');
+    await expect(manager(page).locator('.file-row')).toHaveText(['R&D/notes.md']);
 });
 test('the readme is listed first and shown', async ({ page }) => {
     await open(page, docs);
@@ -100,7 +97,8 @@ test('markup in a file name is shown as text', async ({ page }) => {
     await open(page, { docs: [name], files: { [name]: '# Doc' } });
     await expect(manager(page).locator('webui-input-message textarea')).toHaveValue('# Doc');
     await expect.poll(() => page.evaluate(() => window.__xss)).toBeUndefined();
-    await expect(manager(page).locator('webui-select img')).toHaveCount(0);
+    await expect(manager(page).locator('.file-list img')).toHaveCount(0);
+    await expect(manager(page).locator('.file-row')).toHaveText([name]);
 });
 test('a save that finishes after another file is picked says nothing under that file', async ({ page }) => {
     await open(page, docs);
@@ -181,4 +179,28 @@ test('going back to a file while it saves shows what was saved', async ({ page }
     await page.evaluate(() => window.__releaseSave());
     await expect(manager(page).locator('webui-input-message textarea')).toHaveValue('# Edited');
     await expect(manager(page).locator('webui-content h1')).toHaveText('Edited');
+});
+test('each View toggle shows its panes one at a time, and is remembered', async ({ page }) => {
+    await open(page, docs);
+    await expect(manager(page).locator('webui-input-message textarea')).toHaveValue('# Read Me');
+    const files = manager(page).locator('webui-split-panes.files-split');
+    const editor = manager(page).locator('webui-split-panes.editor-split');
+    await manager(page).locator('webui-toggle-icon.editor-view').click();
+    await expect(editor).toHaveAttribute('single', '');
+    await expect(files).not.toHaveAttribute('single');
+    await expect.poll(() => page.evaluate(() => webui.getData('app-doc-editor-single'))).toBe(true);
+    await manager(page).locator('webui-toggle-icon.files-view').click();
+    await expect(files).toHaveAttribute('single', '');
+    await expect.poll(() => page.evaluate(() => webui.getData('app-doc-manager-single'))).toBe(true);
+    // One at a time, picking a doc from the list shows it.
+    await files.evaluate(el => el.showPane('start'));
+    await select(page, 'docs/guide.md');
+    await expect(manager(page).locator('webui-input-message textarea')).toHaveValue('# Guide');
+    await expect(files).toHaveAttribute('show', 'end');
+    await expect(manager(page).locator('.file-row[aria-selected="true"]')).toHaveText(['docs/guide.md']);
+});
+test('Views chosen before are kept when the page opens', async ({ page }) => {
+    await open(page, { ...docs, appData: { 'app-doc-manager-single': true, 'app-doc-editor-single': true } });
+    await expect(manager(page).locator('webui-split-panes.files-split')).toHaveAttribute('single', '');
+    await expect(manager(page).locator('webui-split-panes.editor-split')).toHaveAttribute('single', '');
 });

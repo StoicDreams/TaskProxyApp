@@ -2,7 +2,7 @@
     <webui-button slot="tabs">Docs Manager</webui-button>
     <webui-content slot="content" nodetach>
         <webui-page-segment>
-        - **Editing Standard Docs**: Use the file dropdown to load existing markdown files from your project (such as `readme.md` or files within a `/docs` directory).
+        - **Editing Standard Docs**: Pick a markdown file from your project (such as `readme.md` or files within a `/docs` directory) from the list beside it. The preview and the editor sit side by side. Each **View** toggle shows its two panes side by side, or one at a time: the one above the list for the list and the doc, and the one by **Save** for the preview and the editor.
         - **Live Rendering**: The view automatically renders the markdown to HTML below the editor as you type.
         - **Saving**: Click **Save** to persist changes, or **Reset** to discard unsaved modifications and reload the file from disk.
         </webui-page-segment>

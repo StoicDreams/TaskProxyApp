@@ -106,6 +106,12 @@ test.describe('repo dropdown', () => {
         await expect((await repoTile(page, 'libs/api')).locator('.git-status')).toHaveCount(0);
         await expect((await repoTile(page, '')).locator('.git-changes')).toHaveCount(0);
     });
+    test('a nested repo is listed by its folder\'s name, with its path as the tooltip', async ({ page }) => {
+        await open(page, { repos: ['', 'libs/api'], repoStatus });
+        await expect((await repoTile(page, 'libs/api')).locator('.name')).toHaveText('api');
+        await expect(await repoTile(page, 'libs/api')).toHaveAttribute('title', 'libs/api');
+        await expect((await repoTile(page, '')).locator('.name')).toHaveText('Root');
+    });
     test('choosing a repo from the list switches to it', async ({ page }) => {
         await open(page, { repos: ['', 'libs/api'], repoStatus });
         await (await repoTile(page, 'libs/api')).click();
@@ -959,6 +965,16 @@ Write-Host 'done'
     };
     const finish = (page, code) => page.evaluate(code => window.__backend.runs.end({ projectId: 'project-id', terminalId: 'Before Commit', code }), code);
 
+    test('scripts are listed by their file names, with their paths as the tooltip', async ({ page }) => {
+        await openWith(page);
+        const select = manager(page).locator('#before-commit-script');
+        await select.locator('button[aria-haspopup]').click();
+        await expect(select.locator(`.tile[data-value="${SCRIPT}"] .name`)).toHaveText(SCRIPT.split('/').pop());
+        await expect(select.locator(`.tile[data-value="${SCRIPT}"]`)).toHaveAttribute('title', SCRIPT);
+        await select.locator(`.tile[data-value="${SCRIPT}"]`).click();
+        await expect(select.locator('.pick-name')).toHaveText(SCRIPT.split('/').pop());
+        await expect(select.locator('.pick')).toHaveAttribute('title', SCRIPT);
+    });
     test('a chosen script shows a field for each of its parameters, and the choices are remembered', async ({ page }) => {
         await openWith(page);
         await pick(manager(page).locator('#before-commit-script'), SCRIPT);

@@ -60,6 +60,9 @@
                 helpers.getState(other).activeId = terminalId;
                 t._viewProject = other || undefined;
             }
+            // The run just started stays listed in the running views until another script is shown, since a quick
+            // script can finish before the list is drawn.
+            if (run) t._justRun = terminalId ? { id: terminalId, projectId: t._viewProject } : null;
             // Already shown there, as when a script runs while the Terminals tab is open, it stays as it is and only
             // moves to the run, rather than being drawn again.
             if (t._filterSwitch && el.contains(t._filterSwitch) && t._runner?.isConnected) {
@@ -99,6 +102,8 @@
                 t._filterSwitch.setValue(t.filter());
             });
             t._filterSwitch.addEventListener('change', () => {
+                // A view the user picks lists what it lists, so the run that opened the panel is not kept in it.
+                if (t._filterSwitch.value !== t.filter()) t._justRun = null;
                 webui.setData('app-terminals-filter', t._filterSwitch.value);
                 t.refreshDropdown();
             });
@@ -289,6 +294,8 @@
             // so it cannot bring back the script it was showing.
             const turn = t._switchTurn = (t._switchTurn || 0) + 1;
             clearTimeout(t._runnerUpdate);
+            const helpersNow = webui.proxy.terminalHelpers;
+            if (t._justRun && (t._justRun.id !== id || helpersNow.otherProject(t._justRun.projectId) !== helpersNow.otherProject(projectId))) t._justRun = null;
             await webui.wait(() => t._runner && typeof t._runner.setScript === 'function' && typeof t._activeConsole?.attach === 'function');
             if (turn !== t._switchTurn) return;
             const helpers = webui.proxy.terminalHelpers;
@@ -314,7 +321,8 @@
             if (!state.terminals[id]) {
                 let scriptContent = '';
                 if (id !== 'live' && !t._viewProject) {
-                    scriptContent = await webui.proxy.getProjectFile(id).catch(() => '') || '';
+                    // Only a saved script is a file. Any other terminal, such as a page script's, has no file to show.
+                    scriptContent = await webui.proxy.getProjectFile(id, () => '') || '';
                     if (turn !== t._switchTurn) return;
                 }
                 state.terminals[id] ??= helpers.newTerminal(id, { script: scriptContent });
@@ -381,7 +389,7 @@
                 if (!viewing || viewing.id !== 'live' || viewing.projectId) next = { id: 'live' };
             } else {
                 // A script that finished while shown stays listed until the view changes, so it does not vanish.
-                const watching = filter === t._listedFilter ? viewing : null;
+                const watching = t._justRun ?? (filter === t._listedFilter ? viewing : null);
                 const options = await helpers.getDropdownOptions(helpers.getState(), filter, watching);
                 if (!options.length) {
                     t._activeDropdown.setOptions([{ id: '', value: '', display: 'None', icon: 'xmark' }]);

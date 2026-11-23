@@ -1276,11 +1276,18 @@
              */
             async getDropdownOptions(state, filter, watching) {
                 const options = [];
-                const add = (id, display, projectId) => {
+                // A saved script is shown by its file's name, with its path as the tooltip, since a path is cut off.
+                const fileName = path => path.split(/[\\/]/).filter(Boolean).pop() || path;
+                const add = (id, display, projectId, title) => {
                     const value = this.terminalValue(id, projectId);
-                    if (!options.some(option => option.value === value)) options.push({ id: value, value, display });
+                    if (!options.some(option => option.value === value)) options.push({ id: value, value, display, title: title || display });
                 };
+                const shortName = term => term.id === 'live' ? 'Live Command' : term.isPageScript ? term.name : fileName(term.name);
                 const nameOf = (term, projectId) => {
+                    const name = shortName(term);
+                    return this.otherProject(projectId) ? `${term.projectName || 'Another project'}: ${name}` : name;
+                };
+                const titleOf = (term, projectId) => {
                     const name = term.id === 'live' ? 'Live Command' : term.name;
                     return this.otherProject(projectId) ? `${term.projectName || 'Another project'}: ${name}` : name;
                 };
@@ -1291,7 +1298,7 @@
                     state.allScripts = await webui.proxy.getScripts() || [];
                     state.allScripts.forEach(path => {
                         if (path.indexOf('taskproxy_tmp_') !== -1) return;
-                        add(path, `${path} (${state.terminals[path]?.status ?? 'Ready'})`);
+                        add(path, `${fileName(path)} (${state.terminals[path]?.status ?? 'Ready'})`, undefined, path);
                     });
                 } else if (filter === 'Page') {
                     Object.values(state.terminals).forEach(term => {
@@ -1299,12 +1306,12 @@
                     });
                 } else if (filter === 'Running') {
                     Object.values(state.terminals).forEach(term => {
-                        if (listed(term)) add(term.id, `${nameOf(term)} (${term.status})`);
+                        if (listed(term)) add(term.id, `${nameOf(term)} (${term.status})`, undefined, titleOf(term));
                     });
                 } else if (filter === 'All Running') {
                     for (const [projectId, projectState] of terminalStates) {
                         Object.values(projectState.terminals).forEach(term => {
-                            if (listed(term, projectId)) add(term.id, `${nameOf(term, projectId)} (${term.status})`, projectId);
+                            if (listed(term, projectId)) add(term.id, `${nameOf(term, projectId)} (${term.status})`, projectId, titleOf(term, projectId));
                         });
                     }
                 } else if (filter === 'Finished') {
@@ -1317,7 +1324,7 @@
                         });
                     }
                     ended.sort((a, b) => (b.term.endedAt ?? Infinity) - (a.term.endedAt ?? Infinity));
-                    ended.forEach(({ term, projectId, run }) => add(term.id, `${nameOf(term, projectId)} (${run.state})`, projectId));
+                    ended.forEach(({ term, projectId, run }) => add(term.id, `${nameOf(term, projectId)} (${run.state})`, projectId, titleOf(term, projectId)));
                 }
                 return options;
             },
@@ -1976,7 +1983,7 @@ function actionNote(anchor, text, variant = 'info') {
         if (!text) return;
         // Styled here, since it can be inside a component whose own styles the app's CSS doesn't reach. In a row of
         // buttons it takes a line of its own.
-        note = webui.create('webui-alert', { class: 'action-note', style: 'flex-basis:100%;margin-top:calc(0.5 * var(--padding, 8px));' });
+        note = webui.create('webui-alert', { class: 'action-note', style: 'flex:0 1 auto;width:100%;box-sizing:border-box;margin-top:calc(0.5 * var(--padding, 8px));' });
         holder._actionNote = note;
         // Nothing can sit between a table's cells or rows, so in a table the alert goes at the end of the cell.
         const inTable = /^(TR|THEAD|TBODY|TFOOT|TABLE)$/.test(row.tagName);
@@ -2017,6 +2024,46 @@ function setNote(note, text, variant = 'info') {
 /** Clears what actionNote said by this button, as when it runs again. */
 function clearActionNote(anchor) {
     if (anchor?.isConnected) actionNote(anchor, '');
+}
+/**
+ * Options for a webui-select of files or folders, each shown by its name with its whole path as its tooltip, since a
+ * path is cut off in the list. Names that two paths share add their folder. `fields` adds to each option, by path.
+ */
+function fileOptions(paths, fields = () => ({})) {
+    const nameOf = path => path.split(/[\\/]/).filter(Boolean).pop() || path;
+    const counts = new Map();
+    paths.forEach(path => counts.set(nameOf(path), (counts.get(nameOf(path)) || 0) + 1));
+    return paths.map(path => {
+        const name = nameOf(path);
+        const folder = path.substring(0, path.lastIndexOf(name)).replace(/[\\/]+$/, '');
+        const display = counts.get(name) > 1 && folder ? `${name} (${folder})` : name;
+        return { id: path, value: path, display, title: path, ...fields(path) };
+    });
+}
+/**
+ * Keeps a webui-split-panes as the user last left it, in app data under `key`: its ratio as `<key>-split`, and,
+ * with a View toggle (a webui-toggle-icon), whether it shows one pane at a time as `<key>-single`.
+ */
+function rememberSplit(split, toggle, key) {
+    const ratio = Number(webui.getData(`${key}-split`));
+    if (ratio > 0 && ratio < 1) split.setAttribute('ratio', `${ratio}`);
+    split.addEventListener('change', ev => {
+        if (ev.target === split && typeof ev.detail?.ratio === 'number') webui.setData(`${key}-split`, ev.detail.ratio);
+    });
+    if (!toggle) return;
+    const single = () => webui.getData(`${key}-single`) === true;
+    split.toggleAttribute('single', single());
+    customElements.whenDefined('webui-toggle-icon').then(() => {
+        if (typeof toggle.setValue !== 'function') customElements.upgrade(toggle);
+        toggle.setValue(single());
+    });
+    toggle.addEventListener('click', () => {
+        // The toggle flips itself as it is clicked, so its new value is read once it has.
+        setTimeout(() => {
+            webui.setData(`${key}-single`, toggle.value === true);
+            split.toggleAttribute('single', single());
+        }, 0);
+    });
 }
 /**
  * Text as a PowerShell single-quoted string, which nothing inside can end early or expand. PowerShell reads curly

@@ -47,7 +47,7 @@
         note() {
             const t = this;
             if (t._note?.isConnected) return t._note;
-            t._note = webui.create('webui-alert', { class: 'action-note', style: 'flex-basis:100%;margin-top:calc(0.5 * var(--padding, 8px));' });
+            t._note = webui.create('webui-alert', { class: 'action-note', style: 'flex:0 1 auto;width:100%;box-sizing:border-box;margin-top:calc(0.5 * var(--padding, 8px));' });
             (t.closest('h1, h2, h3, h4, h5, h6') || t).after(t._note);
             return t._note;
         },

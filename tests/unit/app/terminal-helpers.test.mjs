@@ -121,6 +121,16 @@ test.describe('webui.proxy.terminalHelpers', () => {
         });
         expect(ids).toEqual(['page-script']);
     });
+    test('saved scripts are listed by their file names, with their paths as the tooltip', async ({ page }) => {
+        await onCommand(page, 'get_scripts', () => ['PowerShell/Publish.ps1']);
+        await run(page, 'PowerShell/Publish.ps1', 'x', [], false, false);
+        const listed = filter => page.evaluate(async filter => {
+            const helpers = webui.proxy.terminalHelpers;
+            return (await helpers.getDropdownOptions(helpers.getState(), filter, null)).map(option => [option.value, option.display, option.title]);
+        }, filter);
+        await expect.poll(() => listed('Saved')).toEqual([['PowerShell/Publish.ps1', 'Publish.ps1 (Running)', 'PowerShell/Publish.ps1']]);
+        await expect.poll(() => listed('Running')).toEqual([['PowerShell/Publish.ps1', 'Publish.ps1 (Running)', 'PowerShell/Publish.ps1']]);
+    });
     test('All Running lists running scripts in every project, named by project', async ({ page }) => {
         await run(page, 'test.ps1', 'x', [], false, false);
         const options = await page.evaluate(async () => {

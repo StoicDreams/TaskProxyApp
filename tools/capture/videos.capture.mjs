@@ -103,12 +103,7 @@ test('answer a script\'s prompt in the terminal', async ({ page }) => {
     ]);
     await record(page, 'script-prompt', async () => {
         await caption(page, 'The Script Manager runs the scripts saved in your project', 2200);
-        await moveTo(page, manager.locator('webui-select').first());
-        await page.evaluate(() => {
-            const el = document.querySelector('app-script-manager');
-            el._fileSelector.value = '.taskproxy/scripts/deploy.ps1';
-            el._fileSelector.dispatchEvent(new Event('change'));
-        });
+        await clickOn(page, manager.locator('.file-row[data-file=".taskproxy/scripts/deploy.ps1"]'));
         const environment = manager.locator('.params-container [data-param="Environment"] input');
         await environment.waitFor();
         await page.waitForTimeout(800);

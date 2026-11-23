@@ -149,7 +149,10 @@
             t.clearBarNote();
             t._edit.setAttribute('aria-pressed', mode === 'manage' ? 'true' : 'false');
             t._more.setAttribute('aria-expanded', mode === 'all' ? 'true' : 'false');
-            t._more.title = mode === 'all' ? 'Show one row' : 'Show every favorite';
+            // Its name changes with its title, since the label, not the tooltip, is what it is called.
+            const moreLabel = mode === 'all' ? 'Show one row' : 'Show every favorite';
+            t._more.title = moreLabel;
+            t._more.setAttribute('aria-label', moreLabel);
             if (mode === 'manage' && !t._chosen) t._chosen = allFavorites()[0]?.id || null;
             t.render();
         },

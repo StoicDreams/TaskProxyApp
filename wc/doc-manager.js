@@ -3,10 +3,14 @@
 {
     webui.define("app-doc-manager", {
         linkCss: true,
-        preload: 'select input-message content',
+        preload: 'split-panes toggle-icon button input-message content',
         constructor() {
             const t = this;
-            t._fileSelector = t.template.querySelector('webui-select[label="File"]');
+            t._list = t.template.querySelector('.file-list');
+            t._split = t.template.querySelector('webui-split-panes.files-split');
+            t._viewToggle = t.template.querySelector('webui-toggle-icon.files-view');
+            t._editorSplit = t.template.querySelector('webui-split-panes.editor-split');
+            t._editorToggle = t.template.querySelector('webui-toggle-icon.editor-view');
             t._content = t.template.querySelector('webui-content');
             t._message = t.template.querySelector('webui-input-message');
             t._btnReset = t.template.querySelector('webui-button[label="Reset"]');
@@ -22,30 +26,38 @@
             let t = this;
             await whenProxyReady();
             webui.proxy.projects.runWhenLoaded(() => {
-                t._files = webui.projectData.docs || [];
-                let options = [];
-                t._files.forEach(fileName => {
-                    let item = {
-                        id: fileName,
-                        value: fileName,
-                        display: fileName
-                    };
-                    if (['readme.md', 'docs/readme.md'].indexOf(fileName.toLowerCase()) !== -1) {
-                        options.unshift(item);
-                    } else {
-                        options.push(item);
-                    }
-                });
-                t._fileSelector.setOptions(options);
-                if (options.length > 0) {
-                    t.loadFile(t._fileSelector.value);
-                }
+                const readmes = ['readme.md', 'docs/readme.md'];
+                const docs = webui.projectData.docs || [];
+                // The readme is listed first, so it is the one shown.
+                t._files = [...docs.filter(file => readmes.includes(file.toLowerCase())), ...docs.filter(file => !readmes.includes(file.toLowerCase()))];
+                t.drawList();
+                if (t._files.length > 0) t.loadFile(t._files[0]);
             });
+        },
+        /** Lists the docs, marking the one shown. */
+        drawList() {
+            const t = this;
+            t._list.replaceChildren(...(t._files || []).map(file => {
+                const row = webui.create('button', { type: 'button', role: 'option', class: 'file-row', 'data-file': file, title: file });
+                row.textContent = file;
+                row.setAttribute('aria-selected', file === t._loadingFile ? 'true' : 'false');
+                row.addEventListener('click', () => {
+                    t.loadFile(file);
+                    t._split.showPane?.('end');
+                });
+                return row;
+            }));
+            if (!t._files?.length) {
+                const empty = webui.create('p', { class: 'empty' });
+                empty.textContent = 'This project has no markdown docs.';
+                t._list.appendChild(empty);
+            }
         },
         async loadFile(file) {
             let t = this;
             t._loadedFile = null;
             t._loadingFile = file;
+            t._list.querySelectorAll('.file-row').forEach(row => row.setAttribute('aria-selected', row.dataset.file === file ? 'true' : 'false'));
             t._message.value = '';
             // What Save said was about the file shown before.
             clearActionNote(t._btnSave);
@@ -68,20 +80,18 @@
         },
         connected() {
             const t = this;
-            t._fileSelector.addEventListener('change', ev => {
-                let file = t._fileSelector.value;
-                t.loadFile(file);
-            });
+            rememberSplit(t._split, t._viewToggle, 'app-doc-manager');
+            rememberSplit(t._editorSplit, t._editorToggle, 'app-doc-editor');
             t._message.addEventListener('input', ev => {
                 t._content.setHtml(sanitizeProjectHtml(webui.parseMarkdown(t._message.value)));
             });
             t._btnReset.addEventListener('click', async ev => {
-                let file = t._fileSelector.value;
+                let file = t._loadingFile;
                 if (!file || t._saving) return;
                 t.loadFile(file);
             });
             t._btnSave.addEventListener('click', async ev => {
-                let file = t._fileSelector.value;
+                let file = t._loadingFile;
                 if (!file || t._saving) return;
                 // Until a file has loaded, the editor is empty and saving would erase it.
                 if (t._loadedFile !== file) {
@@ -126,16 +136,74 @@ gap:var(--padding);
 slot {
 display:none;
 }
+.file-list {
+display:flex;
+flex-direction:column;
+gap:0.25em;
+padding:0.25em 0.5em 0.25em 0;
+}
+.file-row {
+width:100%;
+padding:0.4em 0.6em;
+border:1px solid transparent;
+border-radius:var(--corners, 4px);
+background:none;
+color:inherit;
+font:inherit;
+text-align:start;
+overflow-wrap:anywhere;
+cursor:pointer;
+}
+.file-row:hover {
+background-color:color-mix(in srgb, currentColor 8%, transparent);
+}
+.file-row[aria-selected="true"] {
+border-color:var(--color-info);
+background-color:color-mix(in srgb, var(--color-info) 15%, transparent);
+}
+.empty {
+margin:0.5em;
+opacity:0.8;
+}
+.file-view {
+display:flex;
+flex-direction:column;
+gap:var(--padding);
+height:100%;
+box-sizing:border-box;
+padding-left:var(--padding);
+}
+.editor-split {
+flex:1 1 auto;
+min-height:0;
+}
+.preview {
+padding-right:var(--padding);
+}
+.editor {
+height:100%;
+padding-left:var(--padding);
+box-sizing:border-box;
+}
 </style>
-<webui-grid columns="1fr max-content max-content">
-<webui-select label="File"></webui-select>
+<webui-flex align="center" gap="0.5rem">
+<webui-toggle-icon class="files-view" label="View" icon-on="square" icon-off="table-columns" title-on="Showing the list of docs or the doc, one at a time. Click to show them side by side." title-off="Showing the list of docs and the doc side by side. Click to show one at a time."></webui-toggle-icon>
+</webui-flex>
+<webui-split-panes class="files-split" fill min="220" ratio="0.25" show="end" start-label="Docs" end-label="Doc">
+<div slot="start" class="file-list" role="listbox" aria-label="Docs"></div>
+<div slot="end" class="file-view">
+<webui-flex align="center" gap="0.5rem">
+<webui-toggle-icon class="editor-view" label="View" icon-on="square" icon-off="table-columns" title-on="Showing the preview or the editor, one at a time. Click to show them side by side." title-off="Showing the preview and the editor side by side. Click to show one at a time."></webui-toggle-icon>
+<webui-flex grow></webui-flex>
 <webui-button theme="warning" label="Reset"></webui-button>
 <webui-button theme="success" label="Save"></webui-button>
-</webui-grid>
-<webui-grid columns="1fr 1fr">
-<webui-content></webui-content>
-<webui-input-message aria-label="Markdown"></webui-input-message>
-</webui-grid>
+</webui-flex>
+<webui-split-panes class="editor-split" min="280" show="end" start-label="Preview" end-label="Editor">
+<webui-content slot="start" class="preview"></webui-content>
+<div slot="end" class="editor"><webui-input-message aria-label="Markdown"></webui-input-message></div>
+</webui-split-panes>
+</div>
+</webui-split-panes>
 `
     });
 }

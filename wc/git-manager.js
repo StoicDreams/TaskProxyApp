@@ -794,7 +794,7 @@
             if (t._repos.value !== repo) return;
             await whenReady(t._beforeScript);
             t._loadingBeforeCommit = true;
-            t._beforeScript.setOptions([{ id: '', value: '', display: 'Nothing', icon: 'xmark' }, ...scripts.map(path => ({ id: path, value: path, display: path }))]);
+            t._beforeScript.setOptions([{ id: '', value: '', display: 'Nothing', icon: 'xmark' }, ...fileOptions(scripts)]);
             t._beforeScript.value = selected;
             t._loadingBeforeCommit = false;
             await t.showBeforeCommitParameters(selected);
@@ -1166,10 +1166,12 @@
             const t = this;
             if (!t._repoList) return;
             const status = webui.proxy.git.withCiStatus(t._repoStatus, t._repoCi);
-            t._repos.setOptions(t._repoList.map(repo => {
-                const display = repo === '' ? 'Root' : repo;
-                return { id: repo, value: repo, display, badge: webui.proxy.git.statusMarkersHtml(status[repo]) };
-            }));
+            // A nested repo is shown by its folder's name, with its path as the tooltip.
+            const named = new Map(fileOptions(t._repoList.filter(repo => repo !== '')).map(option => [option.id, option]));
+            t._repos.setOptions(t._repoList.map(repo => ({
+                ...(named.get(repo) || { id: repo, value: repo, display: 'Root', title: 'The project folder' }),
+                badge: webui.proxy.git.statusMarkersHtml(status[repo]),
+            })));
         },
         async loadRepoStatus() {
             const t = this;

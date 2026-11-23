@@ -124,7 +124,7 @@
         }
         const hasContent = currentSegmentsMarkdown().length > 0;
         // File names come from the project, so they are escaped as the attribute's text.
-        const options = webui.escapeForHTML(JSON.stringify(docs.map(path => ({ value: path, display: path, icon: 'file' }))));
+        const options = webui.escapeForHTML(JSON.stringify(fileOptions(docs, () => ({ icon: 'file' }))));
         webui.dialog({
             title: 'Import a Markdown File',
             content: `<webui-flex column gap="var(--padding)" class="page-import-dialog">
@@ -630,16 +630,13 @@
                 }
             }
         }
-        let state = webui.proxy.terminalHelpers.getState();
-        state.activeId = totalName;
         webui.proxy.terminalHelpers.ensureListeners();
-        await new Promise(r => setTimeout(r, 200));
         // Rust fills in the values and runs it, showing the masked copy in the Terminal Manager.
         const run = await webui.proxy.runPageScript(totalName, scriptMeta.content, pageValues, err => actionNote(codeEl, err, 'warning'));
         if (!run) return;
         webui.proxy.terminalHelpers.applyRun(run);
-        // Opened on a running view, so the script that just started is listed.
-        document.querySelector('app-terminals')?.openDrawer({ run: true });
+        // Opened on a running view showing this run, which stays listed even when it has already finished.
+        document.querySelector('app-terminals')?.openDrawer({ run: true, terminalId: run.id, projectId: run.projectId });
     }
     // Tags with no closing tag, which can never open a multi-line component.
     const voidTags = ['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr'];

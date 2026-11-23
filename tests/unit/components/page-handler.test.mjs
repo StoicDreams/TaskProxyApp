@@ -1,5 +1,5 @@
 import { test, expect, openPage, openApp, calls, onCommand, dialogButton, openDialog, goToPage } from '../support/app.mjs';
-import { actionNote, alertPopup } from '../../support/wait.mjs';
+import { actionNote, alertPopup, spyOnAlerts, alerts } from '../../support/wait.mjs';
 
 const save = page => page.locator('app-page-handler webui-button[title="Save Page"]').first().click();
 const saved = async page => {
@@ -429,6 +429,30 @@ test.describe('page scripts', () => {
             expect(script).toContain("$solution = 'sub/Two.sln'");
         });
     });
+    for (const filter of ['Running', 'All Running']) {
+        test(`a script that finishes before the Terminal Manager shows it is shown with its output each time it runs, in ${filter}`, async ({ page }) => {
+            await openPage(page, scriptPage('tokei .'), { appData: { 'app-trusted-projects': ['/repo'], 'app-terminals-filter': filter } });
+            await spyOnAlerts(page);
+            // Its output and its end arrive before Rust has answered that it started.
+            await page.evaluate(() => {
+                let count = 0;
+                window.__backend.handlers.spawn_script = ({ terminalId }) => {
+                    window.__backend.runs.write({ terminalId, data: `REPORT ${++count}\r\n` });
+                    window.__backend.runs.end({ terminalId, code: 0 });
+                    return { message: 'Script started', interactive: true };
+                };
+            });
+            const view = page.locator('app-terminal-view#term-console');
+            for (let run = 1; run <= 3; run++) {
+                await page.locator('webui-icon.run-script-btn').click();
+                await expect.poll(() => view.evaluate(el => el.getScreenText())).toContain(`REPORT ${run}`);
+            }
+            await expect.poll(() => page.evaluate(() => document.querySelector('app-terminals')._activeDropdown.value)).toBe('Repo_Page_Run this');
+            // A page script's terminal is no file, so none was looked for, and nothing said it was missing.
+            expect((await calls(page, 'get_project_file')).map(call => call.filePath)).not.toContain('Repo_Page_Run this');
+            expect(await alerts(page)).toEqual([]);
+        });
+    }
 });
 test.describe('help', () => {
     const openHelp = async page => {
@@ -527,7 +551,9 @@ test.describe('importing a markdown file', () => {
     const position = page => openDialog(page).locator('webui-switch.import-position');
     async function openImport(page) {
         await importButton(page).click();
-        await expect(fileField(page).locator('.pick-name')).toHaveText('docs/guide.md');
+        // Shown by its name, with its path as the tooltip.
+        await expect(fileField(page).locator('.pick-name')).toHaveText('guide.md');
+        await expect(fileField(page).locator('.pick')).toHaveAttribute('title', 'docs/guide.md');
     }
 
     test('adds the file after the page\'s content by default, saves, and shows it', async ({ page }) => {
@@ -548,7 +574,7 @@ test.describe('importing a markdown file', () => {
         await openPage(page, `${data}\n\n# Existing`, state);
         await openImport(page);
         await fileField(page).getByRole('button').first().click();
-        await fileField(page).getByRole('option', { name: 'notes/todo.md' }).click();
+        await fileField(page).locator('.tile[data-value="notes/todo.md"]').click();
         await position(page).getByRole('radio', { name: 'Before this page\'s content' }).click();
         await dialogButton(page, 'Import').click();
         await expect.poll(async () => (await calls(page, 'save_project_file')).at(-1)?.contents).toBe([
