@@ -252,17 +252,17 @@ mod tests {
 
     #[test]
     fn the_newest_version_this_app_runs_is_offered() {
-        let mut newest = listed("0.3.0", &["9.0.0"]);
-        newest.versions = vec![listed("0.1.4", &["0.1.0"]), listed("0.2.0", &["0.0.1"])];
+        let mut newest = listed("2.3.0", &["9.0.0"]);
+        newest.versions = vec![listed("2.1.4", &["0.1.0"]), listed("2.2.0", &["0.0.1"])];
         let chosen = newest.for_this_app();
-        assert_eq!(chosen.version, "0.1.4");
+        assert_eq!(chosen.version, "2.1.4");
         assert!(chosen.incompatible.is_none());
         assert!(chosen.versions.is_empty());
         // When none run, the newest is shown with why.
-        let mut none = listed("0.3.0", &["9.0.0"]);
-        none.versions = vec![listed("0.2.0", &["0.0.1"])];
+        let mut none = listed("2.3.0", &["9.0.0"]);
+        none.versions = vec![listed("2.2.0", &["0.0.1"])];
         let shown = none.for_this_app();
-        assert_eq!(shown.version, "0.3.0");
+        assert_eq!(shown.version, "2.3.0");
         assert!(shown.incompatible.unwrap().contains("Update Task Proxy"));
         // Old entries name only apiVersion 1.
         assert!(entry().for_this_app().incompatible.is_none());

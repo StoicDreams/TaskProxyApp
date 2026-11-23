@@ -248,7 +248,7 @@ mod tests {
         assert!(manifest(json!({ "apiVersion": 2 })).is_err());
         assert!(manifest(json!({ "apiVersion": 0 })).is_err());
         assert!(manifest(json!({ "spec": ["0.1.0"], "apiVersion": 0 })).is_ok());
-        let newer = manifest(json!({ "spec": ["0.9.0"] })).unwrap_err();
+        let newer = manifest(json!({ "spec": ["9.0.0"] })).unwrap_err();
         assert!(newer.contains("Update Task Proxy"), "{}", newer);
         assert!(manifest(json!({ "spec": ["0.1"] })).is_err());
     }

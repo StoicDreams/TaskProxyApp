@@ -311,9 +311,9 @@ export function demoProcesses() {
         proc(1200, 1000, 'code', { command: 'code', cpu: 1.8, memory: 620 * MB, folder: storefront, project: 'Acme Storefront', started: now - 9000 }),
         proc(1210, 1200, 'bash', { folder: storefront, project: 'Acme Storefront', started: now - 8900 }),
         proc(1220, 1210, 'node', { command: 'node node_modules/.bin/vite --port 5173', folder: storefront, project: 'Acme Storefront', terminal: true, ports: [5173], cpu: 0.6, memory: 210 * MB, started: now - 8800 }),
-        proc(1230, 1220, 'esbuild', { command: 'esbuild --service=0.24.0 --ping', folder: storefront, project: 'Acme Storefront', terminal: true, memory: 24 * MB, started: now - 8790 }),
+        proc(1230, 1220, 'esbuild', { command: 'esbuild --service --ping', folder: storefront, project: 'Acme Storefront', terminal: true, memory: 24 * MB, started: now - 8790 }),
         proc(1300, 1000, 'node', { command: 'node node_modules/.bin/storybook dev -p 6006', folder: design, project: 'Design System', terminal: true, orphan: true, ports: [6006], cpu: 4.1, memory: 540 * MB, started: now - 26000 }),
-        proc(1310, 1300, 'esbuild', { command: 'esbuild --service=0.24.0 --ping', folder: design, project: 'Design System', terminal: true, orphan: false, memory: 22 * MB, started: now - 25990 }),
+        proc(1310, 1300, 'esbuild', { command: 'esbuild --service --ping', folder: design, project: 'Design System', terminal: true, orphan: false, memory: 22 * MB, started: now - 25990 }),
         proc(1400, 1000, 'Task Proxy', { exe: '/opt/task-proxy/task-proxy', taskProxy: true, cpu: 0.8, memory: 310 * MB, started: now - 7000 }),
         proc(1410, 1400, 'pwsh', { command: 'pwsh -NoLogo -File PowerShell/RunTests.ps1', folder: storefront, project: 'Acme Storefront', taskProxy: true, cpu: 9.5, memory: 160 * MB, started: now - 40 }),
     ];

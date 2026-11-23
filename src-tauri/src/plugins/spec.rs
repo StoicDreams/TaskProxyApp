@@ -147,7 +147,7 @@ mod tests {
                 patch: 2
             }
         );
-        assert_eq!(v("0.12.0").to_string(), "0.12.0");
+        assert_eq!(v("3.12.0").to_string(), "3.12.0");
         for bad in ["0.1", "0.1.x", "", "1.2.3.4", "v0.1.0"] {
             assert!(SpecVersion::parse(bad).is_err(), "{}", bad);
         }

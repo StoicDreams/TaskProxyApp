@@ -185,17 +185,17 @@ test.describe('catalog', () => {
     });
 
     test('a newer version is offered as an update, on both tabs', async ({ page }) => {
-        const manager = await openManager(page, { catalog: [entry('0.10.0')], catalogManifests: { jira: { ...jira, version: '0.10.0' } } });
+        const manager = await openManager(page, { catalog: [entry('2.10.0')], catalogManifests: { jira: { ...jira, version: '2.10.0' } } });
         await expect(tabButton(manager, 'available')).toHaveText('Available (1 update)');
         await expect(list(manager, 'installed').locator('[data-pick="jira"]')).toContainText('Update');
-        await expect(detail(manager, 'installed').locator('webui-button', { hasText: 'Update to v0.10.0' })).toBeVisible();
+        await expect(detail(manager, 'installed').locator('webui-button', { hasText: 'Update to v2.10.0' })).toBeVisible();
         await tabButton(manager, 'available').click();
-        await expect(detail(manager, 'available').locator('[data-catalog="jira"] webui-button')).toHaveText('Update to v0.10.0');
+        await expect(detail(manager, 'available').locator('[data-catalog="jira"] webui-button')).toHaveText('Update to v2.10.0');
     });
 
     test('a plugin for a plugin spec this app does not support says which side to update, and offers no install', async ({ page }) => {
         const reason = 'Jira supports plugin spec 0.2.0, and this version of Task Proxy supports 0.1.1. Update Task Proxy to use it.';
-        const manager = await openManager(page, { plugins: [], catalog: [entry('0.4.0', { spec: ['0.2.0'], incompatible: reason })] });
+        const manager = await openManager(page, { plugins: [], catalog: [entry('2.4.0', { spec: ['0.2.0'], incompatible: reason })] });
         await tabButton(manager, 'available').click();
         await expect(list(manager, 'available').locator('[data-pick="jira"]')).toContainText('Needs an update');
         const card = detail(manager, 'available').locator('[data-catalog="jira"]');
