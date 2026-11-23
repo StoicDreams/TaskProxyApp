@@ -391,7 +391,8 @@
             t._queued = true;
             queueMicrotask(() => {
                 t._queued = false;
-                if (t.plugin && t.page) t.load();
+                // Removed before the microtask ran, such as when the page changes or the window closes, it has nothing to load.
+                if (t.isConnected && t.plugin && t.page) t.load();
             });
         },
         /** Where the page is drawn: the split's own side while a page shows beside it, or the element itself. */
@@ -439,6 +440,9 @@
                 if (t._shownKey !== key) t.draw(cached, key);
             } else if (replacing || !content.firstChild) t.showLoading();
             // A plugin's settings belong to projects, so one not set up for this project shows how to set it up.
+            // A plugin page that opens as the app starts can be drawn before app.js has set up the proxy.
+            await whenProxyReady();
+            if (load !== t._load) return;
             const plugins = await webui.proxy.plugins.list(() => undefined);
             if (load !== t._load) return;
             const info = (plugins || []).find(item => item.id === plugin);
