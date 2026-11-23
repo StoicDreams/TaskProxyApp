@@ -7,9 +7,10 @@
  * own steps to set it up, with switches and choices in place of commands and addresses wherever they can be. Only the
  * advanced choices, another server or another command, are typed in.
  *
- * What is saved is one of the three kinds services/ai.rs knows: an OpenAI-compatible server, the Anthropic API, or a
- * command. Which choice a provider was made with is read back from its kind, address, and command (presetOf), so the
- * backend keeps nothing extra. API keys are kept by the backend, and this page only learns whether one is set.
+ * What is saved is one of the kinds services/ai.rs knows: an OpenAI-compatible server, the Anthropic API, AWS Bedrock,
+ * Google Vertex AI, or a command. Which choice a provider was made with is read back from its kind, address, and
+ * command (presetOf), so the backend keeps nothing extra. A command-line tool other than Claude Code, such as Codex or
+ * the Copilot CLI, is saved as the one command its choice writes, which is how it is known again. API keys are kept by the backend, and this page only learns whether one is set.
  *
  * Each model has its own limits, how long to wait for it and the most characters sent to it at once, since models
  * differ, even one provider's. A limit left empty is the one suggested for that model, from the table services/ai.rs
@@ -49,8 +50,22 @@
      * Manager, never copied to paste somewhere, and can be a function of `options.input`, a value the user can change
      * first, such as which model to download. `options.name` names its terminal. A url is a site to open.
      */
+    const GROUPS = {
+        subscription: 'With a subscription you already have',
+        local: 'Free, on your computer',
+        key: 'Pay for what you use, with an API key',
+        cloud: 'Through your company\'s cloud',
+        advanced: 'Advanced',
+    };
+    /** A step that installs a tool, with the installer for the system Task Proxy runs on. */
+    const install = (what, unix, windows, url) => [`Install ${what}. Run installs it, on Linux, macOS, or Windows, and you can watch it in the Terminal Manager.`, () => (hostIsWindows ? windows : unix), url, { name: `Install ${what}` }];
+    const KEY_STEPS = (site, url) => [
+        [`Sign in to ${site} and create an API key.`, null, url],
+        ['Paste the key below, then Save. Its models are listed, and you can Test.'],
+    ];
     const PRESETS = {
         claude: {
+            group: 'subscription',
             title: 'Claude Code, with a Claude subscription',
             name: 'Claude Code',
             about: 'Uses the Claude Pro or Max plan you already have, through Claude Code on this computer. No API key, and nothing extra to pay.',
@@ -61,7 +76,91 @@
                 ['Choose the models you want below, then Save and Test.'],
             ],
         },
+        codex: {
+            group: 'subscription',
+            title: 'Codex, with a ChatGPT plan',
+            name: 'Codex',
+            about: 'Uses the ChatGPT Plus, Pro, Business, or Enterprise plan you already have, through OpenAI\'s Codex on this computer. No API key, and nothing extra to pay. It can read files in the project to understand what changed, and what it reads is sent to OpenAI, but it can never change them from here.',
+            kind: 'command',
+            // Codex's read-only sandbox, without the user's own Codex settings or rules, saving no session, with the
+            // request on its input. A project's own Codex settings only load when it is trusted with --trust.
+            command: 'codex exec --sandbox read-only --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules -m {model} -',
+            models: [
+                { id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol' },
+                { id: 'gpt-6.2-astra', name: 'GPT-6.2 Astra' },
+                { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra' },
+            ],
+            modelsHelp: 'Sol is for everyday writing, Astra the most capable, and Terra the fastest. Add any model Codex offers.',
+            steps: [
+                install('Codex', 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'irm https://chatgpt.com/codex/install.ps1 | iex', 'https://learn.chatgpt.com/docs/auth'),
+                ['Sign in once. Run starts Codex\'s sign-in in the Terminal Manager: choose Sign in with ChatGPT in the browser it opens.', 'codex login', null, { name: 'Sign in to Codex' }],
+                ['Choose the models you want below, then Save and Test.'],
+            ],
+        },
+        copilot: {
+            group: 'subscription',
+            title: 'GitHub Copilot, with a Copilot plan',
+            name: 'GitHub Copilot',
+            about: 'Uses the GitHub Copilot plan you already have, through the Copilot CLI on this computer. No API key, and each request counts toward your plan\'s requests. It can read files in the project, and what it reads is sent to GitHub, but it can only use its tools that read.',
+            kind: 'command',
+            // Only Copilot's tools that read, never asking anything, without the repo's custom instructions or the
+            // built-in MCP servers, printing only its answer. Piped input is the request when -p isn't given.
+            command: 'copilot -s --no-color --no-ask-user --no-custom-instructions --disable-builtin-mcps --no-auto-update --available-tools="view,glob,grep" --model {model}',
+            models: [
+                { id: 'auto', name: 'Copilot chooses' },
+                { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5' },
+                { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+            ],
+            modelsHelp: 'Copilot chooses picks a model for each request. Type /model in the Copilot CLI to see the others your plan has, and add them here.',
+            steps: [
+                install('the Copilot CLI', 'curl -fsSL https://gh.io/copilot-install | bash', 'winget install GitHub.Copilot', 'https://docs.github.com/en/copilot/how-tos/copilot-cli'),
+                ['Sign in once. Run starts the sign-in in the Terminal Manager: follow it in the browser it opens.', 'copilot login', null, { name: 'Sign in to GitHub Copilot' }],
+                ['Choose the models you want below, then Save and Test.'],
+            ],
+        },
+        cursor: {
+            group: 'subscription',
+            title: 'Cursor, with a Cursor plan',
+            name: 'Cursor',
+            about: 'Uses the Cursor plan you already have, through Cursor\'s command-line agent on this computer. It runs in Cursor\'s Ask mode, which reads the project without changing it, and what it reads is sent to Cursor. It does load the project\'s own Cursor rules.',
+            kind: 'command',
+            // Cursor takes the request only as an argument, so it is read from the input first. Ask mode explores
+            // without changing anything. --trust only skips Cursor's own question about the folder, which can't be
+            // answered here: Task Proxy has already asked whether the project is trusted.
+            command: 'agent -p --mode ask --output-format text --trust --model {model} ([Console]::In.ReadToEnd())',
+            models: [
+                { id: 'auto', name: 'Cursor chooses' },
+                { id: 'gpt-5', name: 'GPT-5' },
+            ],
+            modelsHelp: 'Add any model your Cursor plan has, by the name Cursor uses for it.',
+            // Windows passes at most about 32,000 characters to a program, and Cursor takes the request that way.
+            limits: () => (hostIsWindows ? { maxChars: 28000 } : {}),
+            steps: [
+                install('Cursor\'s command line', 'curl https://cursor.com/install -fsS | bash', "irm 'https://cursor.com/install?win32=true' | iex", 'https://cursor.com/docs/cli/overview'),
+                ['Sign in once. Run starts the sign-in in the Terminal Manager: follow it in the browser it opens.', 'agent login', null, { name: 'Sign in to Cursor' }],
+                ['Choose the models you want below, then Save and Test.'],
+            ],
+        },
+        qwen: {
+            group: 'subscription',
+            title: 'Qwen Code, with a Qwen plan',
+            name: 'Qwen Code',
+            about: 'Uses your Qwen account through Qwen Code on this computer. It runs in plan mode, which can read the project but never change it or run commands, and what it reads is sent to Qwen.',
+            kind: 'command',
+            command: 'qwen --approval-mode plan -o text -m {model}',
+            models: [
+                { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus' },
+                { id: 'qwen3.8-max', name: 'Qwen3.8 Max' },
+            ],
+            modelsHelp: 'Add any model your Qwen plan has.',
+            steps: [
+                install('Qwen Code', 'curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash', 'irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1 | iex', 'https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/'),
+                ['Sign in once. Run starts Qwen Code in the Terminal Manager: type /auth, choose your Qwen account, sign in in the browser it opens, then type /quit.', 'qwen', null, { name: 'Sign in to Qwen Code' }],
+                ['Choose the models you want below, then Save and Test.'],
+            ],
+        },
         ollama: {
+            group: 'local',
             title: 'Ollama, free models on your computer',
             name: 'Ollama',
             about: 'Runs open models such as Llama, Qwen, and Gemma on your own computer, so nothing you send leaves it. Free, but slower than the paid services unless you have a strong graphics card.',
@@ -74,6 +173,7 @@
             ],
         },
         lmstudio: {
+            group: 'local',
             title: 'LM Studio, free models on your computer',
             name: 'LM Studio',
             about: 'An app for finding, downloading, and running open models on your own computer, so nothing you send leaves it. Free.',
@@ -86,6 +186,7 @@
             ],
         },
         openai: {
+            group: 'key',
             title: 'OpenAI API key (GPT models)',
             name: 'OpenAI',
             about: 'OpenAI\'s models through an API key. You pay OpenAI for what you use, separately from a ChatGPT subscription.',
@@ -98,6 +199,7 @@
             ],
         },
         anthropic: {
+            group: 'key',
             title: 'Anthropic API key (Claude models)',
             name: 'Claude API',
             about: 'Claude through an API key. You pay Anthropic for what you use, separately from a Claude subscription. With a Claude subscription, choose Claude Code instead.',
@@ -108,7 +210,88 @@
                 ['Paste the key below, then Save. Its models are listed, and you can Test.'],
             ],
         },
+        gemini: {
+            group: 'key',
+            title: 'Google Gemini API key',
+            name: 'Gemini',
+            about: 'Google\'s Gemini models through an API key from Google AI Studio. Some models are free to use within limits, but Google may use what is sent on the free tier to improve its products.',
+            kind: 'openAi',
+            url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+            key: true,
+            steps: KEY_STEPS('Google AI Studio', 'https://aistudio.google.com/apikey'),
+        },
+        mistral: {
+            group: 'key',
+            title: 'Mistral API key',
+            name: 'Mistral',
+            about: 'Mistral\'s models, such as Mistral Large and Codestral, through an API key. A free plan lets you try them.',
+            kind: 'openAi',
+            url: 'https://api.mistral.ai/v1',
+            key: true,
+            steps: KEY_STEPS('Mistral\'s console', 'https://console.mistral.ai/api-keys'),
+        },
+        xai: {
+            group: 'key',
+            title: 'xAI API key (Grok models)',
+            name: 'xAI',
+            about: 'xAI\'s Grok models through an API key. You pay xAI for what you use.',
+            kind: 'openAi',
+            url: 'https://api.x.ai/v1',
+            key: true,
+            steps: KEY_STEPS('the xAI console', 'https://console.x.ai'),
+        },
+        deepseek: {
+            group: 'key',
+            title: 'DeepSeek API key',
+            name: 'DeepSeek',
+            about: 'DeepSeek\'s models, strong at code and low in cost, through an API key. You pay DeepSeek for what you use.',
+            kind: 'openAi',
+            url: 'https://api.deepseek.com',
+            key: true,
+            steps: KEY_STEPS('DeepSeek\'s platform', 'https://platform.deepseek.com/api_keys'),
+        },
+        groq: {
+            group: 'key',
+            title: 'Groq API key (very fast open models)',
+            name: 'Groq',
+            about: 'Open models such as gpt-oss and Llama, answered very quickly, through an API key. A free tier lets you try them.',
+            kind: 'openAi',
+            url: 'https://api.groq.com/openai/v1',
+            key: true,
+            steps: KEY_STEPS('the Groq console', 'https://console.groq.com/keys'),
+        },
+        cerebras: {
+            group: 'key',
+            title: 'Cerebras API key (very fast open models)',
+            name: 'Cerebras',
+            about: 'Open models such as gpt-oss and Qwen, answered very quickly, through an API key. A free tier lets you try them, with less context.',
+            kind: 'openAi',
+            url: 'https://api.cerebras.ai/v1',
+            key: true,
+            steps: KEY_STEPS('Cerebras Cloud', 'https://cloud.cerebras.ai'),
+        },
+        together: {
+            group: 'key',
+            title: 'Together AI API key (open models)',
+            name: 'Together AI',
+            about: 'Many open models, such as DeepSeek, Qwen, GLM, and gpt-oss, through one API key. You pay Together for what you use.',
+            kind: 'openAi',
+            url: 'https://api.together.ai/v1',
+            key: true,
+            steps: KEY_STEPS('Together AI', 'https://api.together.ai/settings/api-keys'),
+        },
+        fireworks: {
+            group: 'key',
+            title: 'Fireworks AI API key (open models)',
+            name: 'Fireworks AI',
+            about: 'Many open models, such as Kimi, DeepSeek, and Qwen, through one API key. You pay Fireworks for what you use.',
+            kind: 'openAi',
+            url: 'https://api.fireworks.ai/inference/v1',
+            key: true,
+            steps: KEY_STEPS('Fireworks AI', 'https://app.fireworks.ai/settings/users/api-keys'),
+        },
         openrouter: {
+            group: 'key',
             title: 'OpenRouter API key (many models)',
             name: 'OpenRouter',
             about: 'One API key for models from many companies, some of them free. You pay OpenRouter for what you use.',
@@ -120,7 +303,49 @@
                 ['Paste the key below, then Save. Its models are listed, and you can Test.'],
             ],
         },
+        azure: {
+            group: 'cloud',
+            title: 'Azure OpenAI or Azure AI Foundry',
+            name: 'Azure OpenAI',
+            about: 'Models your company has deployed in Azure, such as GPT models, through the deployment\'s endpoint and key. What you send stays within your company\'s Azure agreement.',
+            kind: 'openAi',
+            key: true,
+            steps: [
+                ['In the Azure portal, open the Azure OpenAI or Foundry resource. Its Keys and Endpoint page has the endpoint and a key, and its deployments are listed in Azure AI Foundry.', null, 'https://ai.azure.com'],
+                ['Paste the endpoint and key below, and add each deployment by its name. Then Save and Test.'],
+            ],
+        },
+        bedrock: {
+            group: 'cloud',
+            title: 'AWS Bedrock',
+            name: 'AWS Bedrock',
+            about: 'Models in your company\'s AWS account, such as Claude, Llama, Nova, and Mistral, through a Bedrock API key. What you send stays within your company\'s AWS agreement.',
+            kind: 'bedrock',
+            key: true,
+            steps: [
+                ['In the AWS console, open Amazon Bedrock, choose API keys, and create one. A short-term key lasts up to 12 hours, and a long-term key until the date you choose. Turn on access to the models you want under Model access.', null, 'https://console.aws.amazon.com/bedrock/home#/api-keys'],
+                ['Type the region the key is for, paste the key below, then Save. Its models are listed, and you can Test.'],
+            ],
+        },
+        vertex: {
+            group: 'cloud',
+            title: 'Google Vertex AI',
+            name: 'Vertex AI',
+            about: 'Gemini and Claude models in your company\'s Google Cloud project, signed in with the Google Cloud CLI. What you send stays within your company\'s Google Cloud agreement.',
+            kind: 'vertex',
+            models: [
+                { id: 'google/gemini-3.5-flash', name: 'Gemini 3.5 Flash' },
+                { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5' },
+            ],
+            modelsHelp: 'Gemini models start with google/, and Claude models with claude-. Claude models must be turned on in Model Garden first.',
+            steps: [
+                ['Install the Google Cloud CLI.', null, 'https://cloud.google.com/sdk/docs/install'],
+                ['Sign in once. Run starts the sign-in in the Terminal Manager: follow it in the browser it opens. Task Proxy then gets a new access token from it each hour.', 'gcloud auth login', null, { name: 'Sign in to Google Cloud' }],
+                ['Type the project ID and location below, choose the models you want, then Save and Test.'],
+            ],
+        },
         server: {
+            group: 'advanced',
             title: 'Another OpenAI-compatible server (advanced)',
             name: '',
             about: 'Any server that answers like OpenAI\'s chat completions, such as vLLM, llama.cpp\'s server, Groq, or one at your work.',
@@ -131,6 +356,7 @@
             ],
         },
         command: {
+            group: 'advanced',
             title: 'Another command (advanced)',
             name: '',
             about: 'Any program that reads a request and prints its answer, such as another AI tool\'s command line or your own script.',
@@ -231,16 +457,55 @@
         const value = Number(`${text ?? ''}`.trim());
         return `${text ?? ''}`.trim() && Number.isFinite(value) && value > 0 ? Math.round(value) : undefined;
     }
+    /** Azure OpenAI and Azure AI Foundry, whose models are deployments typed in, as is_azure_host in services/ai.rs. */
+    const isAzureHost = host => ['.openai.azure.com', '.services.ai.azure.com', '.cognitiveservices.azure.com'].some(end => host.endsWith(end));
+    /**
+     * An Azure endpoint as the portal shows it, such as https://my-resource.openai.azure.com/, or just the resource's
+     * name, as the address of its v1 API. `{url}` or `{problem}`.
+     */
+    function azureUrl(typed) {
+        const text = `${typed || ''}`.trim();
+        if (!text) return { problem: 'Type the endpoint from the resource\'s Keys and Endpoint page.' };
+        if (/^[a-z0-9][a-z0-9-]*$/i.test(text)) return { url: `https://${text.toLowerCase()}.openai.azure.com/openai/v1` };
+        let url = null;
+        try { url = new URL(/^[a-z]+:\/\//i.test(text) ? text : `https://${text}`); } catch { /* Said below. */ }
+        if (!url || url.protocol !== 'https:' || !isAzureHost(url.hostname)) {
+            return { problem: `"${text}" isn't an Azure endpoint. It looks like https://my-resource.openai.azure.com/.` };
+        }
+        return { url: `https://${url.hostname}/openai/v1` };
+    }
+    /** An AWS region as Bedrock's runtime address, as services/ai.rs checks it. `{url}` or `{problem}`. */
+    function bedrockUrl(typed) {
+        const region = `${typed || ''}`.trim().toLowerCase();
+        if (!/^[a-z]{2}(-[a-z]+)+-\d$/.test(region)) return { problem: region ? `"${region}" isn't an AWS region. A region looks like us-east-1.` : 'Type the AWS region your key is for, such as us-east-1.' };
+        return { url: `https://bedrock-runtime.${region}.amazonaws.com` };
+    }
+    /** A Google Cloud project and location as Vertex AI's address, as services/ai.rs checks it. `{url}` or `{problem}`. */
+    function vertexUrl(project, location) {
+        const id = `${project || ''}`.trim().toLowerCase();
+        const where = `${location || ''}`.trim().toLowerCase() || 'global';
+        if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(id)) return { problem: id ? `"${id}" isn't a Google Cloud project ID. A project ID is 6 to 30 lowercase letters, digits, and hyphens.` : 'Type your Google Cloud project ID.' };
+        if (!/^[a-z0-9-]+$/.test(where)) return { problem: `"${where}" isn't a location. Use global, or a region such as us-central1.` };
+        const host = where === 'global' ? 'aiplatform.googleapis.com' : `${where}-aiplatform.googleapis.com`;
+        return { url: `https://${host}/v1/projects/${id}/locations/${where}` };
+    }
     /** Which choice a saved provider was set up with, read from what was saved. */
     function presetOf(provider) {
         if (provider.preset) return provider.preset;
         if (provider.kind === 'anthropic') return 'anthropic';
-        if (provider.kind === 'command') return claudeCommand(provider.command) ? 'claude' : 'command';
+        if (provider.kind === 'bedrock') return 'bedrock';
+        if (provider.kind === 'vertex') return 'vertex';
+        if (provider.kind === 'command') {
+            if (claudeCommand(provider.command)) return 'claude';
+            const command = `${provider.command || ''}`.trim();
+            return Object.keys(PRESETS).find(key => PRESETS[key].command === command) || 'command';
+        }
         let url = null;
         try { url = new URL(provider.baseUrl); } catch { /* An address that isn't one is shown as typed. */ }
         if (!url) return 'server';
-        if (url.hostname === 'api.openai.com') return 'openai';
-        if (url.hostname === 'openrouter.ai') return 'openrouter';
+        const known = Object.keys(PRESETS).find(key => PRESETS[key].url && new URL(PRESETS[key].url).hostname === url.hostname);
+        if (known) return known;
+        if (url.protocol === 'https:' && isAzureHost(url.hostname)) return 'azure';
         // Ollama and LM Studio are saved as a plain address, http://host:port/v1. Each is known by its usual port, or
         // on another port by keeping its name, since another server on a port of its own is just as likely.
         if (url.protocol === 'http:' && url.pathname.replace(/\/$/, '') === '/v1' && !url.search && !url.hash) {
@@ -348,7 +613,7 @@
         },
         build() {
             const t = this;
-            const privacy = el('p', { class: 'ai-privacy' }, 'AI drafts send what you are working on to the provider you choose: the files you include in a commit or review, the page or script you are editing, or the files you import. Ollama and LM Studio keep it on this computer. Claude Code and the API providers send it to their servers. Task Proxy\'s variables and their values, secrets included, are never sent, but with Look at the project on, Claude Code can read any file in the project, such as a .env file or a key kept there, and send it too. Every draft lands where you can change it before anything is saved or committed.');
+            const privacy = el('p', { class: 'ai-privacy' }, 'AI drafts send what you are working on to the provider you choose: the files you include in a commit or review, the page or script you are editing, or the files you import. Ollama and LM Studio keep it on this computer. The tools you use with a subscription, such as Claude Code, Codex, and GitHub Copilot, and the API and cloud providers send it to their servers. Task Proxy\'s variables and their values, secrets included, are never sent, but with Look at the project on, Claude Code can read any file in the project, such as a .env file or a key kept there, and send it too, as Codex, GitHub Copilot, Cursor, and Qwen Code always can. Every draft lands where you can change it before anything is saved or committed.');
             const tabs = webui.create('webui-tabs', { class: 'ai-settings-tabs' });
             const tab = (cls, label, icon, ...content) => {
                 tabs.appendChild(webui.create('webui-button', { slot: 'tabs', class: `ai-tab-${cls}`, 'start-icon': icon, text: label }));
@@ -544,7 +809,12 @@
             if (!card._preset) {
                 const list = el('div', { class: 'ai-choices', role: 'radiogroup', 'aria-label': 'What do you want to use?' });
                 const group = `ai-preset-${Math.random().toString(36).slice(2, 7)}`;
+                let heading = null;
                 Object.entries(PRESETS).forEach(([key, preset]) => {
+                    if (preset.group !== heading) {
+                        heading = preset.group;
+                        list.appendChild(el('h5', { class: 'ai-choice-group' }, GROUPS[heading]));
+                    }
                     const row = el('label', { class: `ai-choice ai-choice-${key}` });
                     const radio = el('input', { type: 'radio', name: group, value: key });
                     radio.addEventListener('change', () => {
@@ -704,39 +974,82 @@
                 address.addEventListener('input', dirty);
                 parts.push(field('Server address', address, 'Where its API starts, usually ending in /v1.'));
                 read.baseUrl = () => address.value.trim();
+            } else if (card._preset === 'azure') {
+                const address = el('input', { type: 'url', id: id('url'), class: 'ai-azure-endpoint', placeholder: 'https://my-resource.openai.azure.com/' });
+                let saved = null;
+                try { saved = new URL(provider.baseUrl); } catch { /* A new one has none yet. */ }
+                address.value = saved ? `https://${saved.hostname}/` : '';
+                address.addEventListener('input', dirty);
+                parts.push(field('Endpoint', address, 'From the resource\'s Keys and Endpoint page, or just the resource\'s name.'));
+                read.baseUrl = () => azureUrl(address.value).url || address.value.trim();
+                read.problem = () => azureUrl(address.value).problem || null;
+            } else if (card._preset === 'bedrock') {
+                const region = el('input', { type: 'text', id: id('region'), class: 'ai-region', placeholder: 'us-east-1' });
+                region.value = provider.baseUrl?.match(/^https:\/\/bedrock-runtime\.([^.]+)\./)?.[1] || '';
+                region.addEventListener('input', dirty);
+                parts.push(field('Region', region, 'The AWS region your key is for, such as us-east-1, eu-west-1, or ap-northeast-1. A short-term key only works in its own region.'));
+                read.baseUrl = () => bedrockUrl(region.value).url || '';
+                read.problem = () => bedrockUrl(region.value).problem || null;
+            } else if (card._preset === 'vertex') {
+                const found = provider.baseUrl?.match(/\/projects\/([^/]+)\/locations\/([^/]+)$/);
+                const project = el('input', { type: 'text', id: id('project'), class: 'ai-project', placeholder: 'my-project' });
+                project.value = found?.[1] || '';
+                const location = el('input', { type: 'text', id: id('location'), class: 'ai-location', placeholder: 'global' });
+                location.value = found?.[2] || 'global';
+                [project, location].forEach(input => input.addEventListener('input', dirty));
+                parts.push(field('Project ID', project, 'Your Google Cloud project\'s ID, as the console shows it.'));
+                parts.push(field('Location', location, 'global, unless your company keeps its data in one region, such as us-central1 or europe-west4.'));
+                read.baseUrl = () => vertexUrl(project.value, location.value).url || '';
+                read.problem = () => vertexUrl(project.value, location.value).problem || null;
             } else if (card._preset === 'command') {
                 const command = el('input', { type: 'text', id: id('command'), class: 'ai-command', placeholder: 'my-ai --model {model}' });
                 command.value = provider.command || '';
                 command.addEventListener('input', dirty);
                 parts.push(field('Command', command, 'Runs in PowerShell in the project\'s folder. The request is sent to its input, and what it prints is the draft.'));
+                read.command = () => command.value;
+            } else if (preset.command) {
+                read.command = () => preset.command;
+            }
+            // Models typed in, a row each: a command's, which can't be listed, and Azure's and Vertex AI's, whose
+            // servers don't list the ones that can be used. A choice that names models starts with them.
+            if (card._preset === 'command' || card._preset === 'azure' || preset.models) {
+                const azure = card._preset === 'azure';
                 const rows = el('div', { class: 'ai-command-models' });
                 const addRow = (model = { name: '', id: '' }) => {
                     const row = el('div', { class: 'ai-command-model' });
                     const shown = el('input', { type: 'text', class: 'ai-command-model-name', placeholder: 'Name to show', 'aria-label': 'Name to show' });
                     shown.value = model.name || '';
-                    const value = el('input', { type: 'text', class: 'ai-command-model-value', placeholder: 'Value for {model}', 'aria-label': 'Value for {model}' });
+                    const valueLabel = azure ? 'Deployment name' : preset.kind === 'command' ? 'Value for {model}' : 'Model ID';
+                    const value = el('input', { type: 'text', class: 'ai-command-model-value', placeholder: valueLabel, 'aria-label': valueLabel });
                     value.value = model.id || '';
                     [shown, value].forEach(input => input.addEventListener('input', () => { drawLimits(); dirty(); }));
                     row.append(shown, value, button('ai-command-model-remove', 'Remove', () => { row.remove(); drawLimits(); dirty(); }, 'trash', 'danger'));
                     rows.appendChild(row);
                 };
-                (provider.models || []).forEach(addRow);
+                const startWith = provider.id || provider.restored ? (provider.models || []) : (preset.models || []);
+                startWith.forEach(addRow);
                 if (!rows.children.length) addRow();
-                const more = button('ai-command-model-add', 'Add Model', () => { addRow(); drawLimits(); dirty(); }, 'plus', 'success');
+                const more = button('ai-command-model-add', azure ? 'Add Deployment' : 'Add Model', () => { addRow(); drawLimits(); dirty(); }, 'plus', 'success');
                 const holder = el('div', {});
                 holder.append(rows, more);
-                parts.push(field('Models', holder, 'Leave the value empty to use the name.'));
-                read.command = () => command.value;
+                const help = azure ? 'Each deployment by its name in Azure, with a name to show if you like.' : preset.modelsHelp || 'Leave the value empty to use the name.';
+                parts.push(field(azure ? 'Deployments' : 'Models', holder, help));
                 read.models = () => [...rows.querySelectorAll('.ai-command-model')].map(row => {
                     const shown = row.querySelector('.ai-command-model-name').value.trim();
                     const value = row.querySelector('.ai-command-model-value').value.trim() || shown;
                     return { name: shown === value ? '' : shown, id: value };
                 }).filter(model => model.id);
+                const problem = read.problem;
+                read.problem = () => problem() || (read.models().length ? null : `Add at least one ${azure ? 'deployment' : 'model'}.`);
+            }
+            // A choice's own limits for a new provider's models, such as Cursor's on Windows.
+            if (!provider.id && !provider.restored && preset.limits) {
+                (preset.models || []).forEach(model => limitValues.set(model.id, { ...preset.limits() }));
             }
 
             let clearKey = false;
             let key = null;
-            if (preset.kind !== 'command') {
+            if (preset.kind !== 'command' && preset.kind !== 'vertex') {
                 key = el('input', { type: 'password', id: id('key'), class: 'ai-key', autocomplete: 'off', placeholder: provider.keySet ? 'Saved. Type a new key to replace it.' : 'Not set' });
                 key.value = provider.draftKey || '';
                 key.addEventListener('input', dirty);
@@ -789,7 +1102,7 @@
             if (provider.lastError) showError(provider.lastError);
             const buttons = el('div', { class: 'ai-provider-buttons' });
             const refresh = webui.create('webui-button', { theme: 'info', 'start-icon': 'refresh', label: 'Refresh Models', class: 'ai-refresh' });
-            if (preset.kind !== 'command') {
+            if (!read.models) {
                 listModels(provider.models || []);
                 parts.push(field('Models to show', serverModels, 'Uncheck any you don\'t want to choose from.'));
                 refresh.addEventListener('click', async () => {

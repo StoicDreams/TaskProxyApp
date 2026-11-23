@@ -12,14 +12,27 @@
     const TAB_KEY = 'session-tools-tab';
     /** The order the user dragged the tabs into, by tool id, kept with the app's data. */
     const ORDER_KEY = 'app-tools-order';
+    /**
+     * Draws a tool kept as a hidden element of its own, such as app-task-manager, once its component has loaded. The
+     * loader loads it as the app starts, and a tab opened before then, as on a slow machine, would otherwise find it
+     * without its methods and draw nothing. A tab taken away meanwhile isn't drawn into.
+     */
+    const fromElement = (tag, draw) => (t, target, options) => {
+        const el = t.querySelector(tag);
+        if (!el) return;
+        customElements.whenDefined(tag).then(() => {
+            if (!target.isConnected) return;
+            draw(el, target, options);
+        });
+    };
     /** Each tab: its id, label, icon, and how its tool draws into the tab, given the tab's content and any options. */
     const TOOLS = [
-        { id: 'terminals', label: 'Terminals', icon: 'terminal', draw: (t, target, options) => t.querySelector('app-terminals')?.openDrawer({ ...options, target }) },
-        { id: 'tasks', label: 'Task Manager', icon: 'gauge', draw: (t, target) => t.querySelector('app-task-manager')?.open({ target }) },
-        { id: 'variables', label: 'Variables', icon: 'dollar', draw: (t, target) => t.querySelector('app-var-manager')?.open({ target }) },
+        { id: 'terminals', label: 'Terminals', icon: 'terminal', draw: fromElement('app-terminals', (el, target, options) => el.openDrawer({ ...options, target })) },
+        { id: 'tasks', label: 'Task Manager', icon: 'gauge', draw: fromElement('app-task-manager', (el, target) => el.open({ target })) },
+        { id: 'variables', label: 'Variables', icon: 'dollar', draw: fromElement('app-var-manager', (el, target) => el.open({ target })) },
         { id: 'alerts', label: 'Alerts', icon: 'bell', draw: (t, target) => target.replaceChildren(webui.create('webui-alerts', { panel: '' })) },
-        { id: 'plugins', label: 'Plugins', icon: 'cloud_puzzle-piece', draw: (t, target, options) => t.querySelector('app-plugins-drawer')?.open(options.pluginId, { target }) },
-        { id: 'icons', label: 'Icons & Emojis', icon: 'icons', draw: (t, target) => t.querySelector('app-icon-drawer')?.open({ target }) },
+        { id: 'plugins', label: 'Plugins', icon: 'cloud_puzzle-piece', draw: fromElement('app-plugins-drawer', (el, target, options) => el.open(options.pluginId, { target })) },
+        { id: 'icons', label: 'Icons & Emojis', icon: 'icons', draw: fromElement('app-icon-drawer', (el, target) => el.open({ target })) },
         {
             id: 'theme', label: 'Theme', icon: 'palette', draw: (t, target) => {
                 // Drawn once and kept: its tiles are slow to lay out the first time, for their fonts and textures.
@@ -32,7 +45,7 @@
                 target.replaceChildren(panel);
             },
         },
-        { id: 'accessibility', label: 'Accessibility', icon: 'universal-access', draw: (t, target) => t.querySelector('app-accessibility')?.open({ target }) },
+        { id: 'accessibility', label: 'Accessibility', icon: 'universal-access', draw: fromElement('app-accessibility', (el, target) => el.open({ target })) },
         // The sign-in at the top, and the copyright and Powered by at the bottom, where the app's footer was.
         { id: 'account', label: 'Account', icon: 'user', draw: (t, target) => target.replaceChildren(webui.create('app-account-panel', { class: 'tools-fill', since: '2016', company: 'Stoic Dreams' })) },
     ];

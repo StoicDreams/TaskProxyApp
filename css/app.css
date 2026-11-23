@@ -3139,6 +3139,12 @@ app-ai-settings .ai-choice {
     border-radius: var(--corners);
     cursor: pointer;
 }
+app-ai-settings .ai-choice-group {
+    margin: var(--padding) 0 0;
+}
+app-ai-settings .ai-choice-group:first-child {
+    margin-top: 0;
+}
 app-ai-settings .ai-choice-text {
     display: flex;
     flex-direction: column;

@@ -766,7 +766,13 @@ export function setup(state) {
                     if (item.kind === 'command' && aiModelInSingleQuotes(command)) {
                         throw `${name}'s command has {model} in single quotes. Leave the quotes out, or use double quotes: the model is always passed as one word.`;
                     }
-                    if (item.kind === 'command') {
+                    if (item.kind === 'bedrock' && !/^https:\/\/bedrock-runtime\.[a-z]{2}(-[a-z]+)+-\d\.amazonaws\.com$/.test((item.baseUrl || '').trim())) {
+                        throw `${name} needs its AWS region, such as us-east-1.`;
+                    }
+                    if (item.kind === 'vertex' && !/^https:\/\/([a-z0-9-]+-)?aiplatform\.googleapis\.com\/v1\/projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/locations\/[a-z0-9-]+$/.test((item.baseUrl || '').trim())) {
+                        throw `${name} needs its Google Cloud project and location, such as my-project and global.`;
+                    }
+                    if (item.kind === 'command' || item.kind === 'vertex') {
                         const saved = ai.providers.find(p => item.id && p.id === item.id);
                         const models = (item.models ?? saved?.models ?? []).filter(model => `${model.id ?? ''}`.trim());
                         if (!models.length) throw `${name} needs at least one model.`;
@@ -776,7 +782,8 @@ export function setup(state) {
                     const saved = ai.providers.find(p => item.id && p.id === item.id);
                     const baseUrl = (item.baseUrl || '').trim().replace(/\/+$/, '');
                     const typed = (item.command || '').trim();
-                    const command = (item.kind === 'command' && aiUpgradedCommand(typed)) || typed;
+                    // Vertex AI's token comes from the user's gcloud sign-in, never a command sent to be saved.
+                    const command = item.kind === 'vertex' ? 'gcloud auth print-access-token' : (item.kind === 'command' && aiUpgradedCommand(typed)) || typed;
                     const sameServer = saved && saved.kind === item.kind && saved.baseUrl === baseUrl;
                     const apiKey = item.apiKey === undefined ? (sameServer ? saved.apiKey : null) : (item.apiKey?.trim() || null);
                     // What failed last is kept while the provider is set up the same way.

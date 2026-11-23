@@ -46,9 +46,20 @@ test('adding a provider adds a tab for it, starting with a choice of what to use
     await el.locator('webui-button.ai-add-provider').click();
     await expect(providerTabs(el)).toHaveText(['New Provider']);
     const ollama = provider(el, 0);
+    // Grouped by how each is paid for and where it runs.
+    await expect(ollama.locator('.ai-choice-group')).toHaveText([
+        'With a subscription you already have', 'Free, on your computer', 'Pay for what you use, with an API key',
+        'Through your company\'s cloud', 'Advanced',
+    ]);
     await expect(ollama.locator('.ai-choice strong')).toHaveText([
-        'Claude Code, with a Claude subscription', 'Ollama, free models on your computer', 'LM Studio, free models on your computer',
-        'OpenAI API key (GPT models)', 'Anthropic API key (Claude models)', 'OpenRouter API key (many models)',
+        'Claude Code, with a Claude subscription', 'Codex, with a ChatGPT plan', 'GitHub Copilot, with a Copilot plan',
+        'Cursor, with a Cursor plan', 'Qwen Code, with a Qwen plan',
+        'Ollama, free models on your computer', 'LM Studio, free models on your computer',
+        'OpenAI API key (GPT models)', 'Anthropic API key (Claude models)', 'Google Gemini API key', 'Mistral API key',
+        'xAI API key (Grok models)', 'DeepSeek API key', 'Groq API key (very fast open models)',
+        'Cerebras API key (very fast open models)', 'Together AI API key (open models)', 'Fireworks AI API key (open models)',
+        'OpenRouter API key (many models)',
+        'Azure OpenAI or Azure AI Foundry', 'AWS Bedrock', 'Google Vertex AI',
         'Another OpenAI-compatible server (advanced)', 'Another command (advanced)',
     ]);
     await choose(ollama, 'ollama');
@@ -680,4 +691,137 @@ test('Choose something else takes the name typed for the old choice off its tab'
     await choose(provider(el, 0), 'ollama');
     await expect(providerTabs(el)).toHaveText(['Ollama']);
     await expect(provider(el, 0).locator('input.ai-name')).toHaveValue('Ollama');
+});
+
+const modelValues = card => card.locator('input.ai-command-model-value').evaluateAll(inputs => inputs.map(input => input.value));
+const CODEX_COMMAND = 'codex exec --sandbox read-only --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules -m {model} -';
+const COPILOT_COMMAND = 'copilot -s --no-color --no-ask-user --no-custom-instructions --disable-builtin-mcps --no-auto-update --available-tools="view,glob,grep" --model {model}';
+const CURSOR_COMMAND = 'agent -p --mode ask --output-format text --trust --model {model} ([Console]::In.ReadToEnd())';
+const QWEN_COMMAND = 'qwen --approval-mode plan -o text -m {model}';
+
+test('Codex is set up from a ChatGPT plan by choosing its models, and saved as its own command that can\'t change files', async ({ page }) => {
+    const el = await settings(page);
+    await el.locator('webui-button.ai-add-provider').click();
+    const card = provider(el, 0);
+    await choose(card, 'codex');
+    await expect(providerTabs(el)).toHaveText(['Codex']);
+    // Nothing to type but the models: its command is the choice's own.
+    await expect(card.locator('input.ai-command')).toHaveCount(0);
+    await expect(card.locator('.ai-step-script')).toHaveText(['curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'codex login']);
+    await card.locator('webui-button.ai-run-command').nth(1).click();
+    await expect.poll(() => calls(page, 'run_script').then(list => list.map(call => [call.terminalId, call.scriptContent]))).toEqual([['Sign in to Codex', 'codex login']]);
+    // It starts with Codex's models, which can be changed.
+    await expect.poll(() => modelValues(card)).toEqual(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-terra']);
+    await card.locator('webui-button.ai-command-model-remove').nth(2).click();
+    // A command can't list models, so there is nothing to refresh.
+    await expect(card.locator('webui-button.ai-refresh')).toBeHidden();
+    await save(el);
+    const added = (await saved(page))[0];
+    expect([added.name, added.kind, added.command, added.models]).toEqual(['Codex', 'command', CODEX_COMMAND, [{ id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol' }, { id: 'gpt-6.2-astra', name: 'GPT-6.2 Astra' }]]);
+    await expect(provider(el, 0).locator('.ai-preset-head h4')).toHaveText('Codex, with a ChatGPT plan');
+});
+
+test('GitHub Copilot, Cursor, and Qwen Code read back from their commands, and a command changed by hand is another command', async ({ page }) => {
+    const command = (id, name, line) => ({ id, name, kind: 'command', command: line, models: [{ id: 'auto', name: '' }], hidden: [] });
+    const el = await settings(page, { ai: { providers: [
+        command('copilot', 'Copilot', COPILOT_COMMAND), command('cursor', 'Cursor', CURSOR_COMMAND),
+        command('qwen', 'Qwen', QWEN_COMMAND), command('mine', 'Mine', `${QWEN_COMMAND} --yolo`),
+    ] } });
+    const heads = [0, 1, 2, 3].map(index => provider(el, index).locator('.ai-preset-head h4'));
+    await expect(heads[0]).toHaveText('GitHub Copilot, with a Copilot plan');
+    await expect(heads[1]).toHaveText('Cursor, with a Cursor plan');
+    await expect(heads[2]).toHaveText('Qwen Code, with a Qwen plan');
+    await expect(heads[3]).toHaveText('Another command (advanced)');
+    await expect(provider(el, 3).locator('input.ai-command')).toHaveValue(`${QWEN_COMMAND} --yolo`);
+    // Saved again, each keeps its own command.
+    await provider(el, 0).locator('input.ai-name').fill('GitHub Copilot');
+    await save(el);
+    expect((await saved(page)).map(p => p.command)).toEqual([COPILOT_COMMAND, CURSOR_COMMAND, QWEN_COMMAND, `${QWEN_COMMAND} --yolo`]);
+});
+
+test('an API key service is saved with its own address, and read back by it', async ({ page }) => {
+    const el = await settings(page, { aiModels: { 'provider-1': [{ id: 'gemini-4-neon', name: '' }] } });
+    await el.locator('webui-button.ai-add-provider').click();
+    const card = provider(el, 0);
+    await choose(card, 'gemini');
+    await expect(card.locator('input.ai-base-url')).toHaveCount(0);
+    await card.locator('input.ai-key').fill('gemini-secret');
+    await save(el);
+    const added = (await saved(page))[0];
+    expect([added.name, added.kind, added.baseUrl, added.apiKey]).toEqual(['Gemini', 'openAi', 'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-secret']);
+    const shown = provider(el, 0);
+    await expect(shown.locator('.ai-preset-head h4')).toHaveText('Google Gemini API key');
+    // Its models are listed from its server once saved.
+    await expect(shown.locator('.ai-model')).toHaveText(['gemini-4-neon']);
+});
+
+test('Azure is set up from its endpoint as shown in the portal, with its deployments typed in', async ({ page }) => {
+    const el = await settings(page);
+    await el.locator('webui-button.ai-add-provider').click();
+    const card = provider(el, 0);
+    await choose(card, 'azure');
+    await card.locator('input.ai-azure-endpoint').fill('evil.example.com');
+    await card.locator('input.ai-command-model-value').fill('gpt-at-work');
+    await el.locator('webui-button.ai-save').click();
+    await expect(card.locator('webui-alert.ai-status')).toContainText('"evil.example.com" isn\'t an Azure endpoint.');
+    await card.locator('input.ai-azure-endpoint').fill('https://My-Resource.openai.azure.com/');
+    await card.locator('input.ai-key').fill('azure-secret');
+    // Deployments are typed in, so there is no list to refresh.
+    await expect(card.locator('webui-button.ai-refresh')).toBeHidden();
+    await save(el);
+    const added = (await saved(page))[0];
+    expect([added.kind, added.baseUrl, added.models]).toEqual(['openAi', 'https://my-resource.openai.azure.com/openai/v1', [{ id: 'gpt-at-work', name: '' }]]);
+    // Read back, it is Azure, showing the endpoint as the portal does.
+    const shown = provider(el, 0);
+    await expect(shown.locator('.ai-preset-head h4')).toHaveText('Azure OpenAI or Azure AI Foundry');
+    await expect(shown.locator('input.ai-azure-endpoint')).toHaveValue('https://my-resource.openai.azure.com/');
+    // Just the resource's name is enough.
+    await shown.locator('input.ai-azure-endpoint').fill('other-resource');
+    await save(el);
+    expect((await saved(page))[0].baseUrl).toBe('https://other-resource.openai.azure.com/openai/v1');
+});
+
+test('AWS Bedrock is set up from its region and key, and a region that isn\'t one is said and nothing is saved', async ({ page }) => {
+    const el = await settings(page, { aiModels: { 'provider-1': [{ id: 'us.anthropic.claude-sonnet-5', name: 'US Claude Sonnet 5' }] } });
+    await el.locator('webui-button.ai-add-provider').click();
+    const card = provider(el, 0);
+    await choose(card, 'bedrock');
+    await card.locator('input.ai-key').fill('bedrock-key');
+    await card.locator('input.ai-region').fill('virginia');
+    await el.locator('webui-button.ai-save').click();
+    await expect(card.locator('webui-alert.ai-status')).toContainText('"virginia" isn\'t an AWS region.');
+    await expect.poll(() => calls(page, 'ai_save_settings')).toEqual([]);
+    await card.locator('input.ai-region').fill('us-east-1');
+    await save(el);
+    const added = (await saved(page))[0];
+    expect([added.name, added.kind, added.baseUrl, added.apiKey]).toEqual(['AWS Bedrock', 'bedrock', 'https://bedrock-runtime.us-east-1.amazonaws.com', 'bedrock-key']);
+    const shown = provider(el, 0);
+    await expect(shown.locator('input.ai-region')).toHaveValue('us-east-1');
+    await expect(shown.locator('.ai-model')).toHaveText(['US Claude Sonnet 5']);
+});
+
+test('Google Vertex AI is set up from its project and location, signed in with gcloud and no key, with its models typed in', async ({ page }) => {
+    const el = await settings(page);
+    await el.locator('webui-button.ai-add-provider').click();
+    const card = provider(el, 0);
+    await choose(card, 'vertex');
+    await expect(card.locator('input.ai-key')).toHaveCount(0);
+    await expect(card.locator('.ai-step-script')).toHaveText(['gcloud auth login']);
+    await expect(card.locator('input.ai-location')).toHaveValue('global');
+    await expect.poll(() => modelValues(card)).toEqual(['google/gemini-3.5-flash', 'claude-sonnet-5-5']);
+    await el.locator('webui-button.ai-save').click();
+    await expect(card.locator('webui-alert.ai-status')).toContainText('Type your Google Cloud project ID.');
+    await card.locator('input.ai-project').fill('acme-ai');
+    await save(el);
+    let added = (await saved(page))[0];
+    expect([added.name, added.kind, added.baseUrl]).toEqual(['Vertex AI', 'vertex', 'https://aiplatform.googleapis.com/v1/projects/acme-ai/locations/global']);
+    // Only the user's own gcloud sign-in gets its token.
+    await expect.poll(async () => (await page.evaluate(() => webui.proxy.ai.settings())).providers[0].command).toBe('gcloud auth print-access-token');
+    // In one region, its host is the region's.
+    const shown = provider(el, 0);
+    await expect(shown.locator('input.ai-project')).toHaveValue('acme-ai');
+    await shown.locator('input.ai-location').fill('us-central1');
+    await save(el);
+    added = (await saved(page))[0];
+    expect(added.baseUrl).toBe('https://us-central1-aiplatform.googleapis.com/v1/projects/acme-ai/locations/us-central1');
 });

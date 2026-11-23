@@ -1,8 +1,8 @@
 //! AI writing help: drafts the user reviews, such as commit messages, code reviews, page segments, scripts, and
 //! suggestions for importing markdown files as pages.
 //!
-//! The user sets up any number of providers in Settings: OpenAI-compatible servers (OpenAI, Ollama, LM Studio, ...),
-//! the Anthropic API, or a command such as `claude -p --model {model}`. Every call is made here, so API keys never
+//! The user sets up any number of providers in Settings: OpenAI-compatible servers (OpenAI, Gemini, Azure, Ollama,
+//! LM Studio, ...), the Anthropic API, AWS Bedrock, Google Vertex AI, or a command such as `claude -p --model {model}`. Every call is made here, so API keys never
 //! reach the window. The window says which instructions and model to use, since it holds both scopes of them.
 
 use crate::prelude::*;
@@ -23,6 +23,12 @@ const MAX_CHARS_RANGE: (usize, usize) = (2_000, 2_000_000);
 const REVIEW_FILE_LIMIT: u64 = 200 * 1024;
 const ANTHROPIC_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// The version Claude on Vertex AI takes in place of a model in the body.
+const VERTEX_ANTHROPIC_VERSION: &str = "vertex-2023-10-16";
+/// What gets a Vertex AI provider its access token: the user's own Google Cloud sign-in, never a command typed in.
+pub(crate) const VERTEX_TOKEN_COMMAND: &str = "gcloud auth print-access-token";
+/// How long a Vertex AI access token is used before another is asked for. They last an hour.
+const VERTEX_TOKEN_LIFE: Duration = Duration::from_secs(45 * 60);
 /// The most of a server's answer that is read, far more than any reply, so a broken server can't fill the memory.
 const BODY_LIMIT: usize = 16 * 1024 * 1024;
 /// The most of a refusal that is read. Only its start is shown.
@@ -105,6 +111,11 @@ pub(crate) enum ProviderKind {
     OpenAi,
     Anthropic,
     Command,
+    /// AWS Bedrock's Converse API in one region, with a Bedrock API key: `base_url` is its runtime address.
+    Bedrock,
+    /// Google Vertex AI in one project and location, signed in with `gcloud`: `base_url` is
+    /// `https://{host}/v1/projects/{project}/locations/{location}`, and its models are typed in.
+    Vertex,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -239,6 +250,41 @@ const SUGGESTIONS: &[(&[&str], &str, u64, usize)] = &[
     ),
     (&["gpt-3.5"], "GPT-3.5 Turbo (16K tokens)", 60, 24_000),
     (&["gpt-4"], "GPT-4 (8K tokens)", 120, 12_000),
+    // Google: Gemini 4 and 3.x have 1M tokens of context (aistudio.google.com/docs/models).
+    (&["gemini"], "Gemini (1M tokens)", 300, 300_000),
+    // xAI: Grok 4.5 to 4.7 have 500K tokens, 4.3 and 4.20 1M (docs.x.ai/docs/models).
+    (&["grok"], "Grok (500K tokens or more)", 300, 300_000),
+    // DeepSeek V4: 1M tokens (api-docs.deepseek.com). Thinking is on by default, so replies take longer.
+    (
+        &["deepseek-v4", "deepseek-flash", "deepseek-pro"],
+        "DeepSeek V4 (1M tokens)",
+        420,
+        300_000,
+    ),
+    // Mistral's own API: Large, Medium, and Small 4 have 128K to 256K tokens (docs.mistral.ai/models/overview).
+    // Matched by their API names, so the same models run with Ollama stay with the local ones below.
+    (
+        &[
+            "mistral-large",
+            "mistral-medium",
+            "mistral-small-latest",
+            "codestral-latest",
+        ],
+        "Mistral's API (128K tokens or more)",
+        240,
+        120_000,
+    ),
+    // Amazon Nova, on Bedrock: 300K tokens for Pro and Lite, 128K for Micro.
+    (
+        &["nova-"],
+        "Amazon Nova (128K tokens or more)",
+        240,
+        120_000,
+    ),
+    // Kimi K2 and later: 256K tokens. GLM 5: 128K tokens or more. GLM 4 is left to the models on the user's own
+    // computer below, as Ollama runs it.
+    (&["kimi"], "Kimi (256K tokens)", 300, 200_000),
+    (&["glm-5"], "GLM 5 (128K tokens or more)", 300, 120_000),
     // Models on the user's own computer, through Ollama or LM Studio
     (
         &["gpt-oss"],
@@ -497,6 +543,12 @@ fn apply_update(store: &AiStore, update: SettingsUpdate) -> Result<AiStore, Stri
         let base_url = item.base_url.trim().trim_end_matches('/').to_string();
         let command = item.command.trim().to_string();
         let command = upgraded_claude_command(&command).unwrap_or(command);
+        // Vertex AI gets its token from the user's own gcloud sign-in, so its command is never one sent here.
+        let command = if item.kind == ProviderKind::Vertex {
+            VERTEX_TOKEN_COMMAND.to_string()
+        } else {
+            command
+        };
         // A saved key only goes to the server it was saved for, so it is left behind when the provider moves.
         let same_server = saved.is_some_and(|p| p.kind == item.kind && p.base_url == base_url);
         let api_key = match item.api_key {
@@ -509,6 +561,15 @@ fn apply_update(store: &AiStore, update: SettingsUpdate) -> Result<AiStore, Stri
         match item.kind {
             ProviderKind::OpenAi if base_url.is_empty() => {
                 return Err(format!("{} needs its server's address.", name));
+            }
+            ProviderKind::Bedrock if !BEDROCK_URL.is_match(&base_url) => {
+                return Err(format!("{} needs its AWS region, such as us-east-1.", name));
+            }
+            ProviderKind::Vertex if !VERTEX_URL.is_match(&base_url) => {
+                return Err(format!(
+                    "{} needs its Google Cloud project and location, such as my-project and global.",
+                    name
+                ));
             }
             ProviderKind::Command if command.is_empty() => {
                 return Err(format!("{} needs the command to run.", name));
@@ -535,8 +596,8 @@ fn apply_update(store: &AiStore, update: SettingsUpdate) -> Result<AiStore, Stri
                 })
             })
             .collect::<Vec<AiModel>>();
-        // A command can't list its models, so without one typed in it could never be chosen.
-        if item.kind == ProviderKind::Command && models.is_empty() {
+        // A command or Vertex AI can't list its models, so without one typed in it could never be chosen.
+        if matches!(item.kind, ProviderKind::Command | ProviderKind::Vertex) && models.is_empty() {
             return Err(format!("{} needs at least one model.", name));
         }
         // Each limit within what can be set, and models without any left out, as they use their suggestions.
@@ -844,7 +905,15 @@ fn unreachable(name: &str, err: reqwest::Error) -> String {
 
 async fn list_models(provider: &StoredProvider) -> Result<Vec<AiModel>, String> {
     match provider.kind {
-        ProviderKind::Command => Ok(provider.models.clone()),
+        ProviderKind::Command | ProviderKind::Vertex => Ok(provider.models.clone()),
+        ProviderKind::Bedrock => bedrock_models(provider).await,
+        // Azure's models are its deployments, which only its management API lists, so they are typed in.
+        ProviderKind::OpenAi if host_of(&provider.base_url).is_some_and(is_azure_host) => {
+            Ok(provider.models.clone())
+        }
+        ProviderKind::OpenAi if host_of(&provider.base_url).as_deref() == Some(FIREWORKS_HOST) => {
+            fireworks_models(provider).await
+        }
         ProviderKind::OpenAi => {
             let mut request = client()?
                 .get(endpoint(provider, &provider.base_url, &["models"])?)
@@ -906,15 +975,28 @@ async fn list_models(provider: &StoredProvider) -> Result<Vec<AiModel>, String> 
 /// The most pages of models read from the Anthropic API, 100 models each.
 const MODEL_PAGES: usize = 20;
 
+/// The kinds of model a server such as Together lists that write text. Others, such as images or embeddings, are left
+/// out. A server that doesn't say a model's kind lists only models for chat.
+const TEXT_MODEL_TYPES: [&str; 3] = ["chat", "language", "code"];
+
+/// The models in a list: OpenAI's `{data: [...]}`, or a bare array as Together answers. Gemini's ids can start with
+/// `models/`, which is not part of the id sent back.
 fn models_from(json: &Value, id_field: &str, name_field: Option<&str>) -> Vec<AiModel> {
     let mut models: Vec<AiModel> = json
         .get("data")
         .and_then(Value::as_array)
+        .or_else(|| json.as_array())
         .map(|items| {
             items
                 .iter()
+                .filter(|item| {
+                    item.get("type")
+                        .and_then(Value::as_str)
+                        .is_none_or(|kind| TEXT_MODEL_TYPES.contains(&kind))
+                })
                 .filter_map(|item| {
-                    let id = item.get(id_field)?.as_str()?.to_string();
+                    let id = item.get(id_field)?.as_str()?;
+                    let id = id.strip_prefix("models/").unwrap_or(id).to_string();
                     let name = name_field
                         .and_then(|field| item.get(field))
                         .and_then(Value::as_str)
@@ -960,6 +1042,353 @@ fn anthropic_key(provider: &StoredProvider) -> Result<&str, String> {
                 provider.name
             )
         })
+}
+
+/// A web address's host, in lower case.
+fn host_of(base: &str) -> Option<String> {
+    reqwest::Url::parse(base)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_lowercase))
+}
+
+/// Azure OpenAI and Azure AI Foundry, whose model is a deployment's name.
+fn is_azure_host(host: String) -> bool {
+    host.ends_with(".openai.azure.com")
+        || host.ends_with(".services.ai.azure.com")
+        || host.ends_with(".cognitiveservices.azure.com")
+}
+
+const FIREWORKS_HOST: &str = "api.fireworks.ai";
+
+/// Bedrock's runtime address in a region, as Settings writes it.
+static BEDROCK_URL: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^https://bedrock-runtime\.[a-z]{2}(-[a-z]+)+-\d\.amazonaws\.com$")
+        .expect("a valid pattern")
+});
+
+/// Vertex AI in a project and location, as Settings writes it: the global host, or a location's own.
+static VERTEX_URL: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"^https://([a-z0-9-]+-)?aiplatform\.googleapis\.com/v1/projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+$",
+    )
+    .expect("a valid pattern")
+});
+
+/// A provider's key, which it can't be called without.
+fn required_key(provider: &StoredProvider) -> Result<&str, String> {
+    anthropic_key(provider)
+}
+
+/// A GET answered with JSON, with a bearer key.
+async fn bearer_json(
+    provider: &StoredProvider,
+    url: reqwest::Url,
+    key: &str,
+) -> Result<Value, String> {
+    let response = client()?
+        .get(url)
+        .bearer_auth(key)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|err| unreachable(&provider.name, err))?;
+    if !response.status().is_success() {
+        return Err(refused(response, &provider.name).await);
+    }
+    read_json(response, &provider.name).await
+}
+
+/// Fireworks' serverless models, from its own list, since it has no OpenAI-style one.
+async fn fireworks_models(provider: &StoredProvider) -> Result<Vec<AiModel>, String> {
+    let key = required_key(provider)?;
+    let mut models = Vec::new();
+    let mut token: Option<String> = None;
+    for _ in 0..MODEL_PAGES {
+        // From the server's root: its chat is under /inference/v1, and its list under /v1.
+        let mut url = endpoint(provider, &provider.base_url, &[])?;
+        url.set_path("/v1/accounts/fireworks/models");
+        url.query_pairs_mut().append_pair("pageSize", "200");
+        if let Some(token) = &token {
+            url.query_pairs_mut().append_pair("pageToken", token);
+        }
+        let json = bearer_json(provider, url, key).await?;
+        models.extend(
+            json.get("models")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|item| {
+                    item.get("supportsServerless").and_then(Value::as_bool) == Some(true)
+                })
+                .filter_map(|item| {
+                    Some(AiModel {
+                        id: item.get("name")?.as_str()?.to_string(),
+                        name: item
+                            .get("displayName")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    })
+                }),
+        );
+        token = json
+            .get("nextPageToken")
+            .and_then(Value::as_str)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string);
+        if token.is_none() {
+            break;
+        }
+    }
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models.dedup_by(|a, b| a.id == b.id);
+    Ok(models)
+}
+
+/// Bedrock's control address for the region of its runtime address.
+fn bedrock_control(provider: &StoredProvider) -> String {
+    provider
+        .base_url
+        .replacen("://bedrock-runtime.", "://bedrock.", 1)
+}
+
+/// Bedrock's models that can be called in its region: the inference profiles, which newer models such as Claude are
+/// only called through, then the models that take calls in the region itself.
+async fn bedrock_models(provider: &StoredProvider) -> Result<Vec<AiModel>, String> {
+    let key = required_key(provider)?;
+    let control = bedrock_control(provider);
+    let active = |item: &Value, field: &str| {
+        item.pointer(field)
+            .and_then(Value::as_str)
+            .is_none_or(|status| status == "ACTIVE")
+    };
+    let mut models = Vec::new();
+    let mut next: Option<String> = None;
+    for _ in 0..MODEL_PAGES {
+        let mut url = endpoint(provider, &control, &["inference-profiles"])?;
+        url.query_pairs_mut()
+            .append_pair("typeEquals", "SYSTEM_DEFINED")
+            .append_pair("maxResults", "1000");
+        if let Some(next) = &next {
+            url.query_pairs_mut().append_pair("nextToken", next);
+        }
+        let json = bearer_json(provider, url, key).await?;
+        models.extend(
+            json.get("inferenceProfileSummaries")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|item| active(item, "/status"))
+                .filter_map(|item| {
+                    Some(AiModel {
+                        id: item.get("inferenceProfileId")?.as_str()?.to_string(),
+                        name: item
+                            .get("inferenceProfileName")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    })
+                }),
+        );
+        next = json
+            .get("nextToken")
+            .and_then(Value::as_str)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string);
+        if next.is_none() {
+            break;
+        }
+    }
+    let mut url = endpoint(provider, &control, &["foundation-models"])?;
+    url.query_pairs_mut()
+        .append_pair("byOutputModality", "TEXT")
+        .append_pair("byInferenceType", "ON_DEMAND");
+    let json = bearer_json(provider, url, key).await?;
+    models.extend(
+        json.get("modelSummaries")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|item| active(item, "/modelLifecycle/status"))
+            .filter_map(|item| {
+                let named =
+                    |field: &str| item.get(field).and_then(Value::as_str).unwrap_or_default();
+                Some(AiModel {
+                    id: item.get("modelId")?.as_str()?.to_string(),
+                    name: format!("{} {}", named("providerName"), named("modelName"))
+                        .trim()
+                        .to_string(),
+                })
+            }),
+    );
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models.dedup_by(|a, b| a.id == b.id);
+    Ok(models)
+}
+
+/// Vertex AI access tokens got lately, by the command that got them, with when.
+static VERTEX_TOKENS: LazyLock<Mutex<HashMap<String, (String, std::time::Instant)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// A Vertex AI access token from the user's gcloud sign-in, used again until it is near its end, or a new one.
+async fn vertex_token(provider: &StoredProvider, fresh: bool) -> Result<String, String> {
+    if !fresh
+        && let Some((token, got)) = VERTEX_TOKENS
+            .lock()
+            .ok()
+            .and_then(|tokens| tokens.get(&provider.command).cloned())
+        && got.elapsed() < VERTEX_TOKEN_LIFE
+    {
+        return Ok(token);
+    }
+    let token = run_command_capped(provider, "", "", None, REFUSAL_LIMIT)
+        .await
+        .map_err(|err| {
+            format!(
+                "{} needs you signed in to Google Cloud, with gcloud auth login. {}",
+                provider.name, err
+            )
+        })?
+        .trim()
+        .to_string();
+    if token.is_empty() || token.contains(char::is_whitespace) {
+        return Err(format!(
+            "{} needs you signed in to Google Cloud, with gcloud auth login. gcloud gave no access token.",
+            provider.name
+        ));
+    }
+    if let Ok(mut tokens) = VERTEX_TOKENS.lock() {
+        tokens.insert(
+            provider.command.clone(),
+            (token.clone(), std::time::Instant::now()),
+        );
+    }
+    Ok(token)
+}
+
+/// Whether a Vertex AI model is Claude, which Vertex AI calls in Anthropic's own form.
+fn vertex_is_claude(model: &str) -> bool {
+    model.starts_with("claude")
+}
+
+/// The reply in an OpenAI-style chat completion.
+fn openai_reply(json: &Value, name: &str) -> Result<String, String> {
+    if json
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        == Some("length")
+    {
+        return Err(cut_off(name));
+    }
+    json.pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("{} answered without any text.", name))
+}
+
+/// The reply in an Anthropic message, its text parts joined.
+fn anthropic_reply(json: &Value, name: &str) -> Result<String, String> {
+    if json.get("stop_reason").and_then(Value::as_str) == Some("max_tokens") {
+        return Err(cut_off(name));
+    }
+    let text: String = json
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+    if text.is_empty() {
+        return Err(format!("{} answered without any text.", name));
+    }
+    Ok(text)
+}
+
+/// The reply in a Bedrock Converse answer, its text parts joined.
+fn bedrock_reply(json: &Value, name: &str, model: &str) -> Result<String, String> {
+    match json.get("stopReason").and_then(Value::as_str) {
+        Some("max_tokens") => return Err(cut_off(name)),
+        Some("model_context_window_exceeded") => {
+            return Err(format!(
+                "{} said the request is too long for {}. Send it fewer characters, in its limits in Settings.",
+                name, model
+            ));
+        }
+        _ => {}
+    }
+    let text: String = json
+        .pointer("/output/message/content")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+    if text.is_empty() {
+        return Err(format!("{} answered without any text.", name));
+    }
+    Ok(text)
+}
+
+/// One call to Vertex AI with a token: Claude in Anthropic's form, other models through its OpenAI-compatible endpoint.
+async fn vertex_send(
+    provider: &StoredProvider,
+    model: &str,
+    system: &str,
+    user: &str,
+    timeout: Duration,
+    token: &str,
+) -> Result<reqwest::Response, String> {
+    let (url, body) = if vertex_is_claude(model) {
+        (
+            endpoint(
+                provider,
+                &provider.base_url,
+                &[
+                    "publishers",
+                    "anthropic",
+                    "models",
+                    &format!("{}:rawPredict", model),
+                ],
+            )?,
+            serde_json::json!({
+                "anthropic_version": VERTEX_ANTHROPIC_VERSION,
+                "max_tokens": 8192,
+                "system": system,
+                "messages": [{ "role": "user", "content": user }],
+            }),
+        )
+    } else {
+        (
+            endpoint(
+                provider,
+                &provider.base_url,
+                &["endpoints", "openapi", "chat", "completions"],
+            )?,
+            serde_json::json!({
+                "model": model,
+                "messages": [
+                    { "role": "system", "content": system },
+                    { "role": "user", "content": user },
+                ],
+            }),
+        )
+    };
+    client()?
+        .post(url)
+        .bearer_auth(token)
+        .json(&body)
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|err| unreachable(&provider.name, err))
 }
 
 /// Why a reply that reached the model's length limit is refused: it looks whole, but its end is missing.
@@ -1026,17 +1455,7 @@ async fn complete(
                 return Err(refused(response, &provider.name).await);
             }
             let json = read_json(response, &provider.name).await?;
-            if json
-                .pointer("/choices/0/finish_reason")
-                .and_then(Value::as_str)
-                == Some("length")
-            {
-                return Err(cut_off(&provider.name));
-            }
-            json.pointer("/choices/0/message/content")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| format!("{} answered without any text.", provider.name))?
+            openai_reply(&json, &provider.name)?
         }
         ProviderKind::Anthropic => {
             let body = serde_json::json!({
@@ -1062,24 +1481,48 @@ async fn complete(
                 return Err(refused(response, &provider.name).await);
             }
             let json = read_json(response, &provider.name).await?;
-            if json.get("stop_reason").and_then(Value::as_str) == Some("max_tokens") {
-                return Err(cut_off(&provider.name));
+            anthropic_reply(&json, &provider.name)?
+        }
+        ProviderKind::Bedrock => {
+            let body = serde_json::json!({
+                "system": [{ "text": system }],
+                "messages": [{ "role": "user", "content": [{ "text": user }] }],
+            });
+            let response = client()?
+                .post(endpoint(
+                    provider,
+                    &provider.base_url,
+                    &["model", model, "converse"],
+                )?)
+                .bearer_auth(required_key(provider)?)
+                .json(&body)
+                .timeout(timeout)
+                .send()
+                .await
+                .map_err(|err| unreachable(&provider.name, err))?;
+            if !response.status().is_success() {
+                return Err(refused(response, &provider.name).await);
             }
-            let text: String = json
-                .get("content")
-                .and_then(Value::as_array)
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter_map(|part| part.get("text").and_then(Value::as_str))
-                        .collect::<Vec<_>>()
-                        .join("")
-                })
-                .unwrap_or_default();
-            if text.is_empty() {
-                return Err(format!("{} answered without any text.", provider.name));
+            let json = read_json(response, &provider.name).await?;
+            bedrock_reply(&json, &provider.name, model)?
+        }
+        ProviderKind::Vertex => {
+            let token = vertex_token(provider, false).await?;
+            let mut response = vertex_send(provider, model, system, user, timeout, &token).await?;
+            // A token can end before it was expected to, such as after signing in again, so one more is asked for.
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                let token = vertex_token(provider, true).await?;
+                response = vertex_send(provider, model, system, user, timeout, &token).await?;
             }
-            text
+            if !response.status().is_success() {
+                return Err(refused(response, &provider.name).await);
+            }
+            let json = read_json(response, &provider.name).await?;
+            if vertex_is_claude(model) {
+                anthropic_reply(&json, &provider.name)?
+            } else {
+                openai_reply(&json, &provider.name)?
+            }
         }
         ProviderKind::Command => {
             let prompt = format!("{}\n\n{}", system, user);
@@ -2600,6 +3043,16 @@ mod tests {
         assert_eq!(suggested("codellama:13b"), (300, 16_000));
         assert_eq!(suggested("qwen2.5-coder:7b"), (300, 32_000));
         assert_eq!(suggested("deepseek-r1:14b"), (600, 32_000));
+        // Models served by others, by the ids their servers use.
+        assert_eq!(suggested("gemini-4-neon"), (300, 300_000));
+        assert_eq!(suggested("google/gemini-3.5-flash"), (300, 300_000));
+        assert_eq!(suggested("grok-4.7"), (300, 300_000));
+        assert_eq!(suggested("deepseek-v4-pro"), (420, 300_000));
+        assert_eq!(suggested("mistral-large-latest"), (240, 120_000));
+        assert_eq!(suggested("us.amazon.nova-pro-v1:0"), (240, 120_000));
+        assert_eq!(suggested("us.anthropic.claude-opus-5-5"), (420, 300_000));
+        // The same models run with Ollama keep the limits of models on the user's own computer.
+        assert_eq!(suggested("mistral-small:24b"), (300, 32_000));
         assert_eq!(
             suggested("my-own-model"),
             (FALLBACK_TIMEOUT_SECS, FALLBACK_MAX_CHARS)
@@ -3217,6 +3670,390 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("refused the API key"), "{}", error);
         assert!(error.contains("Invalid API key"), "{}", error);
+    }
+
+    #[tokio::test]
+    async fn bedrock_is_asked_through_converse_with_its_key_and_its_text_parts_are_joined() {
+        let (address, sent) = serve_once(
+            200,
+            r#"{"output":{"message":{"role":"assistant","content":[{"text":"Feature: "},{"text":"Draft"}]}},"stopReason":"end_turn"}"#,
+        )
+        .await;
+        let reply = complete(
+            &provider(ProviderKind::Bedrock, &address),
+            "us.anthropic.claude-sonnet-5",
+            "Sys",
+            "Usr",
+            None,
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply, "Feature: Draft");
+        let sent = sent.await.unwrap();
+        assert!(
+            sent.starts_with("POST /model/us.anthropic.claude-sonnet-5/converse"),
+            "{}",
+            sent
+        );
+        assert!(
+            sent.to_lowercase()
+                .contains("authorization: bearer secret-key")
+        );
+        assert!(sent.contains(r#""system":[{"text":"Sys"}]"#));
+        assert!(sent.contains(r#""content":[{"text":"Usr"}]"#));
+    }
+
+    #[tokio::test]
+    async fn bedrock_says_when_a_request_is_too_long_or_cut_off() {
+        for (stop, said) in [
+            ("max_tokens", "reply length limit"),
+            ("model_context_window_exceeded", "too long for m"),
+        ] {
+            let body: &'static str = Box::leak(
+                format!(
+                    r#"{{"output":{{"message":{{"content":[{{"text":"x"}}]}}}},"stopReason":"{}"}}"#,
+                    stop
+                )
+                .into_boxed_str(),
+            );
+            let (address, _sent) = serve_once(200, body).await;
+            let error = complete(
+                &provider(ProviderKind::Bedrock, &address),
+                "m",
+                "s",
+                "u",
+                None,
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains(said), "{}", error);
+        }
+    }
+
+    #[tokio::test]
+    async fn bedrock_lists_its_inference_profiles_then_its_models_called_in_the_region() {
+        let (address, sent) = serve_each(
+            200,
+            vec![
+                r#"{"inferenceProfileSummaries":[{"inferenceProfileId":"us.anthropic.claude-sonnet-5","inferenceProfileName":"US Claude Sonnet 5","status":"ACTIVE"},{"inferenceProfileId":"us.old","status":"INACTIVE"}],"nextToken":"page2"}"#,
+                r#"{"inferenceProfileSummaries":[{"inferenceProfileId":"eu.amazon.nova-pro-v1:0","inferenceProfileName":"EU Nova Pro"}]}"#,
+                r#"{"modelSummaries":[{"modelId":"meta.llama4-maverick-17b-instruct-v1:0","modelName":"Llama 4 Maverick","providerName":"Meta","modelLifecycle":{"status":"ACTIVE"}},{"modelId":"old.model","modelLifecycle":{"status":"LEGACY"}}]}"#,
+            ],
+        )
+        .await;
+        let models = list_models(&provider(ProviderKind::Bedrock, &address))
+            .await
+            .unwrap();
+        assert_eq!(
+            models,
+            vec![
+                AiModel {
+                    id: "eu.amazon.nova-pro-v1:0".into(),
+                    name: "EU Nova Pro".into()
+                },
+                AiModel {
+                    id: "meta.llama4-maverick-17b-instruct-v1:0".into(),
+                    name: "Meta Llama 4 Maverick".into()
+                },
+                AiModel {
+                    id: "us.anthropic.claude-sonnet-5".into(),
+                    name: "US Claude Sonnet 5".into()
+                },
+            ]
+        );
+        let sent = sent.await.unwrap();
+        assert!(
+            sent[0]
+                .starts_with("GET /inference-profiles?typeEquals=SYSTEM_DEFINED&maxResults=1000 ")
+        );
+        assert!(sent[1].contains("&nextToken=page2 "));
+        assert!(sent[2].starts_with(
+            "GET /foundation-models?byOutputModality=TEXT&byInferenceType=ON_DEMAND "
+        ));
+        assert!(sent.iter().all(|request| {
+            request
+                .to_lowercase()
+                .contains("authorization: bearer secret-key")
+        }));
+        // The control address is the runtime's, in the same region.
+        assert_eq!(
+            bedrock_control(&provider(
+                ProviderKind::Bedrock,
+                "https://bedrock-runtime.eu-west-2.amazonaws.com"
+            )),
+            "https://bedrock.eu-west-2.amazonaws.com"
+        );
+    }
+
+    fn vertex_provider(address: &str, token: &str) -> StoredProvider {
+        StoredProvider {
+            kind: ProviderKind::Vertex,
+            command: format!("Write-Output {}", token),
+            api_key: None,
+            models: vec![AiModel {
+                id: "google/gemini-3.5-flash".into(),
+                name: String::new(),
+            }],
+            ..provider(ProviderKind::Vertex, address)
+        }
+    }
+
+    #[tokio::test]
+    async fn vertex_ai_asks_gemini_through_its_openai_endpoint_with_a_gcloud_token() {
+        assert!(
+            crate::services::terminal_controller::resolve_pwsh().0,
+            "pwsh is required"
+        );
+        let (address, sent) = serve_each(
+            200,
+            vec![
+                r#"{"choices":[{"message":{"content":"One"}}]}"#,
+                r#"{"choices":[{"message":{"content":"Two"}}]}"#,
+            ],
+        )
+        .await;
+        let vertex = vertex_provider(&address, "token-for-gemini");
+        for expected in ["One", "Two"] {
+            let reply = complete(
+                &vertex,
+                "google/gemini-3.5-flash",
+                "Sys",
+                "Usr",
+                None,
+                Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+            assert_eq!(reply, expected);
+        }
+        let sent = sent.await.unwrap();
+        for request in &sent {
+            assert!(request.starts_with("POST /endpoints/openapi/chat/completions"));
+            assert!(
+                request
+                    .to_lowercase()
+                    .contains("authorization: bearer token-for-gemini")
+            );
+            assert!(request.contains(r#""model":"google/gemini-3.5-flash""#));
+        }
+        // Its models are the ones typed in.
+        assert_eq!(list_models(&vertex).await.unwrap(), vertex.models);
+    }
+
+    #[tokio::test]
+    async fn vertex_ai_asks_claude_in_anthropics_form_without_a_model_in_the_body() {
+        assert!(
+            crate::services::terminal_controller::resolve_pwsh().0,
+            "pwsh is required"
+        );
+        let (address, sent) =
+            serve_once(200, r#"{"content":[{"type":"text","text":"Bug: Fixed"}]}"#).await;
+        let reply = complete(
+            &vertex_provider(&address, "token-for-claude"),
+            "claude-sonnet-5-5",
+            "Sys",
+            "Usr",
+            None,
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply, "Bug: Fixed");
+        let sent = sent.await.unwrap();
+        assert!(
+            sent.starts_with("POST /publishers/anthropic/models/claude-sonnet-5-5:rawPredict"),
+            "{}",
+            sent
+        );
+        assert!(sent.contains(r#""anthropic_version":"vertex-2023-10-16""#));
+        assert!(!sent.contains(r#""model""#));
+        assert!(
+            sent.to_lowercase()
+                .contains("authorization: bearer token-for-claude")
+        );
+    }
+
+    #[tokio::test]
+    async fn vertex_ai_without_a_gcloud_sign_in_says_how_to_sign_in() {
+        assert!(
+            crate::services::terminal_controller::resolve_pwsh().0,
+            "pwsh is required"
+        );
+        let vertex = StoredProvider {
+            command: String::from(
+                "Write-Error 'You do not currently have an active account selected.'; exit 1",
+            ),
+            ..vertex_provider("http://127.0.0.1:1", "")
+        };
+        let error = complete(
+            &vertex,
+            "google/gemini-3.5-flash",
+            "s",
+            "u",
+            None,
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("gcloud auth login"), "{}", error);
+        assert!(error.contains("active account"), "{}", error);
+    }
+
+    #[test]
+    fn model_lists_in_other_shapes_are_read() {
+        // Together answers with a bare array, listing models that don't write text too.
+        let together = serde_json::json!([
+            { "id": "Qwen/Qwen3.6-Plus", "type": "chat", "display_name": "Qwen3.6 Plus" },
+            { "id": "BAAI/bge-large", "type": "embedding" },
+            { "id": "zai-org/GLM-5.2", "type": "language" },
+        ]);
+        assert_eq!(
+            models_from(&together, "id", Some("display_name")),
+            vec![
+                AiModel {
+                    id: "Qwen/Qwen3.6-Plus".into(),
+                    name: "Qwen3.6 Plus".into()
+                },
+                AiModel {
+                    id: "zai-org/GLM-5.2".into(),
+                    name: String::new()
+                },
+            ]
+        );
+        // Gemini's ids can start with models/, which isn't sent back.
+        let gemini = serde_json::json!({ "data": [{ "id": "models/gemini-4-neon" }, { "id": "gemini-3.8-flash" }] });
+        assert_eq!(
+            models_from(&gemini, "id", None)
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>(),
+            vec!["gemini-3.8-flash", "gemini-4-neon"]
+        );
+    }
+
+    #[tokio::test]
+    async fn fireworks_lists_its_serverless_models_from_its_own_list() {
+        let (address, sent) = serve_each(
+            200,
+            vec![
+                r#"{"models":[{"name":"accounts/fireworks/models/kimi-k3","displayName":"Kimi K3","supportsServerless":true},{"name":"accounts/fireworks/models/private","supportsServerless":false}],"nextPageToken":"next"}"#,
+                r#"{"models":[{"name":"accounts/fireworks/models/glm-5p3","supportsServerless":true}]}"#,
+            ],
+        )
+        .await;
+        let models = fireworks_models(&provider(
+            ProviderKind::OpenAi,
+            &format!("{}/inference/v1", address),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            models.into_iter().map(|model| model.id).collect::<Vec<_>>(),
+            vec![
+                "accounts/fireworks/models/glm-5p3",
+                "accounts/fireworks/models/kimi-k3"
+            ]
+        );
+        let sent = sent.await.unwrap();
+        assert!(sent[0].starts_with("GET /v1/accounts/fireworks/models?pageSize=200 "));
+        assert!(sent[1].contains("&pageToken=next "));
+    }
+
+    #[tokio::test]
+    async fn azures_deployments_are_the_ones_typed_in() {
+        let azure = StoredProvider {
+            models: vec![AiModel {
+                id: "my-gpt".into(),
+                name: "GPT at work".into(),
+            }],
+            ..provider(
+                ProviderKind::OpenAi,
+                "https://my-resource.openai.azure.com/openai/v1",
+            )
+        };
+        assert_eq!(list_models(&azure).await.unwrap(), azure.models);
+    }
+
+    #[test]
+    fn bedrock_needs_a_region_and_vertex_a_project_location_and_models_and_never_a_command_of_its_own()
+     {
+        let store = AiStore::default();
+        let item = |kind, base_url: &str, command: &str, models: Vec<AiModel>| SettingsUpdate {
+            providers: vec![ProviderUpdate {
+                name: "Cloud".into(),
+                kind,
+                base_url: base_url.into(),
+                command: command.into(),
+                models: Some(models),
+                ..Default::default()
+            }],
+        };
+        let gemini = || {
+            vec![AiModel {
+                id: "google/gemini-3.5-flash".into(),
+                name: String::new(),
+            }]
+        };
+        for url in [
+            "",
+            "https://bedrock-runtime.amazonaws.com",
+            "https://bedrock-runtime.us-east-1.evil.com",
+            "http://bedrock-runtime.us-east-1.amazonaws.com",
+        ] {
+            assert!(
+                apply_update(&store, item(ProviderKind::Bedrock, url, "", vec![])).is_err(),
+                "{}",
+                url
+            );
+        }
+        assert!(
+            apply_update(
+                &store,
+                item(
+                    ProviderKind::Bedrock,
+                    "https://bedrock-runtime.us-east-1.amazonaws.com",
+                    "",
+                    vec![]
+                )
+            )
+            .is_ok()
+        );
+        for url in [
+            "https://aiplatform.googleapis.com/v1/projects/x/locations/global",
+            "https://evil.com/v1/projects/my-project/locations/global",
+            "https://aiplatform.googleapis.com/v1/projects/my-project",
+        ] {
+            assert!(
+                apply_update(&store, item(ProviderKind::Vertex, url, "", gemini())).is_err(),
+                "{}",
+                url
+            );
+        }
+        let global = "https://aiplatform.googleapis.com/v1/projects/my-project/locations/global";
+        assert!(apply_update(&store, item(ProviderKind::Vertex, global, "", vec![])).is_err());
+        let saved = apply_update(
+            &store,
+            item(
+                ProviderKind::Vertex,
+                global,
+                "Remove-Item ~ -Recurse",
+                gemini(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(saved.providers[0].command, VERTEX_TOKEN_COMMAND);
+        assert!(apply_update(
+            &store,
+            item(
+                ProviderKind::Vertex,
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/my-project/locations/us-central1",
+                "",
+                gemini()
+            )
+        )
+        .is_ok());
     }
 
     #[tokio::test]

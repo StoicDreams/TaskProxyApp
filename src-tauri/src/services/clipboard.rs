@@ -18,7 +18,10 @@ enum Content {
     Image(arboard::ImageData<'static>),
     Text(String),
     /// Formatted text, with plain text for apps that can't paste it formatted.
-    Html { html: String, text: String },
+    Html {
+        html: String,
+        text: String,
+    },
     /// Files, pasted as a file manager pastes copied files.
     Files(Vec<std::path::PathBuf>),
 }

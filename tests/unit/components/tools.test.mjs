@@ -129,3 +129,20 @@ test('the Theme tab is drawn once and kept, so it shows at once when opened agai
     await expect(theme.locator('webui-theme-selector[panel]')).toHaveCount(1);
     await expect(theme.locator('webui-theme-selector[panel][data-first]')).toHaveCount(1);
 });
+
+test('a tool opened before its component has loaded draws once it loads', async ({ page }) => {
+    // The Task Manager's file is held, as on a slow machine where the tab is opened before the loader has it.
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    await page.route('**/wc/task-manager.min.js', async route => {
+        await held;
+        await route.continue();
+    });
+    await openApp(page);
+    await openTool(page, 'tasks');
+    const table = drawer(page).locator('webui-content.tools-tasks .task-manager tbody');
+    await expect(table).toHaveCount(0);
+    release();
+    await expect(table).toBeAttached();
+    await expect.poll(async () => (await calls(page, 'list_processes')).length).toBeGreaterThan(0);
+});

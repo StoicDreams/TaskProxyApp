@@ -82,7 +82,11 @@ fn read(request: &Request<'_>) -> Result<(Vec<u8>, String, String), String> {
             .map(decode_component)
             .unwrap_or_default()
     };
-    Ok((bytes.clone(), header("x-export-title"), header("x-export-kind")))
+    Ok((
+        bytes.clone(),
+        header("x-export-title"),
+        header("x-export-kind"),
+    ))
 }
 
 /// Writes the file to copy in `dir`, removing any copied before, since only the last one copied can be pasted.
