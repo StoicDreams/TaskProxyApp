@@ -559,6 +559,17 @@ test.describe('editable tables', () => {
         expect((await lastAction(page)).params).toEqual({ field: 'status' });
     });
 
+    test('an angled table leans each title with its sort arrow, and a table that is not angled does not', async ({ page }) => {
+        await openPlugin(page, { ...table, angled: true });
+        const angled = page.locator('app-plugin-page table');
+        await expect(angled).toHaveClass(/angled-headers/);
+        // Each title and its arrow are one element in its header, which is what leans.
+        const title = page.locator('app-plugin-page th').nth(1).locator(':scope > span');
+        await expect(title).toContainText('▲');
+        await openPlugin(page, table);
+        await expect(page.locator('app-plugin-page table')).not.toHaveClass(/angled-headers/);
+    });
+
     test('long text is cut to 30 characters, with up to 100 in its tooltip, and opens when clicked', async ({ page }) => {
         await openPlugin(page, table, { pluginActions: { 'test/cell.open': {}, 'test/cell.comments': {} } });
         const clip = page.locator('app-plugin-page .plugin-clip').first();

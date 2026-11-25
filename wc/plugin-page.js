@@ -780,14 +780,18 @@
         },
         buildTable(node, ctx) {
             const t = this;
-            const table = el('table', { class: 'plugin-table' });
+            // Angled headers lean each column's title, so a column is only as wide as its values (Web UI's webui.css).
+            const table = el('table', { class: node.angled ? 'plugin-table angled-headers' : 'plugin-table' });
             const head = el('tr');
             (node.columns || []).forEach(column => {
                 const info = typeof column === 'string' ? { label: column } : (column || {});
-                const th = el('th', {}, info.label ?? '');
+                // The title and its sort arrow are one element, which angled headers turn as one.
+                const title = el('span', {}, info.label ?? '');
+                const th = el('th');
+                th.appendChild(title);
                 if (info.sort === 'asc' || info.sort === 'desc') {
                     th.setAttribute('aria-sort', info.sort === 'asc' ? 'ascending' : 'descending');
-                    th.appendChild(el('span', { class: 'plugin-sort', 'aria-hidden': 'true' }, info.sort === 'asc' ? ' ▲' : ' ▼'));
+                    title.appendChild(el('span', { class: 'plugin-sort', 'aria-hidden': 'true' }, info.sort === 'asc' ? ' ▲' : ' ▼'));
                 }
                 if (info.action) {
                     th.classList.add('plugin-sortable');
