@@ -1,4 +1,4 @@
-import { test, expect, openApp, switchProject, goToPage, calls, callOrder, onCommand, dialogButton, openDialog } from '../support/app.mjs';
+import { test, expect, openApp, switchProject, goToPage, calls, callOrder, onCommand, dialogButton, openDialog, emit } from '../support/app.mjs';
 import { actionNote, alertPopup, spyOnAlerts, alerts } from '../../support/wait.mjs';
 
 const open = async (page, git = {}, state = {}) => {
@@ -1429,6 +1429,14 @@ test.describe('plugin branch cards', () => {
         await cards.getByText('PJ-3').click();
         await expect(page).toHaveURL(/\/plugin\/jira\/issue\?key=PJ-3$/);
         await expect(page.locator('app-plugin-page')).toHaveText('Issue page');
+    });
+
+    test('a plugin installed or updated shows its card about the branch without reloading the app', async ({ page }) => {
+        await open(page);
+        await expect.poll(async () => (await calls(page, 'plugin_branch_info')).length).toBeGreaterThan(0);
+        await page.evaluate(card => { window.__backend.handlers.plugin_branch_info = () => [card]; }, card);
+        await emit(page, 'plugins-changed', { id: 'jira' });
+        await expect(manager(page).locator('#plugin-branch-cards app-plugin-page')).toContainText('Assigned to Sam Lee');
     });
 
     test('with no plugin cards, nothing extra shows', async ({ page }) => {

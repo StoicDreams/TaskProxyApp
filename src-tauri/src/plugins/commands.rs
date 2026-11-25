@@ -159,6 +159,12 @@ fn sign_in_label(manifest: &PluginManifest, values: &HashMap<String, String>, id
     }
 }
 
+/// Tells every screen, and approved browsers, that a plugin was installed, updated, removed, or turned on or off,
+/// so pages it drew are drawn again by the code now installed.
+fn plugins_changed(app_handle: &AppHandle, id: &str) {
+    crate::remote::hub::broadcast(app_handle, "plugins-changed", json!({ "id": id }));
+}
+
 fn forget_compiled(id: &str) {
     if let Ok(mut compiled) = COMPILED.lock() {
         compiled.retain(|key, _| !key.starts_with(&format!("{}@", id)));
@@ -398,6 +404,7 @@ pub(crate) async fn plugin_install_catalog(
         .into_iter()
         .find(|plugin| plugin.id == installed.id)
         .ok_or_else(|| String::from("The plugin was not recorded as installed."))?;
+    plugins_changed(&app_handle, &installed.id);
     Ok(info(&registry, installed))
 }
 
@@ -427,6 +434,7 @@ pub(crate) async fn plugin_install_folder(
         .into_iter()
         .find(|installed| installed.id == manifest.id)
         .ok_or_else(|| String::from("The plugin was not recorded as installed."))?;
+    plugins_changed(&app_handle, &installed.id);
     Ok(info(&registry, installed))
 }
 
@@ -447,6 +455,7 @@ pub(crate) async fn plugin_remove(app_handle: AppHandle, id: String) -> Result<(
             let _ = fs::remove_file(data_dir.join(file));
         }
     }
+    plugins_changed(&app_handle, &id);
     Ok(())
 }
 
@@ -456,7 +465,9 @@ pub(crate) async fn plugin_set_enabled(
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
-    registry(&app_handle)?.set_enabled(&id, enabled)
+    registry(&app_handle)?.set_enabled(&id, enabled)?;
+    plugins_changed(&app_handle, &id);
+    Ok(())
 }
 
 fn installed_manifest(registry: &Registry, id: &str) -> Result<PluginManifest, String> {

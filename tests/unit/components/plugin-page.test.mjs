@@ -1,5 +1,5 @@
 import { actionNote, spyOnAlerts, alerts } from '../../support/wait.mjs';
-import { test, expect, openApp, calls, dialogButton, onCommand, openDialog } from '../support/app.mjs';
+import { test, expect, openApp, calls, dialogButton, onCommand, openDialog, emit, goToPage } from '../support/app.mjs';
 
 const manifest = {
     id: 'test', name: 'Test Plugin', version: '0.1.0', apiVersion: 1, icon: 'flask',
@@ -987,4 +987,29 @@ test('clicking what a row\'s action said, in its cell, does not run the row\'s a
     // The row itself still runs its action, so a click that would have reached it is seen.
     await view.locator('td').first().click();
     await expect.poll(async () => (await calls(page, 'plugin_action')).map(call => call.request.action)).toEqual(['cell.options', 'open']);
+});
+
+test('an open page is drawn again by the plugin as updated, without reloading the app', async ({ page }) => {
+    await openPlugin(page, text('Old feature'));
+    await page.evaluate(() => { window.__backend.handlers.plugin_render = () => ({ type: 'text', text: 'New feature' }); });
+    // As Rust says when the plugin is updated, here or on another screen.
+    await emit(page, 'plugins-changed', { id: 'test' });
+    await expect(page.locator('app-plugin-page')).toHaveText('New feature');
+});
+
+test("an updated plugin's pages drawn before are not shown again from the old code", async ({ page }) => {
+    await openPlugin(page, text('Old home'), { pluginPages: { 'test/item': text('Item page') } });
+    await goToPage(page, '/plugin/test/item');
+    await expect(page.locator('app-plugin-page')).toHaveText('Item page');
+    await page.evaluate(() => {
+        window.__held = new Promise(resolve => { window.__release = resolve; });
+        window.__backend.handlers.plugin_render = async () => { await window.__held; return { type: 'text', text: 'New home' }; };
+    });
+    await emit(page, 'plugins-changed', { id: 'test' });
+    await goToPage(page, '/plugin/test/home');
+    // The old home page was cached, and would show at once while the plugin answered.
+    await expect(page.locator('app-plugin-page')).toContainText('Loading');
+    await expect(page.locator('app-plugin-page')).not.toContainText('Old home');
+    await page.evaluate(() => window.__release());
+    await expect(page.locator('app-plugin-page')).toHaveText('New home');
 });

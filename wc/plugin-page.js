@@ -195,6 +195,19 @@
         while (pageCache.size > PAGE_CACHE_SIZE) pageCache.delete(pageCache.keys().next().value);
     }
 
+    // A plugin installed, updated, removed, or turned on or off draws its open pages again with the code now
+    // installed, and its pages drawn before are not shown from the cache, since they came from the old code.
+    // Cards, which a plugin's answer drew rather than one of its pages, are drawn again by what shows them.
+    window.addEventListener('plugins-changed', event => {
+        const id = event.detail?.id;
+        for (const key of [...pageCache.keys()]) {
+            if (JSON.parse(key)[1] === id) pageCache.delete(key);
+        }
+        document.querySelectorAll('app-plugin-page').forEach(view => {
+            if (view.plugin === id && view.page && !view._staticNode && view.isConnected) view.load();
+        });
+    });
+
     /** The element that scrolls the page, which a split fills. */
     function scrollBox(node) {
         let at = node;

@@ -1725,6 +1725,9 @@
             const t = this;
             liveManagers.add(t);
             listenForJobs();
+            // A plugin installed, updated, removed, or turned on or off changes which cards the branch has.
+            t._onPluginsChanged ??= () => { if (t._pluginCards) t.loadBranchCards(); };
+            window.addEventListener('plugins-changed', t._onPluginsChanged);
             t.showCommitState();
             t.showQueue();
             setTimeout(async () => {
@@ -2110,6 +2113,7 @@
         disconnected() {
             const t = this;
             liveManagers.delete(t);
+            window.removeEventListener('plugins-changed', t._onPluginsChanged);
             t._resizeObserver?.disconnect();
             t._resizeObserver = null;
             cancelAnimationFrame(t._fitFrame);

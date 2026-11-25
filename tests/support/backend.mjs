@@ -1051,6 +1051,7 @@ export function setup(state) {
                 const manifest = (state.catalogManifests || {})[id];
                 const info = { id, version: entry.version, enabled: true, signed: true, manifest };
                 plugins = plugins.filter(plugin => plugin.id !== id).concat(info);
+                emitEvent('plugins-changed', { id });
                 return info;
             },
             plugin_inspect_folder: () => {
@@ -1061,11 +1062,17 @@ export function setup(state) {
                 const manifest = state.pluginFolder.manifest;
                 const info = { id: manifest.id, version: manifest.version, enabled: true, signed: false, manifest };
                 plugins = plugins.filter(plugin => plugin.id !== manifest.id).concat(info);
+                emitEvent('plugins-changed', { id: manifest.id });
                 return info;
             },
-            plugin_remove: ({ id }) => { plugins = plugins.filter(plugin => plugin.id !== id); return null; },
+            plugin_remove: ({ id }) => {
+                plugins = plugins.filter(plugin => plugin.id !== id);
+                emitEvent('plugins-changed', { id });
+                return null;
+            },
             plugin_set_enabled: ({ id, enabled }) => {
                 plugins.forEach(plugin => { if (plugin.id === id) plugin.enabled = enabled; });
+                emitEvent('plugins-changed', { id });
                 return null;
             },
             plugin_settings: ({ id }) => JSON.parse(JSON.stringify(pluginSettings[id] || { hasProject: true, signIn: null, settings: [], signIns: [] })),

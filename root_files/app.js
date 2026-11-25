@@ -643,6 +643,8 @@
             get alerts() { return pluginAlerts; },
             /** Rebuilds the Plugins part of the nav from the enabled plugins' pages. */
             refreshNav: refreshPluginNav,
+            /** Calls `callback` with `{ id }` when a plugin is installed, updated, removed, or turned on or off. */
+            onChanged: (callback) => tauri.event.listen('plugins-changed', event => callback(event.payload ?? {})),
         }
         projects = {
             isLoaded: false,
@@ -1427,6 +1429,12 @@
         }
         refreshPluginNav();
         pluginAlerts.start();
+        // A plugin installed, updated, removed, or turned on or off, here or on another screen. Its pages and cards
+        // listen for the window's plugins-changed event to draw again with the code now installed.
+        webui.proxy.plugins.onChanged(change => {
+            refreshPluginNav();
+            window.dispatchEvent(new CustomEvent('plugins-changed', { detail: { id: change.id } }));
+        });
         // AI commit messages kept from before a restart are saved by the Git Controller's code as their projects open,
         // so it loads now when any are waiting, rather than only once a Git Controller is drawn.
         if (Object.keys(webui.taskProxyData.data['app-ai-pending-commit-messages'] || {}).length) {
