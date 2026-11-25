@@ -57,6 +57,13 @@
         cloud: 'Through your company\'s cloud',
         advanced: 'Advanced',
     };
+    /**
+     * Claude Code, Codex, Copilot, Cursor, and Qwen Code install into ~/.local/bin, which their installers add to the
+     * PATH only in shell profiles PowerShell doesn't read, so a step that runs one adds it first. Task Proxy adds it
+     * to the PATH of the commands that write drafts too.
+     */
+    const USER_BIN = "$env:PATH += [IO.Path]::PathSeparator + (Join-Path $HOME '.local' 'bin')";
+    const userBin = command => `${USER_BIN}\n${command}`;
     /** A step that installs a tool, with the installer for the system Task Proxy runs on. */
     const install = (what, unix, windows, url) => [`Install ${what}. Run installs it, on Linux, macOS, or Windows, and you can watch it in the Terminal Manager.`, () => (hostIsWindows ? windows : unix), url, { name: `Install ${what}` }];
     const KEY_STEPS = (site, url) => [
@@ -72,7 +79,7 @@
             kind: 'command',
             steps: [
                 ['Install Claude Code, the command-line tool your Claude plan works with. Run installs it, on any Linux, macOS, or Windows, and you can watch it in the Terminal Manager.', () => (hostIsWindows ? 'irm https://claude.ai/install.ps1 | iex' : "bash -c 'curl -fsSL https://claude.ai/install.sh | bash'"), 'https://code.claude.com/docs/en/setup', { name: 'Install Claude Code' }],
-                ['Sign in once. Run starts Claude Code in the Terminal Manager: answer what it asks there, sign in with your Claude account in the browser it opens, then type /exit.', `$env:PATH += [IO.Path]::PathSeparator + (Join-Path $HOME '.local' 'bin')\nclaude`, null, { name: 'Sign in to Claude Code' }],
+                ['Sign in once. Run starts Claude Code in the Terminal Manager: answer what it asks there, sign in with your Claude account in the browser it opens, then type /exit.', userBin('claude'), null, { name: 'Sign in to Claude Code' }],
                 ['Choose the models you want below, then Save and Test.'],
             ],
         },
@@ -92,8 +99,9 @@
             ],
             modelsHelp: 'Sol is for everyday writing, Astra the most capable, and Terra the fastest. Add any model Codex offers.',
             steps: [
-                install('Codex', 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'irm https://chatgpt.com/codex/install.ps1 | iex', 'https://learn.chatgpt.com/docs/auth'),
-                ['Sign in once. Run starts Codex\'s sign-in in the Terminal Manager: choose Sign in with ChatGPT in the browser it opens.', 'codex login', null, { name: 'Sign in to Codex' }],
+                // Without its prompts, the installer doesn't offer to start Codex, which fails there: its input is the installer.
+                install('Codex', "$env:CODEX_NON_INTERACTIVE = '1'\ncurl -fsSL https://chatgpt.com/codex/install.sh | sh", "$env:CODEX_NON_INTERACTIVE = '1'\nirm https://chatgpt.com/codex/install.ps1 | iex", 'https://learn.chatgpt.com/docs/auth'),
+                ['Sign in once. Run starts Codex\'s sign-in in the Terminal Manager: choose Sign in with ChatGPT in the browser it opens.', userBin('codex login'), null, { name: 'Sign in to Codex' }],
                 ['Choose the models you want below, then Save and Test.'],
             ],
         },
@@ -114,7 +122,7 @@
             modelsHelp: 'Copilot chooses picks a model for each request. Type /model in the Copilot CLI to see the others your plan has, and add them here.',
             steps: [
                 install('the Copilot CLI', 'curl -fsSL https://gh.io/copilot-install | bash', 'winget install GitHub.Copilot', 'https://docs.github.com/en/copilot/how-tos/copilot-cli'),
-                ['Sign in once. Run starts the sign-in in the Terminal Manager: follow it in the browser it opens.', 'copilot login', null, { name: 'Sign in to GitHub Copilot' }],
+                ['Sign in once. Run starts the sign-in in the Terminal Manager: follow it in the browser it opens.', userBin('copilot login'), null, { name: 'Sign in to GitHub Copilot' }],
                 ['Choose the models you want below, then Save and Test.'],
             ],
         },
@@ -137,7 +145,7 @@
             limits: () => (hostIsWindows ? { maxChars: 28000 } : {}),
             steps: [
                 install('Cursor\'s command line', 'curl https://cursor.com/install -fsS | bash', "irm 'https://cursor.com/install?win32=true' | iex", 'https://cursor.com/docs/cli/overview'),
-                ['Sign in once. Run starts the sign-in in the Terminal Manager: follow it in the browser it opens.', 'agent login', null, { name: 'Sign in to Cursor' }],
+                ['Sign in once. Run starts the sign-in in the Terminal Manager: follow it in the browser it opens.', userBin('agent login'), null, { name: 'Sign in to Cursor' }],
                 ['Choose the models you want below, then Save and Test.'],
             ],
         },
@@ -155,7 +163,7 @@
             modelsHelp: 'Add any model your Qwen plan has.',
             steps: [
                 install('Qwen Code', 'curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash', 'irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1 | iex', 'https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/'),
-                ['Sign in once. Run starts Qwen Code in the Terminal Manager: type /auth, choose your Qwen account, sign in in the browser it opens, then type /quit.', 'qwen', null, { name: 'Sign in to Qwen Code' }],
+                ['Sign in once. Run starts Qwen Code in the Terminal Manager: type /auth, choose your Qwen account, sign in in the browser it opens, then type /quit.', userBin('qwen'), null, { name: 'Sign in to Qwen Code' }],
                 ['Choose the models you want below, then Save and Test.'],
             ],
         },

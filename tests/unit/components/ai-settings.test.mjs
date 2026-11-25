@@ -707,9 +707,14 @@ test('Codex is set up from a ChatGPT plan by choosing its models, and saved as i
     await expect(providerTabs(el)).toHaveText(['Codex']);
     // Nothing to type but the models: its command is the choice's own.
     await expect(card.locator('input.ai-command')).toHaveCount(0);
-    await expect(card.locator('.ai-step-script')).toHaveText(['curl -fsSL https://chatgpt.com/codex/install.sh | sh', 'codex login']);
+    // The installer asks nothing, since starting Codex from inside it fails, and sign-in finds Codex where it was
+    // installed, which PowerShell's PATH may not have.
+    const install = "$env:CODEX_NON_INTERACTIVE = '1'\ncurl -fsSL https://chatgpt.com/codex/install.sh | sh";
+    const signIn = "$env:PATH += [IO.Path]::PathSeparator + (Join-Path $HOME '.local' 'bin')\ncodex login";
+    await expect(card.locator('.ai-step-script')).toHaveText([install, signIn]);
+    await card.locator('webui-button.ai-run-command').nth(0).click();
     await card.locator('webui-button.ai-run-command').nth(1).click();
-    await expect.poll(() => calls(page, 'run_script').then(list => list.map(call => [call.terminalId, call.scriptContent]))).toEqual([['Sign in to Codex', 'codex login']]);
+    await expect.poll(() => calls(page, 'run_script').then(list => list.map(call => [call.terminalId, call.scriptContent]))).toEqual([['Install Codex', install], ['Sign in to Codex', signIn]]);
     // It starts with Codex's models, which can be changed.
     await expect.poll(() => modelValues(card)).toEqual(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-terra']);
     await card.locator('webui-button.ai-command-model-remove').nth(2).click();

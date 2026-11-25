@@ -449,6 +449,10 @@ fn push_refspec(
 ) -> Result<(), String> {
     let rejections = Arc::new(Mutex::new(Vec::new()));
     let recorded = rejections.clone();
+    // Why a server refused a push, such as GitHub's repository rules, comes as the "remote:" lines git prints,
+    // while the reference's status is only a short code.
+    let said = Arc::new(Mutex::new(String::new()));
+    let saying = said.clone();
     let mut callbacks = create_remote_callbacks(token);
     callbacks.push_update_reference(move |refname, status| {
         if let (Some(status), Ok(mut recorded)) = (status, recorded.lock()) {
@@ -456,22 +460,52 @@ fn push_refspec(
         }
         Ok(())
     });
+    callbacks.sideband_progress(move |data| {
+        if let Ok(mut said) = saying.lock() {
+            said.push_str(&String::from_utf8_lossy(data));
+        }
+        true
+    });
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
-    remote
-        .push(&[refspec], Some(&mut push_options))
-        .map_err(remote_error)?;
+    let pushed = remote.push(&[refspec], Some(&mut push_options));
+    let explained = |message: String| {
+        let lines = said
+            .lock()
+            .map(|said| remote_messages(&said))
+            .unwrap_or_default();
+        if lines.is_empty() || message == CREDENTIALS_ERROR {
+            message
+        } else {
+            format!("{}\n{}", message, lines.join("\n"))
+        }
+    };
+    pushed.map_err(|err| explained(remote_error(err)))?;
     let rejections = rejections
         .lock()
         .map_err(|err| format!("Push result failure: {}", err))?;
     if rejections.is_empty() {
         Ok(())
     } else {
-        Err(format!(
+        Err(explained(format!(
             "Push rejected by remote. {}",
             rejections.join("; ")
-        ))
+        )))
     }
+}
+
+/// What a server said during a push, without its progress lines, such as "Resolving deltas: 100% (3/3)", which
+/// redraw themselves with carriage returns.
+fn remote_messages(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for line in text.split(['\n', '\r']) {
+        let line = line.trim();
+        if line.is_empty() || line.contains('%') || lines.iter().any(|seen| seen == line) {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+    lines
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1649,7 +1683,29 @@ mod tests {
         }
     }
 
-    #[test]
+#[test]
+    fn remote_messages_keep_why_a_push_was_refused_without_progress() {
+        let said = "Resolving deltas:  50% (1/2)\rResolving deltas: 100% (2/2)\rResolving deltas: 100% (2/2), done.\n\
+            error: GH013: Repository rule violations found for refs/heads/main.\n\
+            \n\
+            - Commits must have verified signatures.\n\
+              Found 1 violation:\n\
+            \n\
+              abc1234\n\
+            \n\
+            - Commits must have verified signatures.\n";
+        assert_eq!(
+            remote_messages(said),
+            vec![
+                "error: GH013: Repository rule violations found for refs/heads/main.",
+                "- Commits must have verified signatures.",
+                "Found 1 violation:",
+                "abc1234",
+            ]
+        );
+    }
+
+        #[test]
     fn project_root_is_the_open_project_when_none_is_named() {
         assert_eq!(project_root("/open", &[], None), Ok(PathBuf::from("/open")));
         assert!(project_root("", &[], None).is_err());
