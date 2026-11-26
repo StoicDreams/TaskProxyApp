@@ -6,6 +6,12 @@
     "children": null
   },
   {
+    "name": "Onboarding",
+    "icon": "user-gear",
+    "url": "/606e629f-1c20-49b5-9456-ee672ce34b87",
+    "children": null
+  },
+  {
     "name": "Dev",
     "icon": "code",
     "url": "/0a574ff4-f8b3-49ec-b391-76a1722a80b9",

@@ -43,25 +43,16 @@ const REQUEST_IN_USE: &str = "Another AI request with this id is still running."
 /// What every request is told first: that it is helping in Task Proxy, how a project's `.taskproxy` folder is laid
 /// out, and how pages run their scripts, so drafts fit what Task Proxy does with them. Settings shows it as the
 /// built-in shared instructions.
-pub(crate) const TASK_PROXY_CONTEXT: &str = "You are helping a developer inside Task Proxy, a desktop app for working \
-     on software projects. What you write is a draft: the developer reviews and changes it in Task Proxy before \
-     anything is saved, committed, or run.\n\n\
-     Task Proxy keeps its own files for a project in the project's .taskproxy folder, committed with the project:\n\
-     - .taskproxy/pages/*.md: the project's documentation pages, shown in Task Proxy. A page starts with \
-     <webui-data data-page-title=\"Title\" data-page-subtitle=\"One-line description\"></webui-data>, and its \
-     content is markdown inside <webui-page-segment> and </webui-page-segment> blocks, with a heading line such \
-     as ### Setup between blocks.\n\
-     - .taskproxy/Navigation.json: the pages' navigation, a tree of folders and pages, each page linking to /<its \
-     file name without .md>.\n\
-     - .taskproxy/Variables.json: the names of the project's variables. Their values are kept by Task Proxy, never \
-     in the project.\n\
-     - .taskproxy/scripts/*.ps1: PowerShell 7 scripts saved in Task Proxy's Script Manager.\n\
-     - .taskproxy/Project.json: the project's own settings, such as its icon.\n\n\
-     In a page, a fenced code block marked pwsh, powershell, or ps1 gets a Run button, which runs it with \
-     PowerShell 7 in the project's folder, in Task Proxy's Terminal Manager, where the developer watches it and \
-     answers what it asks. Before it runs, each line such as $name = 'default' is given the value of the variable \
-     called name, from the page, the project, or the global variables. So a page gives commands in such a block, \
-     never asking anyone to copy a command into a terminal. Never put a secret in a draft: use a variable for it.";
+pub(crate) const TASK_PROXY_CONTEXT: &str = r#"You are helping a developer inside Task Proxy, a desktop app for working on software projects. Task Proxy keeps a project's documentation pages and scripts, runs scripts in its Terminal Manager, and shows the project's git changes, branches, and commits. What you write is a draft: the developer reviews and changes it in Task Proxy before anything is saved, committed, or run.
+
+Task Proxy's parts:
+- The project: a folder on the developer's computer. Its files that Task Proxy owns are in the project's .taskproxy folder, committed with the project: .taskproxy/pages/*.md (the pages), .taskproxy/Navigation.json (the pages' menu, a tree of folders and pages), .taskproxy/Variables.json (the names of variables; their values are kept by Task Proxy, never in the project), .taskproxy/scripts/*.ps1 (scripts from the Script Manager), and .taskproxy/Project.json (the project's settings).
+- Pages: a page starts with <webui-data data-page-title="Title" data-page-subtitle="One line"></webui-data>. Its content is markdown. Each part is wrapped in <webui-page-segment> and </webui-page-segment> tags, with a heading such as ### Install Rust above it.
+- Run blocks: a fenced code block marked pwsh, powershell, or ps1 in a page gets a Run button. It runs as a PowerShell 7 script in the project's folder, in the Terminal Manager, where the developer watches the output and answers its prompts. Before it runs, a line such as $name = 'default' is given the value of the variable called name, from the page, the project, or the global variables. So steps belong in runnable blocks, not in text asking someone to copy a command into a terminal.
+- Each block runs as its own script. Anything one block changes, such as $env:PATH or a variable, is gone in the next, so a block that needs a tool another block installed must add that tool's folder to $env:PATH itself and check for the tool with Get-Command first. Start each block with $ErrorActionPreference = 'Stop', check $LASTEXITCODE after native commands, and use $IsMacOS, $IsWindows, and $IsLinux for platform differences.
+- Scripts on a commit: the Git Controller can run a script before every commit, such as a Publish script, and stop the commit if it fails. The project's own tools, such as cargo or npm, must be installed on the developer's computer for those scripts to run.
+
+Never put a secret, token, or password in a draft. Use a variable for it, so the value stays in Task Proxy."#;
 
 pub(crate) const INTEGRATIONS: [(&str, &str); 5] = [
     (
@@ -79,8 +70,11 @@ pub(crate) const INTEGRATIONS: [(&str, &str); 5] = [
     ),
     (
         "pages",
-        "You write a project's documentation pages in markdown. Write the part of the page the user asks for, \
-         matching the rest of the page. Reply with only the markdown for that part.",
+        "You write a project's documentation pages in markdown, as described above. Write the part of the page the \
+         user asks for, matching the rest of the page: keep its headings, its <webui-page-segment> tags, and the style \
+         of its Run blocks. Give steps as runnable pwsh blocks, one per step, with a sentence above each saying what it \
+         does. Name only the tools, files, and commands the project summary or the page shows or that the step installs, \
+         and check for a tool before using it. Reply with only the markdown for that part.",
     ),
     (
         "scripts",
@@ -1619,19 +1613,6 @@ fn model_in_single_quotes(command: &str) -> bool {
     false
 }
 
-/// The PATH with the user's `~/.local/bin` added at its end, where Claude Code's installer, and many other tools,
-/// put their commands without adding it to PATH. Task Proxy, started from the desktop, often doesn't have it, so
-/// `claude` wasn't found. None when it is already there.
-fn with_user_bin(path: &std::ffi::OsStr, home: &Path) -> Option<std::ffi::OsString> {
-    let bin = home.join(".local").join("bin");
-    let mut paths: Vec<PathBuf> = std::env::split_paths(path).collect();
-    if paths.iter().any(|item| item == &bin) {
-        return None;
-    }
-    paths.push(bin);
-    std::env::join_paths(paths).ok()
-}
-
 /// A command's process, and every process it starts. Dropped before it ends, such as when the user cancels or it
 /// takes too long, it ends all of them: `kill_on_drop` ends only PowerShell, and `claude` would keep running. Once
 /// the command ends, what it left running in the background ends too, which nothing else would end.
@@ -1868,7 +1849,7 @@ async fn run_command_capped(
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
     if let Some(home) = home {
         let path = std::env::var_os("PATH").unwrap_or_default();
-        if let Some(path) = with_user_bin(&path, Path::new(&home)) {
+        if let Some(path) = with_user_tool_dirs(&path, Path::new(&home)) {
             command.env("PATH", path);
         }
     }
@@ -2115,6 +2096,71 @@ struct Progress {
     total: usize,
 }
 
+/// What the open project is, sent with each request that isn't about Git: its name, what kind of project it is from
+/// the files at its top level, and those files' names. Only names are read, never file contents.
+fn project_summary(folder: &Path) -> String {
+    let name = folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let has = |path: &str| folder.join(path).exists();
+    let mut kinds = Vec::new();
+    if has("Cargo.toml") {
+        kinds.push("a Rust project (Cargo.toml)");
+    }
+    if has("src-tauri/tauri.conf.json") {
+        kinds.push("a Tauri app, with its Rust backend in src-tauri");
+    }
+    if has("package.json") {
+        kinds.push("an npm package (package.json)");
+    }
+    if has("Trunk.toml") {
+        kinds.push("a frontend built with Trunk (Trunk.toml)");
+    }
+    if has("PowerShell") {
+        kinds.push("with PowerShell scripts in PowerShell/");
+    }
+    if has(".github/workflows") {
+        kinds.push("with GitHub Actions workflows in .github/workflows");
+    }
+    if has(".taskproxy") {
+        kinds.push("a Task Proxy project, with its pages in .taskproxy/pages");
+    }
+    if has(".git") {
+        kinds.push("a git repository");
+    }
+    let mut entries: Vec<String> = std::fs::read_dir(folder)
+        .map(|dir| {
+            dir.flatten()
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let hidden =
+                        name.starts_with('.') && !matches!(name.as_str(), ".taskproxy" | ".github");
+                    if hidden || COMMON_SKIP_DIRS.contains(&name.as_str()) {
+                        return None;
+                    }
+                    let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+                    Some(if is_dir { format!("{}/", name) } else { name })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort();
+    const SHOWN: usize = 80;
+    let more = entries.len().saturating_sub(SHOWN);
+    entries.truncate(SHOWN);
+    let mut summary = format!("The open project is \"{}\".", name);
+    if !kinds.is_empty() {
+        summary.push_str(&format!(" It is {}.", kinds.join(", ")));
+    }
+    summary.push_str(&format!(" Its top level has: {}", entries.join(", ")));
+    if more > 0 {
+        summary.push_str(&format!(", and {} more", more));
+    }
+    summary.push('.');
+    summary
+}
+
 /// A draft for one integration. Git builds its context from the repo's files here; the others send it.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -2229,7 +2275,13 @@ pub(crate) async fn ai_write(
             }
             commit_message(blocks, max_chars)
         } else {
-            user_message(&request.request, &request.context, max_chars)
+            // What the project is goes first, so a draft fits it: its name, what kind of project it is, and what is at
+            // its top level.
+            let context = match &folder {
+                Some(folder) => format!("{}\n\n{}", project_summary(folder), request.context),
+                None => request.context.clone(),
+            };
+            user_message(&request.request, &context, max_chars)
         };
         complete(
             &provider,
@@ -2760,17 +2812,43 @@ pub(crate) async fn ai_review(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_open_project_is_described_by_its_kind_and_top_level_names_only() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().join("TaskProxyApp");
+        std::fs::create_dir_all(root.join("src-tauri")).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::create_dir_all(root.join(".taskproxy")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "secret = 1\n").unwrap();
+        std::fs::write(root.join("src-tauri").join("tauri.conf.json"), "{}").unwrap();
+        let summary = super::project_summary(&root);
+        assert!(summary.contains("\"TaskProxyApp\""), "{}", summary);
+        assert!(summary.contains("a Rust project"), "{}", summary);
+        assert!(summary.contains("a Tauri app"), "{}", summary);
+        assert!(summary.contains("a Task Proxy project"), "{}", summary);
+        assert!(summary.contains("src-tauri/"), "{}", summary);
+        assert!(summary.contains("Cargo.toml"), "{}", summary);
+        // Build output is left out, and file contents are never read into the summary.
+        assert!(!summary.contains("target"), "{}", summary);
+        assert!(!summary.contains("secret"), "{}", summary);
+    }
+
+    #[test]
     fn commands_find_tools_in_the_users_local_bin() {
         let home = std::path::Path::new("/home/someone");
         let bin = home.join(".local").join("bin");
+        let cargo_bin = home.join(".cargo").join("bin");
         let path = std::env::join_paths([std::path::PathBuf::from("/usr/bin")]).unwrap();
-        let added = super::with_user_bin(&path, home).unwrap();
+        let added = super::with_user_tool_dirs(&path, home).unwrap();
         assert_eq!(
             std::env::split_paths(&added).collect::<Vec<_>>(),
-            vec![std::path::PathBuf::from("/usr/bin"), bin.clone()]
+            vec![
+                std::path::PathBuf::from("/usr/bin"),
+                bin.clone(),
+                cargo_bin.clone()
+            ]
         );
         // Already there, it is left as it is.
-        assert_eq!(super::with_user_bin(&added, home), None);
+        assert_eq!(super::with_user_tool_dirs(&added, home), None);
     }
 
     use super::*;
@@ -4644,6 +4722,13 @@ mod tests {
     #[test]
     fn a_file_whose_changes_cannot_be_read_is_named_and_the_others_still_go() {
         let folder = tempfile::tempdir().unwrap();
+        // Two names differing only in case are one file on a case-insensitive disk, such as macOS's, where the
+        // setup below would overwrite the first file. There the case this test covers can't happen.
+        fs::write(folder.path().join("case-probe"), "").unwrap();
+        if folder.path().join("CASE-PROBE").exists() {
+            eprintln!("skipped: this folder's file system ignores case");
+            return;
+        }
         let repository = Repository::init(folder.path()).unwrap();
         fs::write(folder.path().join("cargo.toml"), "[package]\n").unwrap();
         fs::write(folder.path().join("a.txt"), "one\n").unwrap();

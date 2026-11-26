@@ -694,6 +694,138 @@
             t._reviewContent = webui.create('webui-content', { slot: 'content', nodetach: '', class: 'review-content' });
             t._review = webui.create('app-ai-review');
             t._reviewContent.appendChild(t._review);
+            // The Ignore tab: the .gitignore file shown, its text as last saved, and the repo it is for.
+            t._ignoreFile = t.template.querySelector('#ignore-file');
+            t._ignoreNewPanel = t.template.querySelector('.ignore-new');
+            t._ignoreNewFolder = t.template.querySelector('#ignore-new-folder');
+            t._ignoreText = t.template.querySelector('#ignore-text');
+            t._btnIgnoreNew = t.template.querySelector('#btn-ignore-new');
+            t._btnIgnoreCreate = t.template.querySelector('#btn-ignore-create');
+            t._btnIgnoreSave = t.template.querySelector('#btn-ignore-save');
+            t._btnIgnoreRevert = t.template.querySelector('#btn-ignore-revert');
+            t._ignoreState = t.template.querySelector('.ignore-state');
+            t._ignoreCheckPath = t.template.querySelector('#ignore-check-path');
+            t._btnIgnoreCheck = t.template.querySelector('#btn-ignore-check');
+            t._ignoreResult = t.template.querySelector('.ignore-result');
+            t._ignoreNames = [];
+            t._ignoreSaved = '';
+            t._ignoreShown = { repo: null, file: '' };
+            t.refreshIgnoreActions();
+        },
+        /** Whether the Ignore tab's text has changes that are not saved. */
+        ignoreDirty() {
+            return this._ignoreText.value !== this._ignoreSaved;
+        },
+        /** Shows a message under the Ignore tab's buttons, in the colour of its severity. */
+        setIgnoreState(message, severity = 'info') {
+            this._ignoreState.textContent = message || '';
+            this._ignoreState.dataset.severity = severity;
+        },
+        /** Save and Revert until the text changes, and Save until a repo is chosen. */
+        refreshIgnoreActions() {
+            const t = this;
+            const dirty = t.ignoreDirty();
+            const hasRepo = t._ignoreShown.repo != null && !!t._ignoreShown.file;
+            t._btnIgnoreSave.toggleAttribute('disabled', !dirty || !hasRepo);
+            t._btnIgnoreRevert.toggleAttribute('disabled', !dirty);
+        },
+        /**
+         * Lists the repo's .gitignore files for the Ignore tab. A repo that changed starts on the top level's file. Else the
+         * file kept, and its unsaved text too.
+         */
+        async loadIgnoreFiles() {
+            const t = this;
+            const repo = t._repos.value;
+            if (repo == null) return;
+            const changedRepo = repo !== t._ignoreShown.repo;
+            if (changedRepo && t.ignoreDirty()) t._ignoreText.value = t._ignoreSaved;
+            const files = await webui.proxy.git.listGitignores(repo, msg => t.setIgnoreState(`${msg}`, 'danger')) || [];
+            // The top level's file is always offered, so one can be made for a repo that has none.
+            const names = ['.gitignore', ...files.filter(name => name !== '.gitignore')];
+            t._ignoreNames = names;
+            t._ignoreFile.setOptions(names.map(name => ({
+                id: name,
+                value: name,
+                display: name === '.gitignore' ? '.gitignore (top level)' : name,
+            })));
+            const keep = !changedRepo && names.includes(t._ignoreShown.file) ? t._ignoreShown.file : '.gitignore';
+            if (!changedRepo && t.ignoreDirty()) {
+                // Unsaved text is kept: only the list of files is refreshed.
+                t._ignoreFile.value = t._ignoreShown.file;
+                return;
+            }
+            t._ignoreFile.value = keep;
+            await t.showIgnoreFile(keep);
+        },
+        /** Shows one .gitignore file's text, as saved, for the Ignore tab to edit. */
+        async showIgnoreFile(file) {
+            const t = this;
+            const repo = t._repos.value;
+            if (repo == null) return;
+            t._ignoreShown = { repo, file };
+            const text = await webui.proxy.git.readGitignore(repo, file, msg => t.setIgnoreState(`${msg}`, 'danger'));
+            // A reply for a file or repo chosen since is dropped, as is one that failed (already shown).
+            if (t._ignoreShown.repo !== repo || t._ignoreShown.file !== file) return;
+            if (text === undefined) {
+                t._ignoreText.value = '';
+                t._ignoreSaved = '';
+            } else {
+                t._ignoreSaved = text;
+                t._ignoreText.value = text;
+                t.setIgnoreState(text ? '' : 'This file is empty or not made yet. Save to write it.', 'info');
+            }
+            t.refreshIgnoreActions();
+        },
+        /** Writes the shown .gitignore file, and lists it with the repo's changes, since it may be new. */
+        async saveIgnoreFile() {
+            const t = this;
+            const { repo, file } = t._ignoreShown;
+            if (repo == null || !file) return;
+            const text = t._ignoreText.value;
+            const message = await webui.proxy.git.saveGitignore(repo, file, text, msg => t.setIgnoreState(`${msg}`, 'danger'));
+            if (message === undefined) return;
+            if (t._ignoreShown.repo !== repo || t._ignoreShown.file !== file) return;
+            t._ignoreSaved = text;
+            t.refreshIgnoreActions();
+            t.setIgnoreState(message, 'success');
+            t.loadRepoChanges();
+            await t.loadIgnoreFiles();
+        },
+        /** Makes a .gitignore for a folder, chosen on the Ignore tab, which is written when saved. */
+        createIgnoreFile() {
+            const t = this;
+            if (t.ignoreDirty()) {
+                t.setIgnoreState('Save or revert your changes before making another .gitignore.', 'warning');
+                return;
+            }
+            const folder = t._ignoreNewFolder.value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+            if (folder.split('/').includes('..')) {
+                t.setIgnoreState('A folder cannot be outside the repo.', 'danger');
+                return;
+            }
+            const file = folder ? `${folder}/.gitignore` : '.gitignore';
+            if (!t._ignoreNames.includes(file)) {
+                t._ignoreNames = [...t._ignoreNames, file];
+                t._ignoreFile.setOptions(t._ignoreNames.map(name => ({ id: name, value: name, display: name === '.gitignore' ? '.gitignore (top level)' : name })));
+            }
+            t._ignoreNewFolder.value = '';
+            t._ignoreNewPanel.hidden = true;
+            t._ignoreFile.value = file;
+            t.showIgnoreFile(file);
+        },
+        /** Says whether a path is ignored, and whether git tracks it, under the Check a path field. */
+        async checkIgnorePath() {
+            const t = this;
+            const path = t._ignoreCheckPath.value.trim().replace(/\\/g, '/');
+            const repo = t._repos.value;
+            if (!path || repo == null) return;
+            const result = await webui.proxy.git.checkIgnored(repo, path, msg => { t._ignoreResult.textContent = `${msg}`; });
+            if (!result) return;
+            t._ignoreResult.textContent = result.ignored
+                ? (result.tracked
+                    ? `${path} matches a pattern, but git already tracks it, so it stays in the repo.`
+                    : `${path} is ignored: git will not add it.`)
+                : (result.tracked ? `${path} is not ignored, and git tracks it.` : `${path} is not ignored.`);
         },
         /** The files included in the next commit, by their paths in the repo. */
         includedFiles() {
@@ -1754,6 +1886,7 @@
             t._tabs.addEventListener('click', ev => {
                 const button = ev.composedPath().find(node => node.parentNode === t._tabs && node.getAttribute?.('slot') === 'tabs');
                 if (button?.id) t.rememberTab(button.id);
+                if (button?.id === 'tab-ignore') t.loadIgnoreFiles();
             });
             t._beforeScript.addEventListener('change', _ => t.chooseBeforeCommit(t._beforeScript.value || ''));
             t._beforeParams.addEventListener('change', _ => t.rememberBeforeCommitValues());
@@ -1764,7 +1897,31 @@
                 t.loadBeforeCommit();
                 await t.loadBranches();
                 t.loadRepoChanges();
+                t.loadIgnoreFiles();
             });
+            t._ignoreFile.addEventListener('change', () => {
+                const next = t._ignoreFile.value;
+                if (!next || next === t._ignoreShown.file) return;
+                // Unsaved text is not thrown away by choosing another file: it is saved or reverted first.
+                if (t.ignoreDirty()) {
+                    t._ignoreFile.value = t._ignoreShown.file;
+                    t.setIgnoreState('Save or revert your changes before choosing another file.', 'warning');
+                    return;
+                }
+                t.showIgnoreFile(next);
+            });
+            t._ignoreText.addEventListener('input', () => t.refreshIgnoreActions());
+            t._btnIgnoreSave.addEventListener('click', () => t.saveIgnoreFile());
+            t._btnIgnoreRevert.addEventListener('click', () => {
+                t._ignoreText.value = t._ignoreSaved;
+                t.setIgnoreState('');
+                t.refreshIgnoreActions();
+            });
+            t._btnIgnoreNew.addEventListener('click', () => { t._ignoreNewPanel.hidden = !t._ignoreNewPanel.hidden; });
+            t._btnIgnoreCreate.addEventListener('click', () => t.createIgnoreFile());
+            t._ignoreNewFolder.addEventListener('keydown', ev => { if (ev.key === 'Enter') t.createIgnoreFile(); });
+            t._btnIgnoreCheck.addEventListener('click', () => t.checkIgnorePath());
+            t._ignoreCheckPath.addEventListener('keydown', ev => { if (ev.key === 'Enter') t.checkIgnorePath(); });
             t._branchTable.addEventListener('click', async ev => {
                 let btn = webui.closest(ev, 'webui-button');
                 if (!btn) return;
@@ -2210,6 +2367,42 @@ pre {
 .queue-view h2 {
     margin: var(--padding) 0 calc(0.5 * var(--padding));
 }
+.ignore-panel {
+    margin-top: var(--padding);
+    display: flex;
+    flex-direction: column;
+    gap: var(--padding);
+    max-width: 60em;
+}
+.ignore-bar, .ignore-new, .ignore-check, .ignore-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--padding);
+    align-items: center;
+}
+.ignore-bar > webui-select {
+    min-width: 20em;
+}
+.ignore-new input, .ignore-check input {
+    flex: 1 1 16em;
+}
+.ignore-text {
+    width: 100%;
+    min-height: 20em;
+    box-sizing: border-box;
+    padding: 0.5em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.95em;
+}
+.ignore-state, .ignore-result {
+    margin: 0;
+}
+.ignore-state[data-severity="danger"], .ignore-state[data-severity="warning"] {
+    font-weight: 600;
+}
+.ignore-state[data-severity="success"] {
+    color: var(--success, inherit);
+}
 .queue-table {
     width: 100%;
     border-collapse: collapse;
@@ -2531,6 +2724,32 @@ button.revert {
                 data-subscribe="git-branches:setData"
                 bordered>
             </webui-table>
+        </div>
+    </webui-content>
+    <webui-button slot="tabs" id="tab-ignore">Ignore</webui-button>
+    <webui-content slot="content" nodetach id="content-ignore">
+        <div class="ignore-panel">
+            <div class="ignore-bar">
+                <webui-select id="ignore-file" label=".gitignore file" title="The .gitignore files in this repo"></webui-select>
+                <webui-button id="btn-ignore-new" label="New .gitignore" title="Make a .gitignore for a folder that has none"></webui-button>
+            </div>
+            <div class="ignore-new" hidden>
+                <input type="text" id="ignore-new-folder" placeholder="Folder, such as src. Leave empty for the top level" aria-label="Folder for the new .gitignore" />
+                <webui-button id="btn-ignore-create" theme="success" label="Create"></webui-button>
+            </div>
+            <textarea id="ignore-text" class="ignore-text" spellcheck="false" aria-label="Patterns in the chosen .gitignore" placeholder="One pattern per line, such as node_modules/ or *.log. A # starts a comment."></textarea>
+            <div class="ignore-actions">
+                <webui-button id="btn-ignore-save" theme="primary" label="Save" title="Write the .gitignore file"></webui-button>
+                <webui-button id="btn-ignore-revert" label="Revert" title="Put back the text as it was saved"></webui-button>
+                <p class="ignore-state" role="status"></p>
+            </div>
+            <h2>Check a path</h2>
+            <div class="ignore-check">
+                <input type="text" id="ignore-check-path" placeholder="A file or folder, such as build/app.log" aria-label="Path to check" />
+                <webui-button id="btn-ignore-check" label="Check"></webui-button>
+            </div>
+            <p class="ignore-result" role="status"></p>
+            <p class="note">Patterns apply to the folder their .gitignore is in, and to the folders below it. A file that git already tracks stays in the repo, whatever the patterns say.</p>
         </div>
     </webui-content>
     <webui-button slot="tabs" id="tab-remote">Auth</webui-button>

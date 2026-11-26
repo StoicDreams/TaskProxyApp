@@ -20,6 +20,119 @@ pub(crate) fn create_command(program: &str) -> Command {
     cmd
 }
 
+/// The PATH with the user's tool folders added at its end: `~/.local/bin`, where Claude Code's installer puts `claude`,
+/// and `~/.cargo/bin`, where rustup and the tools installed with it go. Installers add these to shell profiles, which
+/// an app started from the desktop doesn't read, and PowerShell doesn't load with `-NoProfile`. None when both are
+/// already there.
+pub(crate) fn with_user_tool_dirs(
+    path: &std::ffi::OsStr,
+    home: &Path,
+) -> Option<std::ffi::OsString> {
+    let mut paths: Vec<PathBuf> = std::env::split_paths(path).collect();
+    let mut changed = false;
+    for dir in [
+        home.join(".local").join("bin"),
+        home.join(".cargo").join("bin"),
+    ] {
+        if !paths.contains(&dir) {
+            paths.push(dir);
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    std::env::join_paths(paths).ok()
+}
+
+/// The PATH the user's login shell gives, read as a script starts, so tools that installers add to shell profiles,
+/// such as rustup, are found without rebuilding Task Proxy, and changes to those profiles apply to the next script.
+/// None when the shell can't be read in time. Unix only: Windows gives programs its PATH from the registry.
+#[cfg(unix)]
+pub(crate) async fn login_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let mut command = tokio::process::Command::new(shell);
+    // Interactive, so .zshrc and .bashrc load too, where many installers add their folders. What the profiles print
+    // is left out: the PATH is the last line, which is printed between line breaks.
+    command
+        .args(["-l", "-i", "-c", "printf '\\n%s\\n' \"$PATH\""])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    let text = String::from_utf8(output.stdout).ok()?;
+    let path = text.lines().rev().find(|line| !line.trim().is_empty())?;
+    (path.contains('/') || path.contains(':')).then(|| path.to_string())
+}
+
+#[cfg(not(unix))]
+pub(crate) async fn login_shell_path() -> Option<String> {
+    None
+}
+
+/// Joins two PATHs, keeping the first place each folder has, so the one given first wins.
+pub(crate) fn merge_paths(
+    first: &std::ffi::OsStr,
+    second: &std::ffi::OsStr,
+) -> Option<std::ffi::OsString> {
+    let mut seen = std::collections::HashSet::new();
+    let paths: Vec<PathBuf> = std::env::split_paths(first)
+        .chain(std::env::split_paths(second))
+        .filter(|path| !path.as_os_str().is_empty() && seen.insert(path.clone()))
+        .collect();
+    std::env::join_paths(paths).ok()
+}
+
+/// The environment a script starts with. Its PATH is the user's login shell's PATH, then the one given in `env` or
+/// the app's own, then the user's tool folders from `with_user_tool_dirs`.
+pub(crate) async fn script_env_with_user_path(env: &[(String, String)]) -> Vec<(String, String)> {
+    let mut env = env.to_vec();
+    let current = env
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| std::ffi::OsString::from(value))
+        .or_else(|| std::env::var_os("PATH"))
+        .unwrap_or_default();
+    let mut path = current.clone();
+    if let Some(login) = login_shell_path().await
+        && let Some(merged) = merge_paths(std::ffi::OsStr::new(&login), &current)
+    {
+        path = merged;
+    }
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        && let Some(with_dirs) = with_user_tool_dirs(&path, Path::new(&home))
+    {
+        path = with_dirs;
+    }
+    env.retain(|(name, _)| name != "PATH");
+    env.push(("PATH".to_string(), path.to_string_lossy().into_owned()));
+    env
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn merged_paths_keep_the_first_place_of_each_folder() {
+        let first = std::ffi::OsString::from("/opt/a:/usr/bin");
+        let second = std::ffi::OsString::from("/usr/bin:/opt/b");
+        let merged = merge_paths(&first, &second).unwrap();
+        assert_eq!(
+            std::env::split_paths(&merged).collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("/opt/a"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/opt/b"),
+            ]
+        );
+    }
+}
+
 /// Whether a value is a folder inside a mounted AppImage: this one's, or one an older copy started this one from.
 fn in_appimage(value: &str, appdir: Option<&str>) -> bool {
     appdir.is_some_and(|appdir| !appdir.is_empty() && value.starts_with(appdir))

@@ -500,6 +500,12 @@
             restoreFile: (repo, file, err) => invokeGit('git_restore_file', { repo, file }, err),
             restoreAll: (repo, err) => invokeGit('git_restore_all', { repo }, err),
             deleteFile: (repo, file, err) => invokeGit('git_delete_file', { repo, file }, err),
+            // The Ignore tab's .gitignore files. Each takes the repo's folder and the file's path from its root.
+            listGitignores: (repo, err) => invokeGit('git_list_gitignores', { repo }, err),
+            // Not through invokeGit, which reads an empty file as nothing, so an empty .gitignore would look like a failure.
+            readGitignore: (repo, file, err) => tauri.core.invoke('git_read_gitignore', { repo, file }).catch(e => { if (err) err(e); return undefined; }),
+            saveGitignore: (repo, file, contents, err) => invokeGit('git_save_gitignore', { repo, file, contents }, err),
+            checkIgnored: (repo, path, err) => invokeGit('git_check_ignored', { repo, path }, err),
         }
         /**
          * AI drafts (services/ai.rs): providers set up in Settings under AI write commit messages, code reviews, page
@@ -1394,6 +1400,48 @@
             }
         }
     }
+    /**
+     * How a drawer that remembers its state, such as the Tools drawer docked on the right, is kept. The web UI keeps
+     * data-state in the browser's session storage, which a restarted app doesn't have, so the app keeps it in its own
+     * data, which lasts across restarts.
+     */
+    const drawerStateKey = drawer => `app-drawer-${drawer.classList[0] || 'drawer'}`;
+    const drawerStateAttrs = drawer => (drawer.dataset.state || '').split('|').filter(Boolean);
+    const drawersWithState = () => [...document.querySelectorAll('webui-drawer[data-state]')];
+    /** The values to keep for a drawer's state attributes, as the web UI saves them. */
+    function drawerStateValues(drawer) {
+        const state = {};
+        drawerStateAttrs(drawer).forEach(attr => {
+            const own = typeof drawer.stateValue === 'function' ? drawer.stateValue(attr) : undefined;
+            const value = own !== undefined ? own : drawer.attributes[attr]?.value;
+            if (value && value !== 'undefined') state[attr] = value;
+        });
+        return state;
+    }
+    /** Puts back a drawer's state from the app's data, where it was saved. Nothing saved leaves the drawer as it is. */
+    function restoreDrawerState() {
+        drawersWithState().forEach(drawer => {
+            const saved = webui.getData(drawerStateKey(drawer));
+            if (!saved || typeof saved !== 'object') return;
+            drawerStateAttrs(drawer).forEach(attr => {
+                if (saved[attr]) {
+                    drawer.setAttribute(attr, saved[attr]);
+                } else {
+                    drawer.removeAttribute(attr);
+                }
+            });
+        });
+    }
+    /** Keeps a drawer's state in the app's data whenever it changes. Watch only after restoring, or the defaults would replace it. */
+    function watchDrawerState() {
+        drawersWithState().forEach(drawer => {
+            const save = () => {
+                const state = drawerStateValues(drawer);
+                if (!same(state, webui.getData(drawerStateKey(drawer)) || {})) webui.setData(drawerStateKey(drawer), state);
+            };
+            new MutationObserver(save).observe(drawer, { attributes: true, attributeFilter: drawerStateAttrs(drawer) });
+        });
+    }
     const ignoreAppDataFields = ['app-api', 'app-name', 'app-company-singular', 'app-company-possessive', 'app-domain', 'app-not-found-html', 'app-data-endpoint', 'app-content-endpoint', 'webui-version', 'app-projects', 'page-path']
     runWhenWebUIReady(async () => {
         webui.isclosing = (msg) => {
@@ -1477,6 +1525,8 @@
             }
             setData(key, value);
         }
+        restoreDrawerState();
+        watchDrawerState();
         /**
          * The value of a variable, for injecting into scripts. Unlike getData, this never falls back
          * to framework settings such as app-name, which a script's $name must not pick up.

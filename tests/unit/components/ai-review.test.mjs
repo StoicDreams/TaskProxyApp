@@ -21,7 +21,7 @@ const manager = page => page.locator('app-git-manager');
 const tabs = page => manager(page).locator('webui-button[slot="tabs"]');
 const review = page => manager(page).locator('app-ai-review');
 const openReview = async page => {
-    await expect(tabs(page)).toHaveText(['Commit', 'Review', 'Branches', 'Auth', 'Queue']);
+    await expect(tabs(page)).toHaveText(['Commit', 'Review', 'Branches', 'Ignore', 'Auth', 'Queue']);
     await tabs(page).filter({ hasText: 'Review' }).click();
     await expect(review(page)).toBeVisible();
 };
@@ -44,15 +44,15 @@ test('Write with AI puts a commit message for the included files in the message 
 test('with AI off for Git and reviews, there is no Write with AI and no Review tab', async ({ page }) => {
     await open(page, { integrations: {} });
     await expect(manager(page).locator('#ai-commit')).toBeHidden();
-    await expect(tabs(page)).toHaveText(['Commit', 'Branches', 'Auth', 'Queue']);
+    await expect(tabs(page)).toHaveText(['Commit', 'Branches', 'Ignore', 'Auth', 'Queue']);
     // Turning reviews on adds the tab in its place, with the tab shown staying shown.
     await tabs(page).filter({ hasText: 'Branches' }).click();
     await expect(tabs(page).filter({ hasText: 'Branches' })).toHaveAttribute('aria-current', 'true');
     await page.evaluate(() => webui.setData('app-ai-integrations', { review: true }));
-    await expect(tabs(page)).toHaveText(['Commit', 'Review', 'Branches', 'Auth', 'Queue']);
+    await expect(tabs(page)).toHaveText(['Commit', 'Review', 'Branches', 'Ignore', 'Auth', 'Queue']);
     await expect(tabs(page).filter({ hasText: 'Branches' })).toHaveAttribute('aria-current', 'true');
     await page.evaluate(() => webui.setData('app-ai-integrations', { review: false }));
-    await expect(tabs(page)).toHaveText(['Commit', 'Branches', 'Auth', 'Queue']);
+    await expect(tabs(page)).toHaveText(['Commit', 'Branches', 'Ignore', 'Auth', 'Queue']);
 });
 
 test('a review of the changes sends the included files and what to look for, and shows the report safely', async ({ page }) => {

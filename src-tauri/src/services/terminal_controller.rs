@@ -612,6 +612,9 @@ pub(crate) async fn spawn_script(
     request: &RunRequest,
     env: &[(String, String)],
 ) -> Result<ScriptStarted, String> {
+    // PowerShell runs with -NoProfile, and an app started from the desktop has only the system's PATH, so tools that
+    // their installers added to a shell profile, such as rustup, weren't found.
+    let env = &script_env_with_user_path(env).await;
     let terminal_id = request.terminal_id.clone();
     let script_content = &request.script_content;
     let args = request.args.clone();

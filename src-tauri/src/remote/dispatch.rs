@@ -79,6 +79,11 @@ pub(crate) const DESKTOP_ONLY: &[&str] = &[
     "ai_save_settings",
     "ai_models",
     "ai_test",
+    // The Git Controller's .gitignore files, which are read and changed on the computer only.
+    "git_list_gitignores",
+    "git_read_gitignore",
+    "git_save_gitignore",
+    "git_check_ignored",
 ];
 
 /// App data a browser may never change: which projects may run scripts.

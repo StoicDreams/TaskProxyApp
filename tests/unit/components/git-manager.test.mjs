@@ -729,7 +729,7 @@ test.describe('the tab shown is remembered per project', () => {
         // Review is off, so its tab is gone.
         await open(page, {}, { data: { _gitTab: 'tab-review' } });
         await tabRestored(page);
-        await expect(manager(page).locator('webui-button[slot="tabs"]')).toHaveText(['Commit', 'Branches', 'Auth', 'Queue']);
+        await expect(manager(page).locator('webui-button[slot="tabs"]')).toHaveText(['Commit', 'Branches', 'Ignore', 'Auth', 'Queue']);
         await expect(shownTab(page)).toHaveText('Commit');
     });
 });
@@ -1509,5 +1509,53 @@ test.describe('files that show something when drawn', () => {
         const icons = manager(page).locator('.icon-preview webui-icon');
         await expect(icons).toHaveCount(12);
         await expect.poll(() => icons.first().evaluate(icon => icon._definition)).toContain('WEBUI-ICON-STAR');
+    });
+});
+
+test.describe('Ignore tab', () => {
+    const ignoreText = page => manager(page).locator('textarea.ignore-text');
+    const saveButton = page => manager(page).locator('#btn-ignore-save');
+    const ignores = { '.gitignore': 'target/\n', 'src/.gitignore': '*.tmp\n' };
+
+    test('shows the top level .gitignore, and the repo\'s other .gitignore files can be chosen', async ({ page }) => {
+        await open(page, { ignores });
+        await openTab(page, 'Ignore');
+        await expect(ignoreText(page)).toHaveValue('target/\n');
+        await expect(saveButton(page)).toBeDisabled();
+    });
+
+    test('an edit is saved to the file it is for, and saving is off until something changes', async ({ page }) => {
+        await open(page, { ignores });
+        await openTab(page, 'Ignore');
+        await ignoreText(page).fill('target/\nnode_modules/\n');
+        await expect(saveButton(page)).toBeEnabled();
+        await saveButton(page).click();
+        await expect.poll(() => calls(page, 'git_save_gitignore')).toEqual([expect.objectContaining({ file: '.gitignore', contents: 'target/\nnode_modules/\n' })]);
+        await expect(saveButton(page)).toBeDisabled();
+    });
+
+    test('a .gitignore can be made for a folder that has none, and is written when saved', async ({ page }) => {
+        await open(page, { ignores });
+        await openTab(page, 'Ignore');
+        await manager(page).locator('#btn-ignore-new').click();
+        await manager(page).locator('#ignore-new-folder').fill('docs/');
+        await manager(page).locator('#btn-ignore-create').click();
+        await expect(ignoreText(page)).toHaveValue('');
+        await ignoreText(page).fill('*.log\n');
+        await saveButton(page).click();
+        await expect.poll(() => calls(page, 'git_save_gitignore')).toEqual([expect.objectContaining({ file: 'docs/.gitignore', contents: '*.log\n' })]);
+    });
+
+    test('a path is checked against the patterns, and says when git tracks it anyway', async ({ page }) => {
+        await open(page, { ignores, ignored: { 'build.log': { ignored: true, tracked: false }, 'kept.log': { ignored: true, tracked: true } } });
+        await openTab(page, 'Ignore');
+        const check = async path => {
+            await manager(page).locator('#ignore-check-path').fill(path);
+            await manager(page).locator('#btn-ignore-check').click();
+        };
+        await check('build.log');
+        await expect(manager(page).locator('.ignore-result')).toHaveText('build.log is ignored: git will not add it.');
+        await check('kept.log');
+        await expect(manager(page).locator('.ignore-result')).toHaveText('kept.log matches a pattern, but git already tracks it, so it stays in the repo.');
     });
 });

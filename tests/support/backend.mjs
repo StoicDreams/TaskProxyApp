@@ -1041,6 +1041,11 @@ export function setup(state) {
             git_restore_file: () => 'Successfully reverted',
             git_restore_all: () => 'All changes have been successfully reverted.',
             git_delete_file: () => 'Successfully deleted',
+            // The Ignore tab's .gitignore files: `git.ignores` holds each file's text by its path, `git.ignored` each checked path.
+            git_list_gitignores: () => Object.keys(git.ignores || {}).sort(),
+            git_read_gitignore: ({ file }) => (git.ignores || {})[file] ?? '',
+            git_save_gitignore: ({ file, contents }) => { git.ignores = { ...(git.ignores || {}), [file]: contents }; return `Saved ${file}`; },
+            git_check_ignored: ({ path }) => (git.ignored || {})[path] || { ignored: false, tracked: false },
             plugin_list: () => JSON.parse(JSON.stringify(plugins.map(plugin => ({ configured: true, signIns: 0, ...plugin })))),
             plugin_catalog: () => {
                 if (state.catalog === undefined) throw 'Could not reach the plugin catalog';

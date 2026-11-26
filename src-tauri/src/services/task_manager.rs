@@ -776,10 +776,12 @@ mod tests {
         stop(&mut monitor.system, pid, started, false, false).unwrap();
         std::thread::sleep(Duration::from_millis(300));
         assert!(child.try_wait().unwrap().is_none(), "it ignored SIGTERM");
+        // The name is what the system reports for the shell: bash on macOS, where /bin/sh is bash.
+        let message = stop(&mut monitor.system, pid, started, true, true).unwrap();
         assert!(
-            stop(&mut monitor.system, pid, started, true, true)
-                .unwrap()
-                .starts_with("Closed sh")
+            message.starts_with("Closed ") && message.contains(&format!("({})", pid)),
+            "{}",
+            message
         );
         child.wait().unwrap();
     }

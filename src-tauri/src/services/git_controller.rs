@@ -1672,6 +1672,146 @@ fn restore_all(repository: &Repository, git_path: &Path) -> Result<String, Strin
     Ok(String::from("All changes have been successfully reverted."))
 }
 
+/// The most of a .gitignore file that is read or saved. Far more than any ignore list needs.
+const GITIGNORE_LIMIT: usize = 1024 * 1024;
+
+/// Where a .gitignore file is in a repo, where `file` is its path from the repo's root, such as `.gitignore` or
+/// `src/.gitignore`. Only those files are touched: never one inside `.git`, nor one that is a symbolic link.
+fn gitignore_path(git_path: &Path, file: &str) -> Result<PathBuf, String> {
+    let relative = safe_relative_path(file)?;
+    if relative.file_name().and_then(|name| name.to_str()) != Some(".gitignore") {
+        return Err(format!("{} is not a .gitignore file", file));
+    }
+    if targets_git_dir(&relative) {
+        return Err(format!(
+            "Cannot change a file inside a .git folder: {}",
+            file
+        ));
+    }
+    let target = git_path.join(&relative);
+    let parent = target.parent().unwrap_or(git_path);
+    ensure_inside_root(git_path, parent)?;
+    if fs::symlink_metadata(&target).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(format!(
+            "{} is a symbolic link, so it is not changed.",
+            file
+        ));
+    }
+    Ok(target)
+}
+
+/// The .gitignore files in a repo, by their paths from its root, sorted. Folders the ignore rules leave out, and the
+/// build folders, are not searched.
+fn list_gitignores(git_path: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    walk_project_files(git_path, COMMON_SKIP_DIRS, |path| {
+        if path.file_name().and_then(|name| name.to_str()) == Some(".gitignore")
+            && let Ok(relative) = path.strip_prefix(git_path)
+        {
+            files.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    });
+    files.sort();
+    files
+}
+
+/// A .gitignore file's text, or nothing when it does not exist yet, so one can be written for a new folder.
+fn read_gitignore(git_path: &Path, file: &str) -> Result<String, String> {
+    let target = gitignore_path(git_path, file)?;
+    match fs::metadata(&target) {
+        Ok(meta) if meta.len() > GITIGNORE_LIMIT as u64 => {
+            Err(format!("{} is too large to edit here.", file))
+        }
+        Ok(_) => {
+            fs::read_to_string(&target).map_err(|err| format!("Could not read {}: {}", file, err))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(err) => Err(format!("Could not read {}: {}", file, err)),
+    }
+}
+
+fn save_gitignore(git_path: &Path, file: &str, contents: &str) -> Result<String, String> {
+    let target = gitignore_path(git_path, file)?;
+    if contents.len() > GITIGNORE_LIMIT {
+        return Err(format!("{} is too large to save here.", file));
+    }
+    write_atomic(&target, contents.as_bytes())
+        .map_err(|err| format!("Could not save {}: {}", file, err))?;
+    Ok(format!("Saved {}", file))
+}
+
+/// Whether a path in a repo is ignored, and whether git tracks it. Tracked files stay in the repo whatever the rules say.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct IgnoreCheck {
+    pub ignored: bool,
+    pub tracked: bool,
+}
+
+fn check_ignored(git_path: &Path, path: &str) -> Result<IgnoreCheck, String> {
+    let relative = safe_relative_path(path)?;
+    if targets_git_dir(&relative) {
+        return Err(format!("{} is inside a .git folder.", path));
+    }
+    let repository = Repository::open(git_path).map_err(|e| e.to_string())?;
+    let ignored = repository
+        .is_path_ignored(&relative)
+        .map_err(|e| e.to_string())?;
+    let index = repository.index().map_err(|e| e.to_string())?;
+    Ok(IgnoreCheck {
+        ignored,
+        tracked: index.get_path(&relative, 0).is_some(),
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn git_list_gitignores(
+    repo: String,
+    state: State<'_, CurrentProject>,
+) -> Result<Vec<String>, String> {
+    let git_path = get_repo_path(&state, &repo)?;
+    task::spawn_blocking(move || list_gitignores(&git_path))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn git_read_gitignore(
+    repo: String,
+    file: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let git_path = get_repo_path(&state, &repo)?;
+    task::spawn_blocking(move || read_gitignore(&git_path, &file))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn git_save_gitignore(
+    repo: String,
+    file: String,
+    contents: String,
+    state: State<'_, CurrentProject>,
+) -> Result<String, String> {
+    let git_path = get_repo_path(&state, &repo)?;
+    task::spawn_blocking(move || save_gitignore(&git_path, &file, &contents))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn git_check_ignored(
+    repo: String,
+    path: String,
+    state: State<'_, CurrentProject>,
+) -> Result<IgnoreCheck, String> {
+    let git_path = get_repo_path(&state, &repo)?;
+    task::spawn_blocking(move || check_ignored(&git_path, &path))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1683,7 +1823,7 @@ mod tests {
         }
     }
 
-#[test]
+    #[test]
     fn remote_messages_keep_why_a_push_was_refused_without_progress() {
         let said = "Resolving deltas:  50% (1/2)\rResolving deltas: 100% (2/2)\rResolving deltas: 100% (2/2), done.\n\
             error: GH013: Repository rule violations found for refs/heads/main.\n\
@@ -1705,7 +1845,7 @@ mod tests {
         );
     }
 
-        #[test]
+    #[test]
     fn project_root_is_the_open_project_when_none_is_named() {
         assert_eq!(project_root("/open", &[], None), Ok(PathBuf::from("/open")));
         assert!(project_root("", &[], None).is_err());
@@ -2810,5 +2950,82 @@ mod tests {
         })
         .unwrap();
         assert_eq!(count, 1, "the stash is kept when it cannot be applied");
+    }
+
+    #[test]
+    fn gitignore_files_are_listed_read_and_saved_and_nothing_else() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path();
+        Repository::init(root).unwrap();
+        fs::write(root.join(".gitignore"), "target/\n").unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join(".gitignore"), "*.tmp\n").unwrap();
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::write(root.join("target").join(".gitignore"), "*\n").unwrap();
+        assert_eq!(list_gitignores(root), vec![".gitignore", "src/.gitignore"]);
+        assert_eq!(read_gitignore(root, "src/.gitignore").unwrap(), "*.tmp\n");
+        // A file not made yet reads as empty, so one can be written in a new folder.
+        assert_eq!(read_gitignore(root, "docs/.gitignore").unwrap(), "");
+        assert_eq!(
+            save_gitignore(root, "docs/.gitignore", "*.log\n").unwrap(),
+            "Saved docs/.gitignore"
+        );
+        assert_eq!(read_gitignore(root, "docs/.gitignore").unwrap(), "*.log\n");
+        // Other files, git's own folder, and paths out of the repo are refused.
+        assert!(read_gitignore(root, "src/main.rs").is_err());
+        assert!(save_gitignore(root, "../.gitignore", "x").is_err());
+        assert!(save_gitignore(root, ".git/.gitignore", "x").is_err());
+        assert!(save_gitignore(root, "/etc/.gitignore", "x").is_err());
+    }
+
+    #[test]
+    fn a_gitignore_symbolic_link_is_never_followed_or_replaced() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path();
+        Repository::init(root).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "keep").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join(".gitignore"))
+            .unwrap();
+        #[cfg(unix)]
+        {
+            assert!(read_gitignore(root, ".gitignore").is_err());
+            assert!(save_gitignore(root, ".gitignore", "x").is_err());
+            assert_eq!(
+                fs::read_to_string(outside.path().join("secret.txt")).unwrap(),
+                "keep"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_is_checked_for_ignore_rules_and_tracking() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path();
+        let repository = Repository::init(root).unwrap();
+        fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        fs::write(root.join("build.log"), "x").unwrap();
+        fs::write(root.join("kept.log"), "x").unwrap();
+        let mut index = repository.index().unwrap();
+        index.add_path(Path::new("kept.log")).unwrap();
+        index.write().unwrap();
+        assert_eq!(
+            check_ignored(root, "build.log").unwrap(),
+            IgnoreCheck {
+                ignored: true,
+                tracked: false
+            }
+        );
+        // Tracked, so the rule does not hide it from git, though it still matches.
+        assert_eq!(
+            check_ignored(root, "kept.log").unwrap(),
+            IgnoreCheck {
+                ignored: true,
+                tracked: true
+            }
+        );
+        assert!(!check_ignored(root, "main.rs").unwrap().ignored);
+        assert!(check_ignored(root, ".git/config").is_err());
     }
 }
