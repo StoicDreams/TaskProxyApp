@@ -6,6 +6,7 @@
             t._btnCheck = t.template.querySelector('#btn-check');
             t._btnInstall = t.template.querySelector('#btn-install');
             t._alert = t.template.querySelector('webui-alert:not([fixed])');
+            t._auto = t.template.querySelector('input.auto-check');
         },
         connected() {
             const t = this;
@@ -14,15 +15,19 @@
             };
             t._btnCheck.addEventListener('click', webui.eventSoloProcess(async _ => {
                 t._alert.setValue({ text: 'Checking for updates...', theme: 'info' });
-                let hasUpdate = await webui.proxy.checkUpdate(handleError);
-                if (hasUpdate === true) {
-                    t._alert.setValue({ text: 'An update is available. Click Install Updates to proceed.', theme: 'success' });
+                // The newer release, null when up to date, or undefined when the check failed.
+                let update = await webui.proxy.checkUpdate(handleError);
+                if (update) {
+                    t._alert.setValue({ text: `Version ${update.version} is available. Click Install Updates to proceed.`, theme: 'success' });
                     t._btnInstall.removeAttribute('disabled');
-                } else if (hasUpdate === false) {
+                } else if (update === null) {
                     t._alert.setValue({ text: 'App is up to date.', theme: 'info' });
                     t._btnInstall.setAttribute('disabled', 'true');
                 }
             }, handleError));
+            // The header's Updates icon checks every 6 hours while this is on.
+            t.dataset.subscribe = 'app-update-auto-check:onAutoCheck';
+            t._auto.addEventListener('change', () => webui.setData('app-update-auto-check', t._auto.checked));
             t._btnInstall.addEventListener('click', webui.eventSoloProcess(async _ => {
                 t._alert.setValue({ text: 'Downloading and installing update... Please wait.', theme: 'info' });
                 let result = await webui.proxy.installUpdate(handleError);
@@ -31,6 +36,9 @@
                     t._btnInstall.setAttribute('disabled', 'true');
                 }
             }, handleError));
+        },
+        onAutoCheck(value) {
+            this._auto.checked = value === true || value === 'true';
         },
         shadowTemplate: `
 <style type="text/css">
@@ -49,6 +57,7 @@ webui-flex {
     <webui-button id="btn-install" theme="success" disabled>Install Updates</webui-button>
     <webui-alert variant="info" show fixed>Current Version: <strong data-subscribe="app-version:innerHTML"></strong></webui-alert>
 </webui-flex>
+<label class="auto-check-row"><input type="checkbox" class="auto-check"> Check for app and plugin updates every 6 hours</label>
 <webui-alert></webui-alert>
 `
     });

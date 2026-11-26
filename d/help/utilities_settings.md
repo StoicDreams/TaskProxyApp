@@ -5,6 +5,8 @@
         - **Checking for Updates**: Click **Check for Updates** to query the server for the latest version.
         - **Installing**: If an update is available, the **Install Updates** button will become active. Clicking it will download the update and automatically restart Task Proxy to apply the new version.
         - **Version Info**: Your current application version is always displayed next to the update controls.
+        - **Automatic checks**: Turn on **Check for app and plugin updates every 6 hours**, and the Updates icon at the top, left of Save, checks on its own. When it finds updates, the icon changes and shows how many.
+        - **The Updates icon**: Click it any time to check Task Proxy and your installed plugins. It says when there are none; otherwise it lists them, and **Apply Updates** updates the plugins first, then Task Proxy, which restarts.
         </webui-page-segment>
     </webui-content>
     

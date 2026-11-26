@@ -8,11 +8,25 @@ pub(crate) fn get_version(app: tauri::AppHandle, window: tauri::WebviewWindow) -
     version
 }
 
+/// A newer release of the app, as the updater found it.
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppUpdate {
+    pub version: String,
+    pub current_version: String,
+    pub notes: Option<String>,
+}
+
+/// The newer release of the app, or None when it is up to date.
 #[tauri::command]
-pub(crate) async fn check_update(app: tauri::AppHandle) -> Result<bool, String> {
+pub(crate) async fn check_update(app: tauri::AppHandle) -> Result<Option<AppUpdate>, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update_check = updater.check().await.map_err(|e| e.to_string())?;
-    Ok(update_check.is_some())
+    Ok(update_check.map(|update| AppUpdate {
+        version: update.version.clone(),
+        current_version: update.current_version.clone(),
+        notes: update.body.clone().filter(|notes| !notes.trim().is_empty()),
+    }))
 }
 
 #[tauri::command]

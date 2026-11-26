@@ -1011,7 +1011,7 @@ export function setup(state) {
             auto_install_powershell: () => 'PowerShell installed successfully.',
             init_emoji_search: () => 'Initialized',
             search_emojis: () => [],
-            check_update: () => false,
+            check_update: () => null,
             install_update: () => 'App is up to date.',
             get_git_repos: () => git.repos,
             get_git_repo_status: () => Object.fromEntries(Object.entries(git.repoStatus || {})
