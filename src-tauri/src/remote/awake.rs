@@ -19,7 +19,13 @@ impl Drop for Awake {
     }
 }
 
-/// Asks the system to keep the computer from sleeping or going idle. The screen may still turn off.
+/// Whether the computer is kept from going idle as well as from sleeping. On Windows and macOS, that is what keeps
+/// it from sleeping when no one uses it (`ES_SYSTEM_REQUIRED`, `PreventUserIdleSystemSleep`), and the screens still
+/// turn off. On Linux, systemd's sleep lock alone keeps it from suspending, and an idle lock also keeps the desktop
+/// from turning the screens off, so it is not asked for.
+const BLOCK_IDLE: bool = !cfg!(target_os = "linux");
+
+/// Asks the system to keep the computer from sleeping. The screens still turn off.
 pub(crate) fn hold() -> Result<Awake, String> {
     let (stop, stopped) = mpsc::channel::<()>();
     let (started, result) = mpsc::channel::<Result<(), String>>();
@@ -27,7 +33,7 @@ pub(crate) fn hold() -> Result<Awake, String> {
         .name("remote-keep-awake".into())
         .spawn(move || {
             let held = keepawake::Builder::default()
-                .idle(true)
+                .idle(BLOCK_IDLE)
                 .sleep(true)
                 .display(false)
                 .reason("Remote Connections is on, so your browsers can reach this computer")
