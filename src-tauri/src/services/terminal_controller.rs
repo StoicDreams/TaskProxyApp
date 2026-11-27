@@ -600,6 +600,14 @@ pub(crate) fn remove_stale_temp_scripts(app_handle: &AppHandle) {
     }
 }
 
+/// The name and value pairs of an environment, for a command that takes them as borrowed strings. macOS opens
+/// scripts in Terminal, which starts its own shell, so only the other systems use this.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn env_pairs(env: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
+    env.iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+}
+
 // Tauri fills these in from the frontend and from app state, so they cannot be grouped.
 #[allow(clippy::too_many_arguments)]
 /// Starts the script for run `run`, which the run store has marked running. Its output and its end go to the
@@ -694,6 +702,7 @@ pub(crate) async fn spawn_script(
                 .arg("-File")
                 .arg(&script_path)
                 .args(&args)
+                .envs(env_pairs(env))
                 .current_dir(&working_dir);
             child_opt = Some(
                 cmd.spawn()
@@ -712,6 +721,7 @@ pub(crate) async fn spawn_script(
             ];
             for term in terminal_emulators {
                 let mut cmd = AsyncCommand::new(term);
+                cmd.envs(env_pairs(env));
                 for (name, value) in host_env() {
                     match value {
                         Some(value) => cmd.env(name, value),
